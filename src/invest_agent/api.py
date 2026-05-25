@@ -5,6 +5,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
+from .autonomy import SafeAutonomyRunner, autonomy_status
 from .config import get_settings
 from .deps import get_service, get_store
 from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event_file
@@ -58,6 +59,11 @@ class EventReplayRequest(BaseModel):
     path: str = str(DEFAULT_REPLAY_PATH)
     create_proposals: bool = False
     run_drafts: bool = True
+
+
+class AutonomyRunRequest(BaseModel):
+    create_proposals: bool | None = None
+    include_slow_sources: bool = True
 
 
 app = FastAPI(
@@ -161,6 +167,21 @@ def refresh_fundamentals(request: FundamentalsRefreshRequest | None = None):
         symbols=request.symbols,
         max_symbols=request.max_symbols,
         forms=request.forms,
+    )
+
+
+@app.get("/api/autonomy/status")
+def autonomy_status_api():
+    return autonomy_status(get_settings(), get_store())
+
+
+@app.post("/api/autonomy/run")
+def run_autonomy_cycle(request: AutonomyRunRequest | None = None):
+    request = request or AutonomyRunRequest()
+    return SafeAutonomyRunner(get_settings(), get_store(), get_service()).run_cycle(
+        mode="api-once",
+        create_proposals=request.create_proposals,
+        include_slow_sources=request.include_slow_sources,
     )
 
 
@@ -549,6 +570,7 @@ DASHBOARD_HTML = """
         <button class="secondary" id="news-refresh" type="button">刷新市場新聞</button>
         <button class="secondary" id="primary-refresh" type="button">刷新 SEC/IR</button>
         <button class="secondary" id="fundamentals-refresh" type="button">刷新 SEC Fundamentals</button>
+        <button class="secondary" id="autonomy-run" type="button">執行自治循環</button>
         <button class="secondary" id="draft-proposals" type="button">草擬並送風控</button>
         <button class="secondary" id="futu-refresh" type="button">刷新富途 OpenD</button>
         <div class="mode" id="mode">載入中</div>
@@ -565,6 +587,10 @@ DASHBOARD_HTML = """
     <section class="panel">
       <h2>資料來源與刷新狀態</h2>
       <div class="source-strip" id="source-strip"></div>
+    </section>
+    <section class="panel">
+      <h2>安全自治狀態</h2>
+      <div class="source-strip" id="autonomy-strip"></div>
     </section>
     <section class="panel">
       <h2>SEC 基本面快照</h2>
@@ -676,6 +702,8 @@ DASHBOARD_HTML = """
       sec_filings_refreshed: "SEC filings 已刷新",
       sec_companyfacts_refreshed: "SEC 基本面已刷新",
       fundamentals_upserted: "基本面快照已更新",
+      autonomy_cycle_started: "自治循環已開始",
+      autonomy_cycle_completed: "自治循環已完成",
       ir_feeds_refreshed: "公司 IR 已刷新",
       event_replay_exported: "事件重播已匯出",
       events_replayed: "事件已重播"
@@ -731,6 +759,36 @@ DASHBOARD_HTML = """
           <div class="label">執行模式</div>
           <div>${health.paper_only ? pill("APPROVED", "紙上交易") : pill("PENDING", "要求實盤")}</div>
           <div class="muted">審批後仍只寫入本機紀錄</div>
+        </div>
+      `;
+    }
+
+    function renderAutonomy(status) {
+      const lastRun = status.last_run;
+      const stepText = lastRun?.steps?.length
+        ? `${lastRun.steps.filter(step => step.status === "ok").length}/${lastRun.steps.length} 步成功`
+        : "未有紀錄";
+      const created = lastRun?.created_count || 0;
+      document.querySelector("#autonomy-strip").innerHTML = `
+        <div class="source-cell">
+          <div class="label">循環頻率</div>
+          <div>${pill("PENDING", `${Math.round((status.cycle_seconds || 0) / 60)} 分鐘`)}</div>
+          <div class="muted">由 launchd / CLI 常駐觸發</div>
+        </div>
+        <div class="source-cell">
+          <div class="label">提案模式</div>
+          <div>${status.create_proposals ? pill("APPROVED", "自動建立待審批") : pill("PENDING", "只產生草稿")}</div>
+          <div class="muted">冷卻 ${escapeHtml(status.proposal_cooldown_minutes)} 分鐘，仍需人工批准</div>
+        </div>
+        <div class="source-cell">
+          <div class="label">最近循環</div>
+          <div>${stepText}</div>
+          <div class="muted">${lastRun ? formatDate(lastRun.finished_at) : "尚未執行"} · 建立 ${created} 個 proposal</div>
+        </div>
+        <div class="source-cell">
+          <div class="label">安全邊界</div>
+          <div>${status.paper_only ? pill("APPROVED", "paper-only") : pill("PENDING", "live requested")}</div>
+          <div class="muted">不 unlock Futu，不下實盤單</div>
         </div>
       `;
     }
@@ -817,7 +875,7 @@ DASHBOARD_HTML = """
     }
 
     async function loadAll() {
-      const [health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals] = await Promise.all([
+      const [health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy] = await Promise.all([
         api("/health"),
         api("/api/portfolio"),
         api("/api/quotes"),
@@ -825,7 +883,8 @@ DASHBOARD_HTML = """
         api("/api/news?limit=8"),
         api("/api/audit?limit=6"),
         apiOptional("/api/futu/status", error => ({ connected: false, message: error.message })),
-        api("/api/fundamentals")
+        api("/api/fundamentals"),
+        api("/api/autonomy/status")
       ]);
       document.querySelector("#mode").textContent = health.paper_only ? "紙上交易模式" : "已要求實盤模式";
       const futuButton = document.querySelector("#futu-refresh");
@@ -836,6 +895,7 @@ DASHBOARD_HTML = """
       document.querySelector("#positions").textContent = portfolio.positions.length;
       document.querySelector("#pending").textContent = proposals.filter(p => p.status === "PENDING").length;
       renderSourceStrip(health, portfolio, quotes, futuStatus);
+      renderAutonomy(autonomy);
       renderFundamentals(fundamentals);
       renderPositions(portfolio, quotes);
       renderProposals(proposals);
@@ -909,6 +969,23 @@ DASHBOARD_HTML = """
         const result = await api("/api/fundamentals/refresh", { method: "POST", body: JSON.stringify({}) });
         const errorNote = result.errors?.length ? `；${result.errors.length} 個來源有錯誤` : "";
         setToast(`SEC 基本面已更新：${result.stored_count} 個標的${errorNote}`);
+        await loadAll();
+      } catch (error) {
+        setToast(error.message);
+      } finally {
+        event.target.disabled = false;
+      }
+    });
+    document.querySelector("#autonomy-run").addEventListener("click", async event => {
+      event.target.disabled = true;
+      setToast("正在執行安全自治循環...");
+      try {
+        const result = await api("/api/autonomy/run", {
+          method: "POST",
+          body: JSON.stringify({ include_slow_sources: true })
+        });
+        const errorNote = result.errors?.length ? `；${result.errors.length} 個步驟有錯誤` : "";
+        setToast(`自治循環完成：${result.steps.length} 個步驟，建立 ${result.created_proposals.length} 個待審批提案${errorNote}`);
         await loadAll();
       } catch (error) {
         setToast(error.message);

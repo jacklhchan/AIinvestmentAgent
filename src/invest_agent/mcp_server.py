@@ -4,6 +4,7 @@ from typing import Literal
 
 from mcp.server.fastmcp import FastMCP
 
+from .autonomy import SafeAutonomyRunner, autonomy_status
 from .deps import get_service, get_store
 from .config import get_settings
 from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event_file as replay_events_from_file
@@ -124,6 +125,24 @@ def get_fundamental_snapshot(symbol: str | None = None) -> dict | list[dict]:
             snapshot = next((item for item in store.list_fundamentals() if external_ticker(item.symbol) == ticker), None)
         return _json(snapshot) if snapshot else {"error": f"fundamental snapshot not found for {symbol.upper()}"}
     return _json(store.list_fundamentals())
+
+
+@mcp.tool()
+def get_safe_autonomy_status() -> dict:
+    """Return safe-autonomy scheduler settings and the latest completed cycle summary."""
+    return autonomy_status(get_settings(), get_store())
+
+
+@mcp.tool()
+def run_safe_autonomy_cycle(create_proposals: bool | None = None, include_slow_sources: bool = True) -> dict:
+    """Run one safe autonomy cycle now. It can create paper-only proposals, but never unlocks Futu or places live orders."""
+    return _json(
+        SafeAutonomyRunner(get_settings(), get_store(), get_service()).run_cycle(
+            mode="mcp-once",
+            create_proposals=create_proposals,
+            include_slow_sources=include_slow_sources,
+        )
+    )
 
 
 @mcp.tool()

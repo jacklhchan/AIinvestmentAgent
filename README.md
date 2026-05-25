@@ -14,6 +14,7 @@
 - SEC XBRL companyfacts 基本面快照：解析收入、淨收入、現金流、資產、負債、權益與 diluted EPS，並附上 YoY 變化
 - Event replay：把 portfolio、quotes、news/evidence、fundamental snapshots 匯出成 JSONL，再重播用於信號驗證
 - Hermes proposal drafting：根據 watchlist 新聞產生結構化 draft，可選擇送入既有風控與審批狀態機
+- Safe autonomy loop：定時刷新 Futu/新聞/SEC/基本面並建立 paper-only proposal，所有交易仍需人工批准
 - 繁體中文本機 dashboard：可看持倉、新聞、pending proposal、資料來源、刷新時間、audit trail，並在瀏覽器批准/拒絕
 - launchd 與 Hermes config 範例
 
@@ -118,6 +119,32 @@ Proposal draft 仍只由 directional news 觸發；SEC/IR primary-source evidenc
 
 如果 revenue、net income 或 operating cash flow 的 YoY 變化與新聞方向相反，draft 會降低信心分數並把反證寫入 `counter_evidence`。這仍然不會自動建立實盤交易，只是讓 Hermes/Codex 在審閱 proposal 時有更硬的 primary-source context。
 
+## Safe Autonomy Loop
+
+自治層會跑一個安全循環：刷新只讀資料、更新新聞與 primary sources、解析 SEC companyfacts、草擬交易提案，並在 cooldown 允許時建立 `PENDING` proposal。它不會批准 proposal、不會 unlock Futu、不會送 live order。
+
+```bash
+INVEST_AGENT_AUTONOMY_CYCLE_SECONDS=900
+INVEST_AGENT_AUTONOMY_CREATE_PROPOSALS=true
+INVEST_AGENT_AUTONOMY_REFRESH_FUTU=true
+INVEST_AGENT_AUTONOMY_REFRESH_NEWS=true
+INVEST_AGENT_AUTONOMY_REFRESH_PRIMARY_SOURCES=true
+INVEST_AGENT_AUTONOMY_REFRESH_FUNDAMENTALS=true
+INVEST_AGENT_AUTONOMY_PRIMARY_EVERY_CYCLES=4
+INVEST_AGENT_AUTONOMY_FUNDAMENTALS_EVERY_CYCLES=16
+INVEST_AGENT_AUTONOMY_PROPOSAL_COOLDOWN_MINUTES=240
+```
+
+手動跑一次或查狀態：
+
+```bash
+python -m invest_agent.cli autonomy-once
+python -m invest_agent.cli autonomy-status
+python -m invest_agent.cli autonomy-loop
+```
+
+macOS 常駐範例在 `deploy/launchd/com.local.invest-agent-scheduler.plist`。Dashboard 也有 `執行自治循環` 按鈕與 `安全自治狀態` 面板。
+
 ## Hermes + Codex LLM 設定
 
 Hermes 官方文件目前支援 `OpenAI Codex` provider，可用 `hermes model` 進行 ChatGPT OAuth。這個專案預設讓 Hermes 使用 Codex model，再透過 stdio MCP server 連到本機投資控制平面。
@@ -149,6 +176,8 @@ mcp_servers:
         - refresh_primary_source_filings
         - refresh_sec_company_facts
         - get_fundamental_snapshot
+        - get_safe_autonomy_status
+        - run_safe_autonomy_cycle
         - export_event_replay_file
         - replay_event_file
         - draft_trade_proposals_from_watchlist
@@ -169,6 +198,7 @@ mcp_servers:
 ```text
 請用 invest_agent 工具列出 pending proposals，並解釋每個提案的風險檢查。
 請刷新 AAPL 的 SEC companyfacts，然後說明收入、淨收入和 operating cash flow 是否支持最新 draft。
+請查看 safe autonomy 狀態，如有需要執行一次自治循環，但不要批准任何 proposal。
 ```
 
 ## 安全邊界

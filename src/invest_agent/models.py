@@ -197,6 +197,26 @@ class DraftProposalResult(BaseModel):
     skipped: list[str] = Field(default_factory=list)
 
 
+class AutomationStepResult(BaseModel):
+    name: str
+    status: str
+    started_at: datetime = Field(default_factory=utc_now)
+    finished_at: datetime = Field(default_factory=utc_now)
+    message: str = ""
+    metrics: dict[str, Any] = Field(default_factory=dict)
+
+
+class AutomationRunResult(BaseModel):
+    mode: str = "once"
+    started_at: datetime = Field(default_factory=utc_now)
+    finished_at: datetime = Field(default_factory=utc_now)
+    cycle_number: int = 1
+    created_proposals: list[Proposal] = Field(default_factory=list)
+    skipped: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    steps: list[AutomationStepResult] = Field(default_factory=list)
+
+
 class EventReplayResult(BaseModel):
     path: str
     imported_counts: dict[str, int] = Field(default_factory=dict)

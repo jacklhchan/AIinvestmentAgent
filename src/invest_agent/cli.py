@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 
+from .autonomy import SafeAutonomyRunner, autonomy_status
 from .config import get_settings
 from .demo_data import seed_demo_data
 from .deps import get_service, get_store
@@ -95,6 +96,19 @@ def event_replay_main(path: str | None = None) -> None:
     print(json.dumps(_json(result), indent=2, ensure_ascii=False))
 
 
+def autonomy_once_main() -> None:
+    result = SafeAutonomyRunner(get_settings(), get_store(), get_service()).run_cycle(mode="cli-once")
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def autonomy_loop_main() -> None:
+    SafeAutonomyRunner(get_settings(), get_store(), get_service()).run_forever()
+
+
+def autonomy_status_main() -> None:
+    print(json.dumps(autonomy_status(get_settings(), get_store()), indent=2, ensure_ascii=False))
+
+
 def _json(value):
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
@@ -120,6 +134,9 @@ def main() -> None:
             "fundamentals-refresh",
             "event-export",
             "event-replay",
+            "autonomy-once",
+            "autonomy-loop",
+            "autonomy-status",
         ],
     )
     parser.add_argument("--path", default=str(DEFAULT_REPLAY_PATH))
@@ -144,6 +161,12 @@ def main() -> None:
         event_export_main(args.path)
     if args.command == "event-replay":
         event_replay_main(args.path)
+    if args.command == "autonomy-once":
+        autonomy_once_main()
+    if args.command == "autonomy-loop":
+        autonomy_loop_main()
+    if args.command == "autonomy-status":
+        autonomy_status_main()
 
 
 if __name__ == "__main__":

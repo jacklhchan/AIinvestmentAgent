@@ -19,6 +19,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
 - SEC companyfacts/XBRL fundamentals ingestion for revenue, net income, operating income, operating cash flow, assets, liabilities, equity, and diluted EPS.
 - Event replay export/import for portfolio, quotes, news/evidence, and fundamental snapshot JSONL.
 - Proposal draft engine that turns recent symbol-specific watchlist news into structured draft proposals and can optionally send them through the existing policy engine.
+- Safe autonomy loop that refreshes read-only data, drafts watchlist proposals, applies proposal cooldown, and creates only paper-mode pending proposals for human approval.
 - Risk checks for max notional, cash availability, portfolio percentage, confidence floor, duplicate pending proposals, and approval-time price drift.
 - Traditional Chinese browser dashboard for portfolio, pending proposals, create proposal, approve/reject, positions, news digest, source provenance, refresh timestamps, and recent audit events.
 - Futu OpenD read-only refresh for account funds, positions, and position quote snapshots.
@@ -31,6 +32,8 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - `refresh_primary_source_filings`
   - `refresh_sec_company_facts`
   - `get_fundamental_snapshot`
+  - `get_safe_autonomy_status`
+  - `run_safe_autonomy_cycle`
   - `export_event_replay_file`
   - `replay_event_file`
   - `draft_trade_proposals_from_watchlist`
@@ -41,7 +44,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - `approve_trade_proposal`
   - `reject_trade_proposal`
 - Hermes config snippet at `deploy/hermes/config.snippet.yaml`.
-- launchd example plist at `deploy/launchd/com.local.invest-agent-api.plist`.
+- launchd example plists at `deploy/launchd/com.local.invest-agent-api.plist` and `deploy/launchd/com.local.invest-agent-scheduler.plist`.
 - Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, non-pending state handling, Futu adapter mapping, dashboard localization, news parsing, watchlist resolution, SEC/IR parsing, event replay, and proposal draft creation.
 
 ## Local Hermes/Codex Setup
@@ -57,7 +60,7 @@ The global Hermes config at `/Users/apple/.hermes/config.yaml` has been updated 
 
 `hermes auth status openai-codex` shows logged in.
 
-`hermes mcp list` shows `invest_agent` enabled with 17 selected tools.
+`hermes mcp list` shows `invest_agent` enabled with 19 selected tools.
 
 ## Futu Setup
 
@@ -118,6 +121,28 @@ The app now parses SEC `companyfacts` XBRL JSON into local fundamental snapshots
 
 This phase still does not unlock Futu OpenD and does not place live orders.
 
+## Safe Autonomy Loop
+
+The app now has a safe autonomous scheduler.
+
+- `python -m invest_agent.cli autonomy-loop` runs the continuous local loop.
+- `python -m invest_agent.cli autonomy-once` runs one full cycle for smoke testing.
+- `python -m invest_agent.cli autonomy-status` reports the latest completed cycle from audit events.
+- `GET /api/autonomy/status` and `POST /api/autonomy/run` expose the same controls to the dashboard.
+- Hermes MCP exposes `get_safe_autonomy_status` and `run_safe_autonomy_cycle`.
+- The loop can refresh read-only Futu data, market news, SEC/IR filings, and SEC companyfacts.
+- Proposal creation has a configurable cooldown, defaulting to 240 minutes per symbol/side, to avoid repeated pending proposals.
+- Created proposals remain `PENDING` / paper-only until a human approves them.
+
+This phase still does not unlock Futu OpenD and does not place live orders.
+
+Local launchd status:
+
+- `com.local.invest-agent-api` is installed under `/Users/apple/Library/LaunchAgents` and running.
+- `com.local.invest-agent-scheduler` is installed under `/Users/apple/Library/LaunchAgents` and running.
+- Scheduler cycle interval is currently 900 seconds.
+- Latest launchd loop cycle completed successfully and created 0 new proposals because cooldown / existing proposal state applied.
+
 ## Dashboard UX
 
 The dashboard is now localized in Traditional Chinese and includes:
@@ -125,6 +150,7 @@ The dashboard is now localized in Traditional Chinese and includes:
 - Source badges for `Demo`, `富途 OpenD`, and local data.
 - Portfolio, quote, news, and audit refresh timestamps.
 - Futu OpenD connection status for the configured host/port.
+- Safe autonomy status and a manual `執行自治循環` action.
 - A recent audit trail panel so proposal, approval, paper execution, and Futu refresh events are visible without leaving the browser.
 
 ## Run Commands
@@ -153,7 +179,7 @@ Latest verification completed:
 Result:
 
 ```text
-27 passed
+30 passed
 ```
 
 HTTP checks were also verified:
@@ -164,6 +190,8 @@ HTTP checks were also verified:
 - `POST /api/primary-sources/refresh`
 - `GET /api/fundamentals`
 - `POST /api/fundamentals/refresh`
+- `GET /api/autonomy/status`
+- `POST /api/autonomy/run`
 - `POST /api/events/export`
 - `POST /api/events/replay`
 - `POST /api/proposal-drafts`
@@ -177,6 +205,8 @@ HTTP checks were also verified:
 - `python -m invest_agent.cli news-refresh`
 - `python -m invest_agent.cli primary-refresh`
 - `python -m invest_agent.cli fundamentals-refresh`
+- `python -m invest_agent.cli autonomy-once`
+- `python -m invest_agent.cli autonomy-status`
 - `python -m invest_agent.cli event-export`
 - `python -m invest_agent.cli event-replay`
 - `python -m invest_agent.cli draft-proposals`
@@ -186,6 +216,8 @@ The dashboard was visually checked in the Codex in-app browser.
 Futu OpenD read-only refresh was validated against the local OpenD on port `11111`; it refreshed 7 positions and 7 quote snapshots.
 
 SEC companyfacts live smoke was validated against the configured watchlist. It refreshed 5 company snapshots; `US.VOO` was skipped because SEC companyfacts has no company CIK for the ETF.
+
+Safe autonomy smoke was validated locally. It runs without live trading, records audit events, and creates only paper-mode pending proposals when cooldown allows.
 
 ## Not Tracked In Git
 

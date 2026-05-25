@@ -287,10 +287,13 @@ class Store:
                 ),
             )
 
-    def list_audit_events(self, limit: int = 100) -> list[dict[str, Any]]:
+    def list_audit_events(self, limit: int = 100, event_type: str | None = None) -> list[dict[str, Any]]:
+        if event_type:
+            query = "SELECT * FROM audit_events WHERE event_type = ? ORDER BY id DESC LIMIT ?"
+            args: tuple[Any, ...] = (event_type, limit)
+        else:
+            query = "SELECT * FROM audit_events ORDER BY id DESC LIMIT ?"
+            args = (limit,)
         with self.connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM audit_events ORDER BY id DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
+            rows = conn.execute(query, args).fetchall()
         return [dict(row) for row in rows]

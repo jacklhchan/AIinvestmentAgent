@@ -37,6 +37,15 @@ class Settings(BaseModel):
     sec_timeout_seconds: float = 8.0
     primary_source_lookback_days: int = 45
     ir_rss_feeds: str = ""
+    autonomy_cycle_seconds: int = 900
+    autonomy_create_proposals: bool = True
+    autonomy_refresh_futu: bool = True
+    autonomy_refresh_news: bool = True
+    autonomy_refresh_primary_sources: bool = True
+    autonomy_refresh_fundamentals: bool = True
+    autonomy_primary_every_cycles: int = 4
+    autonomy_fundamentals_every_cycles: int = 16
+    autonomy_proposal_cooldown_minutes: int = 240
 
     futu_host: str = "127.0.0.1"
     futu_monitor_port: int = 11111
@@ -111,6 +120,15 @@ def get_settings() -> Settings:
         sec_timeout_seconds=_float_env("INVEST_AGENT_SEC_TIMEOUT_SECONDS", 8.0),
         primary_source_lookback_days=_int_env("INVEST_AGENT_PRIMARY_SOURCE_LOOKBACK_DAYS", 45),
         ir_rss_feeds=os.getenv("INVEST_AGENT_IR_RSS_FEEDS", ""),
+        autonomy_cycle_seconds=_int_env("INVEST_AGENT_AUTONOMY_CYCLE_SECONDS", 900),
+        autonomy_create_proposals=_bool_env("INVEST_AGENT_AUTONOMY_CREATE_PROPOSALS", True),
+        autonomy_refresh_futu=_bool_env("INVEST_AGENT_AUTONOMY_REFRESH_FUTU", True),
+        autonomy_refresh_news=_bool_env("INVEST_AGENT_AUTONOMY_REFRESH_NEWS", True),
+        autonomy_refresh_primary_sources=_bool_env("INVEST_AGENT_AUTONOMY_REFRESH_PRIMARY_SOURCES", True),
+        autonomy_refresh_fundamentals=_bool_env("INVEST_AGENT_AUTONOMY_REFRESH_FUNDAMENTALS", True),
+        autonomy_primary_every_cycles=_int_env("INVEST_AGENT_AUTONOMY_PRIMARY_EVERY_CYCLES", 4),
+        autonomy_fundamentals_every_cycles=_int_env("INVEST_AGENT_AUTONOMY_FUNDAMENTALS_EVERY_CYCLES", 16),
+        autonomy_proposal_cooldown_minutes=_int_env("INVEST_AGENT_AUTONOMY_PROPOSAL_COOLDOWN_MINUTES", 240),
         futu_host=os.getenv("FUTU_HOST", "127.0.0.1"),
         futu_monitor_port=_int_env("FUTU_MONITOR_PORT", 11111),
         futu_trade_port=_int_env("FUTU_TRADE_PORT", 11112),
