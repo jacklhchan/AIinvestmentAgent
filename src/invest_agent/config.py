@@ -31,6 +31,12 @@ class Settings(BaseModel):
     news_max_symbols: int = 6
     news_timeout_seconds: float = 5.0
     google_news_fallback_enabled: bool = True
+    sec_user_agent: str = "AIinvestmentAgent/0.1 local-use contact@example.com"
+    sec_forms: str = "10-K,10-Q,8-K,20-F,6-K"
+    sec_max_filings_per_symbol: int = 5
+    sec_timeout_seconds: float = 8.0
+    primary_source_lookback_days: int = 45
+    ir_rss_feeds: str = ""
 
     futu_host: str = "127.0.0.1"
     futu_monitor_port: int = 11111
@@ -99,6 +105,12 @@ def get_settings() -> Settings:
         news_max_symbols=_int_env("INVEST_AGENT_NEWS_MAX_SYMBOLS", 6),
         news_timeout_seconds=_float_env("INVEST_AGENT_NEWS_TIMEOUT_SECONDS", 5.0),
         google_news_fallback_enabled=_bool_env("INVEST_AGENT_GOOGLE_NEWS_FALLBACK_ENABLED", True),
+        sec_user_agent=os.getenv("INVEST_AGENT_SEC_USER_AGENT", "AIinvestmentAgent/0.1 local-use contact@example.com"),
+        sec_forms=os.getenv("INVEST_AGENT_SEC_FORMS", "10-K,10-Q,8-K,20-F,6-K"),
+        sec_max_filings_per_symbol=_int_env("INVEST_AGENT_SEC_MAX_FILINGS_PER_SYMBOL", 5),
+        sec_timeout_seconds=_float_env("INVEST_AGENT_SEC_TIMEOUT_SECONDS", 8.0),
+        primary_source_lookback_days=_int_env("INVEST_AGENT_PRIMARY_SOURCE_LOOKBACK_DAYS", 45),
+        ir_rss_feeds=os.getenv("INVEST_AGENT_IR_RSS_FEEDS", ""),
         futu_host=os.getenv("FUTU_HOST", "127.0.0.1"),
         futu_monitor_port=_int_env("FUTU_MONITOR_PORT", 11111),
         futu_trade_port=_int_env("FUTU_TRADE_PORT", 11112),

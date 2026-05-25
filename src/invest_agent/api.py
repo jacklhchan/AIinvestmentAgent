@@ -7,10 +7,14 @@ from pydantic import BaseModel
 
 from .config import get_settings
 from .deps import get_service, get_store
+from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event_file
 from .futu_adapter import FutuIntegrationError, get_futu_status, refresh_futu_readonly
+from .ir_feeds import IrFeedIngestor
 from .market_news import MarketNewsIngestor, resolve_watchlist_symbols
 from .models import ProposalCreate, ProposalStatus
+from .primary_sources import refresh_primary_sources
 from .proposal_drafts import ProposalDraftEngine
+from .sec_edgar import SecEdgarIngestor
 
 
 class RejectRequest(BaseModel):
@@ -32,6 +36,21 @@ class DraftRequest(BaseModel):
     lookback_hours: int = 72
     max_drafts: int | None = None
     create_proposals: bool = False
+
+
+class PrimarySourceRefreshRequest(BaseModel):
+    symbols: list[str] | None = None
+    include_sec: bool = True
+    include_ir: bool = True
+    forms: list[str] | None = None
+    max_filings: int | None = None
+    max_symbols: int | None = None
+
+
+class EventReplayRequest(BaseModel):
+    path: str = str(DEFAULT_REPLAY_PATH)
+    create_proposals: bool = False
+    run_drafts: bool = True
 
 
 app = FastAPI(
@@ -91,6 +110,41 @@ def refresh_news(request: NewsRefreshRequest | None = None):
         include_gdelt=request.include_gdelt,
         include_google_news=request.include_google_news,
         include_finnhub=request.include_finnhub,
+    )
+
+
+@app.post("/api/primary-sources/refresh")
+def refresh_primary_sources_api(request: PrimarySourceRefreshRequest | None = None):
+    request = request or PrimarySourceRefreshRequest()
+    settings = get_settings()
+    store = get_store()
+    return refresh_primary_sources(
+        SecEdgarIngestor(settings, store),
+        IrFeedIngestor(settings, store),
+        symbols=request.symbols,
+        include_sec=request.include_sec,
+        include_ir=request.include_ir,
+        forms=request.forms,
+        max_filings=request.max_filings,
+        max_symbols=request.max_symbols,
+    )
+
+
+@app.post("/api/events/export")
+def export_events(request: EventReplayRequest | None = None):
+    request = request or EventReplayRequest()
+    return export_event_replay(get_store(), request.path)
+
+
+@app.post("/api/events/replay")
+def replay_events(request: EventReplayRequest | None = None):
+    request = request or EventReplayRequest()
+    return replay_event_file(
+        get_settings(),
+        get_store(),
+        request.path,
+        create_proposals=request.create_proposals,
+        run_drafts=request.run_drafts,
     )
 
 
@@ -354,6 +408,8 @@ DASHBOARD_HTML = """
     .source-gdelt { color: #7047a8; border-color: #c2a8df; background: #f6f0ff; }
     .source-google-news { color: #3f6b20; border-color: #a8c990; background: #f1faed; }
     .source-finnhub { color: #0f7a8a; border-color: #91cfda; background: #edfafd; }
+    .source-sec-edgar { color: #74431b; border-color: #d7b48a; background: #fff5e8; }
+    .source-company-ir { color: #7a2457; border-color: #d6a2c0; background: #fff0f8; }
     .source-local { color: var(--slate); border-color: #b6c0bd; background: #f3f6f5; }
     .PENDING { color: var(--amber); border-color: #dfc68a; background: #fff7df; }
     .APPROVED, .EXECUTED { color: var(--mint); border-color: #9ad6c5; background: #eaf8f3; }
@@ -456,6 +512,7 @@ DASHBOARD_HTML = """
       </div>
       <div class="bar-actions">
         <button class="secondary" id="news-refresh" type="button">刷新市場新聞</button>
+        <button class="secondary" id="primary-refresh" type="button">刷新 SEC/IR</button>
         <button class="secondary" id="draft-proposals" type="button">草擬並送風控</button>
         <button class="secondary" id="futu-refresh" type="button">刷新富途 OpenD</button>
         <div class="mode" id="mode">載入中</div>
@@ -556,6 +613,8 @@ DASHBOARD_HTML = """
       gdelt: "GDELT",
       "google-news": "Google News",
       finnhub: "Finnhub",
+      "sec-edgar": "SEC EDGAR",
+      "company-ir": "公司 IR",
       local: "本機"
     };
     const eventLabels = {
@@ -569,7 +628,11 @@ DASHBOARD_HTML = """
       proposal_expired: "提案已過期",
       paper_execution_recorded: "紙上交易紀錄",
       market_news_refreshed: "市場新聞已刷新",
-      proposal_drafts_generated: "提案草稿已產生"
+      proposal_drafts_generated: "提案草稿已產生",
+      sec_filings_refreshed: "SEC filings 已刷新",
+      ir_feeds_refreshed: "公司 IR 已刷新",
+      event_replay_exported: "事件重播已匯出",
+      events_replayed: "事件已重播"
     };
     const sourceClass = source => `source-${String(source || "local").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
     const sourceBadge = source => `<span class="source-badge ${sourceClass(source)}">${escapeHtml(sourceLabels[source] || source || "本機")}</span>`;
@@ -741,6 +804,20 @@ DASHBOARD_HTML = """
         const result = await api("/api/news/refresh", { method: "POST", body: JSON.stringify({}) });
         const errorNote = result.errors?.length ? `；${result.errors.length} 個來源有錯誤` : "";
         setToast(`市場新聞已入庫：${result.stored_count} 筆，watchlist ${result.symbols.length} 個標的${errorNote}`);
+        await loadAll();
+      } catch (error) {
+        setToast(error.message);
+      } finally {
+        event.target.disabled = false;
+      }
+    });
+    document.querySelector("#primary-refresh").addEventListener("click", async event => {
+      event.target.disabled = true;
+      setToast("正在刷新 SEC/IR primary-source evidence...");
+      try {
+        const result = await api("/api/primary-sources/refresh", { method: "POST", body: JSON.stringify({}) });
+        const errorNote = result.errors?.length ? `；${result.errors.length} 個來源有錯誤` : "";
+        setToast(`SEC/IR 已入庫：${result.stored_count} 筆 primary-source evidence${errorNote}`);
         await loadAll();
       } catch (error) {
         setToast(error.message);

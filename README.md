@@ -10,6 +10,8 @@
 - Hermes stdio MCP server：讓 Hermes 讀 portfolio/news/proposals 並建立/批准/拒絕 proposal
 - Futu OpenD read-only refresh：讀取資金、持倉與持倉 quote snapshot，不 unlock trade
 - Market/news ingestion：從 watchlist 抓取 GDELT，並在有 `FINNHUB_API_KEY` 時補 Finnhub company news
+- SEC/IR primary-source ingestion：SEC EDGAR filings 預設可用；公司 IR RSS 可透過 `.env` 設定
+- Event replay：把 portfolio、quotes、news/evidence 匯出成 JSONL，再重播用於信號驗證
 - Hermes proposal drafting：根據 watchlist 新聞產生結構化 draft，可選擇送入既有風控與審批狀態機
 - 繁體中文本機 dashboard：可看持倉、新聞、pending proposal、資料來源、刷新時間、audit trail，並在瀏覽器批准/拒絕
 - launchd 與 Hermes config 範例
@@ -62,6 +64,12 @@ INVEST_AGENT_NEWS_MAX_PER_SYMBOL=5
 INVEST_AGENT_NEWS_MAX_SYMBOLS=6
 INVEST_AGENT_NEWS_TIMEOUT_SECONDS=5
 INVEST_AGENT_GOOGLE_NEWS_FALLBACK_ENABLED=true
+INVEST_AGENT_SEC_USER_AGENT=AIinvestmentAgent/0.1 local-use contact@example.com
+INVEST_AGENT_SEC_FORMS=10-K,10-Q,8-K,20-F,6-K
+INVEST_AGENT_SEC_MAX_FILINGS_PER_SYMBOL=5
+INVEST_AGENT_SEC_TIMEOUT_SECONDS=8
+INVEST_AGENT_PRIMARY_SOURCE_LOOKBACK_DAYS=45
+INVEST_AGENT_IR_RSS_FEEDS=
 FINNHUB_API_KEY=
 ```
 
@@ -74,6 +82,24 @@ python -m invest_agent.cli draft-proposals
 ```
 
 Dashboard 的 `刷新市場新聞` 會把最新新聞寫入本機 store；`草擬並送風控` 會把 draft 轉成現有 proposal，然後由風控決定 `PENDING` 或 `RISK_REJECTED`。即使通過審批，仍然只做 paper execution。
+
+## SEC/IR Primary Sources + Event Replay
+
+SEC EDGAR ingestion 使用官方 `data.sec.gov/submissions/CIK##########.json` filing history，把 `10-K`、`10-Q`、`8-K`、`20-F`、`6-K` 等 filings 寫入本機 evidence store，來源標記為 `SEC EDGAR` / `primary-source`。公司 IR RSS 可用 `INVEST_AGENT_IR_RSS_FEEDS` 加入，例如：
+
+```bash
+INVEST_AGENT_IR_RSS_FEEDS=AAPL=https://example.com/aapl-ir.xml;MSFT=https://example.com/msft-ir.xml
+```
+
+手動刷新與重播：
+
+```bash
+python -m invest_agent.cli primary-refresh
+python -m invest_agent.cli event-export --path artifacts/replay/latest-events.jsonl
+python -m invest_agent.cli event-replay --path artifacts/replay/latest-events.jsonl
+```
+
+Proposal draft 仍只由 directional news 觸發；SEC/IR primary-source evidence 會被附加作為背景證據，不會單靠 filing 自動產生交易方向。
 
 ## Hermes + Codex LLM 設定
 
@@ -103,6 +129,9 @@ mcp_servers:
         - get_watchlist_symbols
         - get_news_digest
         - refresh_market_news
+        - refresh_primary_source_filings
+        - export_event_replay_file
+        - replay_event_file
         - draft_trade_proposals_from_watchlist
         - get_futu_connection_status
         - refresh_futu_readonly_snapshot

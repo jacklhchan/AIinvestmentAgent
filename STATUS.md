@@ -15,6 +15,8 @@ This version is intentionally paper-only. It can create trade proposals, run pol
 - Demo portfolio, quotes, and news seed data.
 - Watchlist resolver that merges configured symbols, held positions, and locally cached quotes.
 - Market/news ingestion from GDELT, Google News RSS fallback, and optional Finnhub company news when `FINNHUB_API_KEY` is configured.
+- SEC EDGAR primary-source ingestion for company filings, plus configurable company IR RSS ingestion.
+- Event replay export/import for portfolio, quotes, and news/evidence JSONL.
 - Proposal draft engine that turns recent symbol-specific watchlist news into structured draft proposals and can optionally send them through the existing policy engine.
 - Risk checks for max notional, cash availability, portfolio percentage, confidence floor, duplicate pending proposals, and approval-time price drift.
 - Traditional Chinese browser dashboard for portfolio, pending proposals, create proposal, approve/reject, positions, news digest, source provenance, refresh timestamps, and recent audit events.
@@ -25,6 +27,9 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - `get_watchlist_symbols`
   - `get_news_digest`
   - `refresh_market_news`
+  - `refresh_primary_source_filings`
+  - `export_event_replay_file`
+  - `replay_event_file`
   - `draft_trade_proposals_from_watchlist`
   - `get_futu_connection_status`
   - `refresh_futu_readonly_snapshot`
@@ -34,7 +39,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - `reject_trade_proposal`
 - Hermes config snippet at `deploy/hermes/config.snippet.yaml`.
 - launchd example plist at `deploy/launchd/com.local.invest-agent-api.plist`.
-- Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, non-pending state handling, Futu adapter mapping, dashboard localization, news parsing, watchlist resolution, and proposal draft creation.
+- Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, non-pending state handling, Futu adapter mapping, dashboard localization, news parsing, watchlist resolution, SEC/IR parsing, event replay, and proposal draft creation.
 
 ## Local Hermes/Codex Setup
 
@@ -49,7 +54,7 @@ The global Hermes config at `/Users/apple/.hermes/config.yaml` has been updated 
 
 `hermes auth status openai-codex` shows logged in.
 
-`hermes mcp list` shows `invest_agent` enabled with 12 selected tools.
+`hermes mcp list` shows `invest_agent` enabled with 15 selected tools.
 
 ## Futu Setup
 
@@ -83,6 +88,18 @@ The app now implements the next design-plan slice: a middle-loop news cadence pl
 - CLI commands are available through `python -m invest_agent.cli news-refresh`, `draft-proposals`, and `draft-and-create`.
 
 This phase still does not unlock Futu OpenD and does not place live orders.
+
+## Primary Sources + Event Replay
+
+The app now ingests primary-source evidence before relying on news-derived proposal quality.
+
+- `POST /api/primary-sources/refresh` refreshes SEC EDGAR filings and configured company IR RSS feeds.
+- SEC filings are stored as `sec-edgar` / `primary-source` news items.
+- Company IR RSS items are stored as `company-ir` / `primary-source` news items when `INVEST_AGENT_IR_RSS_FEEDS` is configured.
+- Proposal drafts still require directional news; primary-source evidence is attached as context and does not independently create a trade direction.
+- `python -m invest_agent.cli event-export` writes portfolio, quotes, and news/evidence to JSONL.
+- `python -m invest_agent.cli event-replay` replays that JSONL and re-runs draft generation for signal review.
+- Dashboard has a `刷新 SEC/IR` action and displays `SEC EDGAR` / `公司 IR` source badges.
 
 ## Dashboard UX
 
@@ -119,7 +136,7 @@ Latest verification completed:
 Result:
 
 ```text
-15 passed
+24 passed
 ```
 
 HTTP checks were also verified:
@@ -127,6 +144,9 @@ HTTP checks were also verified:
 - `GET /health`
 - `GET /api/news`
 - `POST /api/news/refresh`
+- `POST /api/primary-sources/refresh`
+- `POST /api/events/export`
+- `POST /api/events/replay`
 - `POST /api/proposal-drafts`
 - `GET /api/watchlist`
 - `GET /api/proposals`
@@ -136,6 +156,9 @@ HTTP checks were also verified:
 - `POST /api/futu/refresh`
 - `python -m invest_agent.cli futu-refresh`
 - `python -m invest_agent.cli news-refresh`
+- `python -m invest_agent.cli primary-refresh`
+- `python -m invest_agent.cli event-export`
+- `python -m invest_agent.cli event-replay`
 - `python -m invest_agent.cli draft-proposals`
 
 The dashboard was visually checked in the Codex in-app browser.
@@ -156,5 +179,5 @@ The following are local runtime artifacts and intentionally ignored:
 ## Next Steps
 
 - Decide whether Telegram approval should be handled directly by Hermes Gateway or a dedicated approval bot.
-- Add SEC/IR primary-source ingestion and event replay before relying on news-derived proposal quality.
+- Add richer SEC XBRL companyfacts interpretation before increasing draft confidence from primary-source evidence.
 - Keep live execution disabled until Keychain secret loading, two-OpenD separation, broker-side revalidation, order/deal reconciliation, and a small live smoke-test plan are implemented.

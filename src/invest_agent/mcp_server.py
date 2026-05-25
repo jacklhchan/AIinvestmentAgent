@@ -6,10 +6,14 @@ from mcp.server.fastmcp import FastMCP
 
 from .deps import get_service, get_store
 from .config import get_settings
+from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event_file as replay_events_from_file
 from .futu_adapter import get_futu_status, refresh_futu_readonly
+from .ir_feeds import IrFeedIngestor
 from .market_news import MarketNewsIngestor, resolve_watchlist_symbols
 from .models import ProposalCreate, ProposalStatus, Side
+from .primary_sources import refresh_primary_sources
 from .proposal_drafts import ProposalDraftEngine
+from .sec_edgar import SecEdgarIngestor
 
 mcp = FastMCP("AI Investment Agent Control Plane")
 
@@ -64,6 +68,44 @@ def refresh_market_news(
             include_google_news=include_google_news,
         )
     )
+
+
+@mcp.tool()
+def refresh_primary_source_filings(
+    symbols: list[str] | None = None,
+    include_sec: bool = True,
+    include_ir: bool = True,
+    forms: list[str] | None = None,
+    max_filings: int | None = None,
+    max_symbols: int | None = None,
+) -> dict:
+    """Refresh SEC EDGAR filings and configured company IR RSS feeds as primary-source evidence."""
+    settings = get_settings()
+    store = get_store()
+    return _json(
+        refresh_primary_sources(
+            SecEdgarIngestor(settings, store),
+            IrFeedIngestor(settings, store),
+            symbols=symbols,
+            include_sec=include_sec,
+            include_ir=include_ir,
+            forms=forms,
+            max_filings=max_filings,
+            max_symbols=max_symbols,
+        )
+    )
+
+
+@mcp.tool()
+def export_event_replay_file(path: str = str(DEFAULT_REPLAY_PATH), news_limit: int = 100) -> dict:
+    """Export current portfolio, quotes, and news into a JSONL event replay file."""
+    return _json(export_event_replay(get_store(), path, news_limit=news_limit))
+
+
+@mcp.tool()
+def replay_event_file(path: str = str(DEFAULT_REPLAY_PATH), create_proposals: bool = False) -> dict:
+    """Replay a local JSONL event file into the store and optionally create policy-checked proposals."""
+    return _json(replay_events_from_file(get_settings(), get_store(), path, create_proposals=create_proposals))
 
 
 @mcp.tool()

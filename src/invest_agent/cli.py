@@ -6,10 +6,14 @@ import json
 from .config import get_settings
 from .demo_data import seed_demo_data
 from .deps import get_service, get_store
+from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event_file
 from .futu_adapter import refresh_futu_readonly
+from .ir_feeds import IrFeedIngestor
 from .market_news import MarketNewsIngestor
 from .models import ProposalCreate, Side
+from .primary_sources import refresh_primary_sources
 from .proposal_drafts import ProposalDraftEngine
+from .sec_edgar import SecEdgarIngestor
 
 
 def seed_main() -> None:
@@ -68,6 +72,23 @@ def draft_and_create_main() -> None:
     print(json.dumps(_json(result), indent=2, ensure_ascii=False))
 
 
+def primary_refresh_main() -> None:
+    settings = get_settings()
+    store = get_store()
+    result = refresh_primary_sources(SecEdgarIngestor(settings, store), IrFeedIngestor(settings, store))
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def event_export_main(path: str | None = None) -> None:
+    result = export_event_replay(get_store(), path or DEFAULT_REPLAY_PATH)
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def event_replay_main(path: str | None = None) -> None:
+    result = replay_event_file(get_settings(), get_store(), path or DEFAULT_REPLAY_PATH)
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
 def _json(value):
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
@@ -80,7 +101,21 @@ def _json(value):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="AI Investment Agent helper commands")
-    parser.add_argument("command", choices=["seed", "smoke", "futu-refresh", "news-refresh", "draft-proposals", "draft-and-create"])
+    parser.add_argument(
+        "command",
+        choices=[
+            "seed",
+            "smoke",
+            "futu-refresh",
+            "news-refresh",
+            "draft-proposals",
+            "draft-and-create",
+            "primary-refresh",
+            "event-export",
+            "event-replay",
+        ],
+    )
+    parser.add_argument("--path", default=str(DEFAULT_REPLAY_PATH))
     args = parser.parse_args()
     if args.command == "seed":
         seed_main()
@@ -94,6 +129,12 @@ def main() -> None:
         draft_proposals_main()
     if args.command == "draft-and-create":
         draft_and_create_main()
+    if args.command == "primary-refresh":
+        primary_refresh_main()
+    if args.command == "event-export":
+        event_export_main(args.path)
+    if args.command == "event-replay":
+        event_replay_main(args.path)
 
 
 if __name__ == "__main__":

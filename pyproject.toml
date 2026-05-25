@@ -31,6 +31,9 @@ invest-agent-futu-refresh = "invest_agent.cli:futu_refresh_main"
 invest-agent-news-refresh = "invest_agent.cli:news_refresh_main"
 invest-agent-draft-proposals = "invest_agent.cli:draft_proposals_main"
 invest-agent-draft-and-create = "invest_agent.cli:draft_and_create_main"
+invest-agent-primary-refresh = "invest_agent.cli:primary_refresh_main"
+invest-agent-event-export = "invest_agent.cli:event_export_main"
+invest-agent-event-replay = "invest_agent.cli:event_replay_main"
 
 [build-system]
 requires = ["setuptools>=70.0.0", "wheel"]

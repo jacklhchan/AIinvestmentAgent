@@ -64,3 +64,61 @@ def test_draft_can_create_policy_checked_proposal(tmp_path) -> None:
     assert len(result.created) == 1
     assert result.created[0].status == ProposalStatus.PENDING
     assert result.created[0].evidence
+
+
+def test_primary_source_context_is_attached_to_news_draft(tmp_path) -> None:
+    engine, store = make_engine(tmp_path)
+    store.upsert_news(
+        NewsItem(
+            symbol="GOOGL",
+            title="Alphabet cloud demand beats expectations",
+            source="google-news",
+            published_at=utc_now(),
+            summary="Demand remains strong.",
+        )
+    )
+    store.upsert_news(
+        NewsItem(
+            symbol="GOOGL",
+            title="SEC 10-Q filed for GOOGL",
+            source="sec-edgar",
+            published_at=utc_now(),
+            tags=["primary-source", "sec-edgar", "10-q"],
+            summary="Primary-source SEC EDGAR filing.",
+        )
+    )
+
+    result = engine.draft_from_watchlist(symbols=["GOOGL"])
+
+    assert len(result.drafts) == 1
+    assert any("sec-edgar" in item for item in result.drafts[0].evidence)
+    assert "SEC/IR primary-source context is attached" in result.drafts[0].counter_evidence[0]
+
+
+def test_primary_source_lookback_is_longer_than_news_window(tmp_path) -> None:
+    from datetime import timedelta
+
+    engine, store = make_engine(tmp_path)
+    store.upsert_news(
+        NewsItem(
+            symbol="GOOGL",
+            title="Alphabet cloud demand beats expectations",
+            source="google-news",
+            published_at=utc_now(),
+            summary="Demand remains strong.",
+        )
+    )
+    store.upsert_news(
+        NewsItem(
+            symbol="GOOGL",
+            title="SEC 10-Q filed for GOOGL",
+            source="sec-edgar",
+            published_at=utc_now() - timedelta(days=30),
+            tags=["primary-source", "sec-edgar", "10-q"],
+            summary="Primary-source SEC EDGAR filing.",
+        )
+    )
+
+    result = engine.draft_from_watchlist(symbols=["GOOGL"], lookback_hours=24)
+
+    assert any("SEC 10-Q" in item for item in result.drafts[0].evidence)

@@ -122,12 +122,15 @@ class ProposalDraftEngine:
 
     def _recent_news(self, symbol: str, *, lookback_hours: int) -> list[NewsItem]:
         cutoff = utc_now() - timedelta(hours=max(1, lookback_hours))
+        primary_cutoff = utc_now() - timedelta(days=max(1, self.settings.primary_source_lookback_days))
         news = self.store.list_news(limit=30, symbol=symbol)
         ticker = external_ticker(symbol)
         return [
             item
             for item in news
-            if item.published_at >= cutoff and item.symbol is not None and external_ticker(item.symbol) == ticker
+            if item.symbol is not None
+            and external_ticker(item.symbol) == ticker
+            and (item.published_at >= cutoff or (_is_primary_source(item) and item.published_at >= primary_cutoff))
         ]
 
     def _build_draft(self, symbol: str, news: list[NewsItem], score: int) -> ProposalDraft | None:
@@ -143,18 +146,31 @@ class ProposalDraftEngine:
             return None
 
         direction = "positive" if score > 0 else "negative"
-        top_news = news[:3]
-        evidence = [_news_reference(item) for item in top_news]
-        confidence = min(0.82, 0.42 + min(abs(score), 5) * 0.055 + min(len(news), 4) * 0.025)
-        counter_evidence = [
-            "No SEC/IR primary-source confirmation ingested in this slice.",
-            "Draft is generated from news cadence only; human review is required.",
-        ]
+        signal_items = [item for item in news if _score_news(item) != 0]
+        primary_items = [item for item in news if _is_primary_source(item)]
+        top_news = signal_items[:3]
+        top_primary = [item for item in primary_items[:2] if item.id not in {news_item.id for news_item in top_news}]
+        evidence = [_news_reference(item) for item in [*top_news, *top_primary]]
+        confidence = min(
+            0.82,
+            0.42 + min(abs(score), 5) * 0.055 + min(len(signal_items), 4) * 0.025 + (0.04 if primary_items else 0.0),
+        )
+        counter_evidence = (
+            [
+                "SEC/IR primary-source context is attached but not fully interpreted in this slice.",
+                "Draft is generated from news cadence only; human review is required.",
+            ]
+            if primary_items
+            else [
+                "No SEC/IR primary-source confirmation ingested in this slice.",
+                "Draft is generated from news cadence only; human review is required.",
+            ]
+        )
         thesis = (
             f"Watchlist news flow is {direction} for {symbol}. "
             f"The draft keeps notional small and sends the idea through policy checks before approval."
         )
-        trigger = f"{len(news)} recent market-news item(s), directional score {score}"
+        trigger = f"{len(signal_items)} directional item(s), {len(primary_items)} primary-source item(s), score {score}"
 
         return ProposalDraft(
             symbol=symbol,
@@ -168,7 +184,7 @@ class ProposalDraftEngine:
             counter_evidence=counter_evidence,
             score=score,
             news_count=len(news),
-            source_news_ids=[item.id for item in top_news],
+            source_news_ids=[item.id for item in [*top_news, *top_primary]],
         )
 
     def _draft_qty(self, side: Side, last_price: float, position_qty: float) -> int:
@@ -199,6 +215,10 @@ def _score_news(item: NewsItem) -> int:
         if term in haystack:
             score -= 1
     return score
+
+
+def _is_primary_source(item: NewsItem) -> bool:
+    return item.source in {"sec-edgar", "company-ir"} or "primary-source" in item.tags
 
 
 def _news_reference(item: NewsItem) -> str:

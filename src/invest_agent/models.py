@@ -159,6 +159,14 @@ class DraftProposalResult(BaseModel):
     skipped: list[str] = Field(default_factory=list)
 
 
+class EventReplayResult(BaseModel):
+    path: str
+    imported_counts: dict[str, int] = Field(default_factory=dict)
+    exported_counts: dict[str, int] = Field(default_factory=dict)
+    errors: list[str] = Field(default_factory=list)
+    draft_result: DraftProposalResult | None = None
+
+
 class ExecutionRecord(BaseModel):
     id: str = Field(default_factory=lambda: new_id("exec"))
     proposal_id: str
