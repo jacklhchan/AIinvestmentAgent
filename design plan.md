@@ -593,9 +593,16 @@ research_evidence
 - retrieved_at
 - freshness_status
 - verification_status
+- source_verified
+- added_via
 - confidence
 - caveat
 - contradicts_claim_ids[]
+
+proposals
+- research_goal_id
+- manual_override_reason
+- evidence_hash
 ```
 
 **新的 proposal flow**
@@ -609,6 +616,7 @@ Futu/SEC/IR/news/fundamentals refresh
 → evaluate evidence gate
 → if sufficient: create PENDING proposal through policy engine
 → if insufficient: keep research note only, do not create proposal
+→ any direct proposal path must still provide research_goal_id or manual_override_reason
 → human approval still required
 → paper execution only
 ```
@@ -616,9 +624,14 @@ Futu/SEC/IR/news/fundamentals refresh
 Evidence gate 的第一版規則很保守：
 
 - 必須有至少一筆 directional market/news evidence。
-- 必須有至少一筆 verified primary-source 或 SEC companyfacts evidence。
+- 必須有至少一筆 source-verified primary-source 或 SEC companyfacts evidence。
+- MCP / remote agent / manual text 不能把自己標成 source-verified。
+- verified evidence 必須與 research goal symbol 一致。
+- stale primary-source evidence 不通過 gate。
+- contradicting evidence 會把 gate 標成 mixed / insufficient，需要人工審閱。
 - research goal 必須保持 `research-only` risk tier。
-- gate 不通過時，Hermes / autonomy 只能看到研究目標與 skip reason，不會得到 pending proposal。
+- gate 不通過時，Hermes / autonomy / REST / dashboard 只能看到研究目標與 skip reason，不會得到 pending proposal；若人類手動建立，必須寫明 `manual_override_reason`。
+- 每個 created proposal 都保存 `evidence_hash`，用來固定建立 proposal 當下的 evidence ledger 指紋。
 
 **已開始落地的檔案**
 
@@ -635,7 +648,10 @@ tests/test_research_goals.py
 
 **下一步**
 
-1. 在 Research Goal 層上新增 Thesis Tracker：持倉 thesis、pillar、risk、catalyst、invalidation condition。
-2. 新增 Earnings Review：把 SEC companyfacts、filing、IR release、transcript 摘要輸出成 `thesis_delta`。
-3. 新增 Trade Journal / Behavior Report：先支援 Futu CSV export 的 FIFO roundtrip、win rate、PnL ratio、drawdown、overtrading。
-4. 將 Vibe / backtest sidecar 保持為 research-only adapter，輸出 run card 到 evidence ledger，不接 approval/execution。
+1. 持續守住 proposal invariant：所有 `PENDING` proposal 必須有 `research_goal_id` 或明確 `manual_override_reason`。
+2. 持續守住 verified provenance：MCP / user-submitted evidence 不能直接變成 source-verified。
+3. 在 Research Goal 層上新增 Thesis Tracker：持倉 thesis、pillar、risk、catalyst、invalidation condition。
+4. 新增 Earnings Review：把 SEC companyfacts、filing、IR release、transcript 摘要輸出成 `thesis_delta = strengthen | weaken | neutral | invalidates`。
+5. 新增 Trade Journal / Behavior Report：先支援 Futu CSV export 的 FIFO roundtrip、win rate、PnL ratio、drawdown、overtrading。
+6. 將 Vibe / backtest sidecar 保持為 research-only adapter，輸出 run card 到 evidence ledger，不接 approval/execution。
+7. 最後才碰 live path：Keychain、雙 OpenD、atomic approval、idempotency、broker-side revalidation、order/deal reconciliation。

@@ -165,11 +165,10 @@ def add_research_evidence(
     text: str,
     symbol: str | None = None,
     source_uri: str | None = None,
-    verification_status: Literal["verified", "unverified"] = "unverified",
     confidence: float = 0.5,
     caveat: str = "",
 ) -> dict:
-    """Attach an evidence row to a research goal. This writes only to research tables, never execution tables."""
+    """Attach an unverified evidence row to a research goal. MCP text cannot mark itself source-verified."""
     evidence = ResearchGoalService(get_store()).add_evidence(
         ResearchEvidenceCreate(
             goal_id=goal_id,
@@ -177,7 +176,9 @@ def add_research_evidence(
             source_type=source_type,
             source_uri=source_uri,
             text=text,
-            verification_status=verification_status,
+            verification_status="unverified",
+            source_verified=False,
+            added_via="mcp",
             confidence=confidence,
             caveat=caveat,
         )
@@ -271,8 +272,10 @@ def create_trade_proposal(
     ttl_minutes: int | None = None,
     evidence: list[str] | None = None,
     counter_evidence: list[str] | None = None,
+    research_goal_id: str | None = None,
+    manual_override_reason: str | None = None,
 ) -> dict:
-    """Create a risk-checked trade proposal. The MVP records paper proposals only."""
+    """Create a risk-checked trade proposal. A passed research_goal_id or explicit manual_override_reason is required."""
     request = ProposalCreate(
         symbol=symbol,
         side=Side(side),
@@ -284,6 +287,8 @@ def create_trade_proposal(
         ttl_minutes=ttl_minutes,
         evidence=evidence or [],
         counter_evidence=counter_evidence or [],
+        research_goal_id=research_goal_id,
+        manual_override_reason=manual_override_reason,
     )
     proposal = get_service().create_proposal(request)
     return _json(proposal)

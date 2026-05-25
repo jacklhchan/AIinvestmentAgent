@@ -14,6 +14,7 @@ from .models import (
     utc_now,
 )
 from .policy import RiskEngine
+from .research_goals import compute_evidence_hash, evaluate_research_gate
 from .store import Store
 
 
@@ -27,7 +28,20 @@ class InvestmentService:
         portfolio = self.store.get_portfolio()
         ttl = request.ttl_minutes or self.settings.approval_ttl_minutes
         risk_check = self.risk.check_create(request, portfolio)
+        research_goal = None
+        invariant_reasons: list[str] = []
+        if self.settings.research_gate_required:
+            research_goal, invariant_reasons = self._research_invariant_reasons(request)
+        if invariant_reasons:
+            risk_check.passed = False
+            risk_check.reasons.extend(invariant_reasons)
         status = ProposalStatus.PENDING if risk_check.passed else ProposalStatus.RISK_REJECTED
+        evidence_hash = compute_evidence_hash(
+            goal=research_goal,
+            proposal_evidence=request.evidence,
+            counter_evidence=request.counter_evidence,
+            manual_override_reason=request.manual_override_reason,
+        )
         proposal = Proposal(
             symbol=request.symbol,
             side=request.side,
@@ -43,8 +57,29 @@ class InvestmentService:
             expires_at=utc_now() + timedelta(minutes=ttl),
             max_slippage_bps=request.max_slippage_bps or self.settings.max_price_drift_bps,
             execution_mode=ExecutionMode.PAPER if self.settings.is_paper else ExecutionMode.LIVE,
+            research_goal_id=request.research_goal_id,
+            manual_override_reason=request.manual_override_reason,
+            evidence_hash=evidence_hash,
         )
         return self.store.create_proposal(proposal)
+
+    def _research_invariant_reasons(self, request: ProposalCreate) -> tuple[object | None, list[str]]:
+        if request.research_goal_id:
+            goal = self.store.get_research_goal(request.research_goal_id)
+            if not goal:
+                return None, [f"research goal not found: {request.research_goal_id}"]
+            if goal.symbol and goal.symbol != request.symbol:
+                return goal, [f"research goal symbol {goal.symbol} does not match proposal symbol {request.symbol}"]
+            gate = evaluate_research_gate(
+                goal,
+                max_verified_age_days=self.settings.research_gate_max_verified_age_days,
+            )
+            if not gate.passed:
+                return goal, [f"research evidence gate failed: {'; '.join(gate.reasons)}"]
+            return goal, []
+        if request.manual_override_reason:
+            return None, []
+        return None, ["research gate required: provide research_goal_id or manual_override_reason"]
 
     def approve_proposal(self, proposal_id: str, approved_by: str = "local-user") -> dict:
         proposal = self._get_existing(proposal_id)

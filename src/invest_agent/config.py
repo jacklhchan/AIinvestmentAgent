@@ -36,6 +36,8 @@ class Settings(BaseModel):
     sec_max_filings_per_symbol: int = 5
     sec_timeout_seconds: float = 8.0
     primary_source_lookback_days: int = 45
+    research_gate_required: bool = True
+    research_gate_max_verified_age_days: int = 120
     ir_rss_feeds: str = ""
     autonomy_cycle_seconds: int = 900
     autonomy_create_proposals: bool = True
@@ -119,6 +121,8 @@ def get_settings() -> Settings:
         sec_max_filings_per_symbol=_int_env("INVEST_AGENT_SEC_MAX_FILINGS_PER_SYMBOL", 5),
         sec_timeout_seconds=_float_env("INVEST_AGENT_SEC_TIMEOUT_SECONDS", 8.0),
         primary_source_lookback_days=_int_env("INVEST_AGENT_PRIMARY_SOURCE_LOOKBACK_DAYS", 45),
+        research_gate_required=_bool_env("INVEST_AGENT_RESEARCH_GATE_REQUIRED", True),
+        research_gate_max_verified_age_days=_int_env("INVEST_AGENT_RESEARCH_GATE_MAX_VERIFIED_AGE_DAYS", 120),
         ir_rss_feeds=os.getenv("INVEST_AGENT_IR_RSS_FEEDS", ""),
         autonomy_cycle_seconds=_int_env("INVEST_AGENT_AUTONOMY_CYCLE_SECONDS", 900),
         autonomy_create_proposals=_bool_env("INVEST_AGENT_AUTONOMY_CREATE_PROPOSALS", True),

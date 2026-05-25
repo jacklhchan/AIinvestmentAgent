@@ -133,8 +133,13 @@ The app has started the next research-quality phase inspired by Anthropic-style 
 - SQLite now has `research_goals` and `research_evidence` tables.
 - `ResearchGoalService` creates research-only goals and rejects objectives that ask for broker execution, trade unlock, direct order placement, or approval.
 - Each proposal draft now creates a research goal with a directional claim, acceptance criteria, and evidence rows.
-- Evidence rows track source type, source URI, data date, retrieved time, freshness, verification status, confidence, caveat, and contradicting claim IDs.
-- The evidence gate requires both recent directional market/news evidence and verified primary-source or SEC companyfacts evidence before `create_proposals=true` can create a `PENDING` proposal.
+- Evidence rows track source type, source URI, data date, retrieved time, freshness, verification status, source-verified provenance, confidence, caveat, and contradicting claim IDs.
+- The evidence gate requires both recent directional market/news evidence and source-verified primary-source or SEC companyfacts evidence before `create_proposals=true` can create a `PENDING` proposal.
+- The gate is now enforced at `InvestmentService.create_proposal`, so REST, MCP, dashboard, CLI, autonomy, and draft creation all share the same invariant.
+- Every `PENDING` proposal must have either a passed `research_goal_id` or an explicit `manual_override_reason`.
+- MCP-created evidence rows are always unverified; remote agent text cannot mark itself source-verified.
+- Verified evidence must match the research goal symbol, must be fresh under `INVEST_AGENT_RESEARCH_GATE_MAX_VERIFIED_AGE_DAYS`, and contradictory evidence blocks the gate as mixed.
+- Created proposals store `research_goal_id` / `manual_override_reason` plus `evidence_hash` for later audit.
 - If the gate fails, the draft remains research output and the skip reason is recorded; no pending proposal is created.
 - Safe autonomy now checks this same gate before cooldown / proposal creation.
 - REST endpoints:
@@ -207,12 +212,13 @@ Latest verification completed:
 .venv/bin/python -m compileall -q src
 /Users/apple/.hermes/hermes-agent/venv/bin/hermes mcp list
 .venv/bin/python -m invest_agent.cli draft-proposals
+curl -s -X POST http://127.0.0.1:8788/api/proposals ...
 ```
 
 Result:
 
 ```text
-34 passed
+40 passed
 ```
 
 HTTP checks were also verified:
@@ -247,13 +253,14 @@ HTTP checks were also verified:
 - `python -m invest_agent.cli event-export`
 - `python -m invest_agent.cli event-replay`
 - `python -m invest_agent.cli draft-proposals`
+- invariant tests for direct proposal creation, MCP-unverified evidence, symbol mismatch, stale primary-source evidence, contradictory evidence, and proposal `evidence_hash`
 
 The dashboard was visually checked in the Codex in-app browser.
 
 Latest dashboard screenshot after adding the research panel:
 
 ```text
-artifacts/dashboard-research-goals.png
+artifacts/dashboard-research-invariant.png
 ```
 
 Futu OpenD read-only refresh was validated against the local OpenD on port `11111`; it refreshed 7 positions and 7 quote snapshots.
@@ -263,6 +270,10 @@ SEC companyfacts live smoke was validated against the configured watchlist. It r
 Safe autonomy smoke was validated locally. It runs without live trading, records audit events, and creates only paper-mode pending proposals when evidence gate and cooldown allow.
 
 Research/evidence smoke was validated locally. `draft-proposals` created research goals for evidence-gated AAPL/MSFT drafts and did not create proposals because the command was run in draft-only mode.
+
+Legacy local pending proposals created before this invariant were marked `RISK_REJECTED` with an audit event, because they lacked both `research_goal_id` and `manual_override_reason`.
+
+Live API smoke confirmed a direct proposal without `research_goal_id` or `manual_override_reason` becomes `RISK_REJECTED`, and the current local store has 0 pending invariant violations.
 
 ## Not Tracked In Git
 
@@ -277,8 +288,10 @@ The following are local runtime artifacts and intentionally ignored:
 
 ## Next Steps
 
-- Decide whether Telegram approval should be handled directly by Hermes Gateway or a dedicated approval bot.
-- Add thesis tracker and catalyst calendar tables on top of the research goal layer.
-- Add trade journal / behavior report import for Futu CSV exports.
+- Keep proposal invariant locked: no `PENDING` proposal without `research_goal_id` or explicit `manual_override_reason`.
+- Keep verified provenance locked: MCP/user-submitted text cannot become source-verified evidence.
+- Add Thesis Tracker: position thesis, pillars, risks, catalysts, and invalidation conditions.
+- Add Earnings Review: output `thesis_delta = strengthen | weaken | neutral | invalidates`.
+- Add Trade Journal / Behavior Report: Futu CSV import, FIFO roundtrip, win rate, PnL ratio, drawdown, and overtrading checks.
 - Add valuation ratios and filing-period normalization on top of SEC companyfacts.
-- Keep live execution disabled until Keychain secret loading, two-OpenD separation, broker-side revalidation, order/deal reconciliation, and a small live smoke-test plan are implemented.
+- Keep live execution disabled until Keychain secret loading, two-OpenD separation, atomic approval, idempotency keys, broker-side revalidation, order/deal reconciliation, and a small live smoke-test plan are implemented.

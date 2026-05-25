@@ -117,6 +117,7 @@ class ProposalDraftEngine:
                         confidence=draft.confidence,
                         evidence=draft.evidence,
                         counter_evidence=draft.counter_evidence,
+                        research_goal_id=draft.research_goal_id,
                     )
                 )
                 created.append(proposal)
@@ -282,6 +283,8 @@ class ProposalDraftEngine:
                     data_as_of=fundamentals.updated_at,
                     freshness_status="latest-local",
                     verification_status="verified",
+                    source_verified=True,
+                    added_via="system",
                     confidence=0.68,
                     caveat="SEC companyfacts snapshot parsed locally; still requires human interpretation.",
                 )

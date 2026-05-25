@@ -660,6 +660,7 @@ DASHBOARD_HTML = """
           </div>
           <div class="field"><label for="trigger">觸發條件</label><textarea id="trigger" name="trigger" required>Watchlist 回調，且組合現金足夠</textarea></div>
           <div class="field"><label for="thesis">投資論點</label><textarea id="thesis" name="thesis" required>小額紙上交易，用來驗證審批、風控與 audit 流程。</textarea></div>
+          <div class="field"><label for="manual_override_reason">手動覆寫理由</label><textarea id="manual_override_reason" name="manual_override_reason" required>Dashboard 手動建立 paper-only proposal；我確認此提案未通過自動 evidence gate，需人工審閱。</textarea></div>
           <button class="primary" type="submit">建立提案</button>
         </form>
         <div class="toast" id="toast"></div>
@@ -763,7 +764,8 @@ DASHBOARD_HTML = """
       research_evidence_added: "研究證據已加入",
       research_goal_completed: "研究 Gate 已通過",
       research_goal_insufficient: "研究 Gate 證據不足",
-      research_goal_evaluated: "研究目標已評估"
+      research_goal_evaluated: "研究目標已評估",
+      proposal_research_invariant_rejected: "提案違反研究 Gate 不變式"
     };
     const sourceClass = source => `source-${String(source || "local").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
     const sourceBadge = source => `<span class="source-badge ${sourceClass(source)}">${escapeHtml(sourceLabels[source] || source || "本機")}</span>`;
@@ -1098,7 +1100,8 @@ DASHBOARD_HTML = """
         trigger: form.get("trigger"),
         thesis: form.get("thesis"),
         evidence: ["zh-Hant-dashboard"],
-        counter_evidence: []
+        counter_evidence: [],
+        manual_override_reason: form.get("manual_override_reason")
       };
       try {
         const created = await api("/api/proposals", { method: "POST", body: JSON.stringify(body) });

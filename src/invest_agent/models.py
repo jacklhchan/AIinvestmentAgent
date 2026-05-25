@@ -115,11 +115,18 @@ class ProposalCreate(BaseModel):
     max_slippage_bps: float | None = Field(default=None, gt=0, le=1000)
     evidence: list[str] = Field(default_factory=list)
     counter_evidence: list[str] = Field(default_factory=list)
+    research_goal_id: str | None = None
+    manual_override_reason: str | None = None
 
     @field_validator("symbol")
     @classmethod
     def normalize_symbol(cls, value: str) -> str:
         return value.strip().upper()
+
+    @field_validator("manual_override_reason")
+    @classmethod
+    def normalize_override_reason(cls, value: str | None) -> str | None:
+        return value.strip() if value and value.strip() else None
 
 
 class Proposal(BaseModel):
@@ -143,6 +150,9 @@ class Proposal(BaseModel):
     approved_by: str | None = None
     max_slippage_bps: float = 30.0
     execution_mode: ExecutionMode = ExecutionMode.PAPER
+    research_goal_id: str | None = None
+    manual_override_reason: str | None = None
+    evidence_hash: str = ""
 
     @property
     def notional_usd(self) -> float:
@@ -216,6 +226,8 @@ class ResearchEvidence(BaseModel):
     retrieved_at: datetime = Field(default_factory=utc_now)
     freshness_status: str = "unknown"
     verification_status: str = "unverified"
+    source_verified: bool = False
+    added_via: str = "system"
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     caveat: str = ""
     contradicts_claim_ids: list[str] = Field(default_factory=list)
@@ -274,6 +286,8 @@ class ResearchEvidenceCreate(BaseModel):
     data_as_of: datetime | None = None
     freshness_status: str = "unknown"
     verification_status: str = "unverified"
+    source_verified: bool = False
+    added_via: str = "local"
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     caveat: str = ""
     contradicts_claim_ids: list[str] = Field(default_factory=list)

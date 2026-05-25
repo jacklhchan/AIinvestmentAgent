@@ -36,6 +36,7 @@ def smoke_main() -> None:
             trigger="Smoke test from local CLI",
             confidence=0.61,
             evidence=["local smoke test"],
+            manual_override_reason="CLI smoke test for paper-only proposal flow.",
         )
     )
     result = service.approve_proposal(proposal.id, approved_by="smoke-test")
