@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from .config import get_settings
 from .deps import get_service, get_store
+from .futu_adapter import FutuIntegrationError, get_futu_status, refresh_futu_readonly
 from .models import ProposalCreate, ProposalStatus
 
 
@@ -34,6 +35,9 @@ def health() -> dict:
         "mode": settings.mode,
         "paper_only": settings.is_paper,
         "db_path": str(settings.db_path),
+        "futu_read_enabled": settings.futu_read_enabled,
+        "futu_host": settings.futu_host,
+        "futu_monitor_port": settings.futu_monitor_port,
     }
 
 
@@ -93,6 +97,19 @@ def audit(limit: int = 100):
     return get_store().list_audit_events(limit=limit)
 
 
+@app.get("/api/futu/status")
+def futu_status():
+    return get_futu_status(get_settings())
+
+
+@app.post("/api/futu/refresh")
+def futu_refresh(refresh_cache: bool = False):
+    try:
+        return refresh_futu_readonly(get_settings(), get_store(), refresh_cache=refresh_cache).as_dict()
+    except FutuIntegrationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 def main() -> None:
     settings = get_settings()
     uvicorn.run("invest_agent.api:app", host=settings.host, port=settings.port, reload=False)
@@ -147,6 +164,13 @@ DASHBOARD_HTML = """
       grid-template-columns: 1fr auto;
       gap: 18px;
       align-items: center;
+    }
+    .bar-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: end;
+      flex-wrap: wrap;
     }
     h1 {
       margin: 0;
@@ -263,6 +287,7 @@ DASHBOARD_HTML = """
       cursor: pointer;
     }
     button.primary { background: var(--mint); border-color: var(--mint); color: white; }
+    button.secondary { color: var(--blue); }
     button.danger { color: var(--coral); }
     button:disabled { cursor: default; opacity: 0.55; }
     form {
@@ -316,7 +341,10 @@ DASHBOARD_HTML = """
   <header>
     <div class="bar">
       <h1>AI Investment Agent</h1>
-      <div class="mode" id="mode">Loading</div>
+      <div class="bar-actions">
+        <button class="secondary" id="futu-refresh" type="button">Refresh Futu</button>
+        <div class="mode" id="mode">Loading</div>
+      </div>
     </div>
   </header>
   <main>
@@ -383,6 +411,9 @@ DASHBOARD_HTML = """
         api("/api/news?limit=8")
       ]);
       document.querySelector("#mode").textContent = health.paper_only ? "Paper mode" : "Live mode requested";
+      const futuButton = document.querySelector("#futu-refresh");
+      futuButton.disabled = !health.futu_read_enabled;
+      futuButton.textContent = health.futu_read_enabled ? `Refresh Futu :${health.futu_monitor_port}` : "Futu disabled";
       document.querySelector("#total").textContent = money(portfolio.total_value_usd);
       document.querySelector("#cash").textContent = money(portfolio.cash_usd);
       document.querySelector("#positions").textContent = portfolio.positions.length;
@@ -425,6 +456,19 @@ DASHBOARD_HTML = """
         }
       } catch (error) {
         setToast(error.message);
+      }
+    });
+    document.querySelector("#futu-refresh").addEventListener("click", async event => {
+      event.target.disabled = true;
+      setToast("Refreshing Futu OpenD read-only snapshot...");
+      try {
+        const result = await api("/api/futu/refresh", { method: "POST" });
+        setToast(`Futu refreshed: ${result.position_count} positions, ${result.quote_count} quotes`);
+        await loadAll();
+      } catch (error) {
+        setToast(error.message);
+      } finally {
+        event.target.disabled = false;
       }
     });
     document.querySelector("#proposal-form").addEventListener("submit", async event => {

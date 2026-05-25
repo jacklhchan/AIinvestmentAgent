@@ -17,6 +17,8 @@ mcp_servers:
         - get_portfolio_snapshot
         - get_watchlist_quotes
         - get_news_digest
+        - get_futu_connection_status
+        - refresh_futu_readonly_snapshot
         - list_pending_proposals
         - create_trade_proposal
         - approve_trade_proposal

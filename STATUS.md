@@ -15,10 +15,13 @@ This version is intentionally paper-only. It can create trade proposals, run pol
 - Demo portfolio, quotes, and news seed data.
 - Risk checks for max notional, cash availability, portfolio percentage, confidence floor, duplicate pending proposals, and approval-time price drift.
 - Browser dashboard for portfolio, pending proposals, create proposal, approve/reject, positions, and news digest.
+- Futu OpenD read-only refresh for account funds, positions, and position quote snapshots.
 - Hermes stdio MCP server exposing:
   - `get_portfolio_snapshot`
   - `get_watchlist_quotes`
   - `get_news_digest`
+  - `get_futu_connection_status`
+  - `refresh_futu_readonly_snapshot`
   - `list_pending_proposals`
   - `create_trade_proposal`
   - `approve_trade_proposal`
@@ -45,6 +48,26 @@ Codex OAuth is still pending. Hermes currently reports `openai-codex: logged out
 ```bash
 /Users/apple/.local/bin/hermes auth add openai-codex
 ```
+
+## Futu Setup
+
+The app now supports a read-only Futu OpenD refresh path. The current local OpenD screen shows:
+
+- OpenD connected
+- API port `11111`
+- US stocks quote permission available
+- Trade still locked
+
+Local `.env` has `FUTU_READ_ENABLED=true` for this machine. `.env.example` keeps it disabled by default.
+
+Read-only refresh commands:
+
+```bash
+python -m invest_agent.cli futu-refresh
+curl -X POST http://127.0.0.1:8788/api/futu/refresh
+```
+
+This integration only calls account/quote read APIs and does not call `unlock_trade`, `place_order`, or `modify_order`.
 
 ## Run Commands
 
@@ -80,8 +103,13 @@ HTTP checks were also verified:
 - `GET /health`
 - `GET /api/news`
 - `GET /api/proposals`
+- `GET /api/futu/status`
+- `POST /api/futu/refresh`
+- `python -m invest_agent.cli futu-refresh`
 
 The dashboard was visually checked in the Codex in-app browser.
+
+Futu OpenD read-only refresh was validated against the local OpenD on port `11111`; it refreshed 7 positions and 7 quote snapshots.
 
 ## Not Tracked In Git
 
@@ -99,5 +127,5 @@ The following are local runtime artifacts and intentionally ignored:
 - Complete Hermes OpenAI Codex OAuth.
 - Decide whether Telegram approval should be handled directly by Hermes Gateway or a dedicated approval bot.
 - Add real market/news ingestion behind the current store abstraction.
-- Add optional Futu read-only monitor adapter.
+- Add source badges and refresh timestamps to the dashboard so demo data and Futu data are visually distinct.
 - Keep live execution disabled until Keychain secret loading, two-OpenD separation, broker-side revalidation, order/deal reconciliation, and a small live smoke-test plan are implemented.

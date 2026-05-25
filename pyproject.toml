@@ -27,6 +27,7 @@ invest-agent-api = "invest_agent.api:main"
 invest-agent-mcp = "invest_agent.mcp_server:main"
 invest-agent-seed = "invest_agent.cli:seed_main"
 invest-agent-smoke = "invest_agent.cli:smoke_main"
+invest-agent-futu-refresh = "invest_agent.cli:futu_refresh_main"
 
 [build-system]
 requires = ["setuptools>=70.0.0", "wheel"]

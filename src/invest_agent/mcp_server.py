@@ -5,6 +5,8 @@ from typing import Literal
 from mcp.server.fastmcp import FastMCP
 
 from .deps import get_service, get_store
+from .config import get_settings
+from .futu_adapter import get_futu_status, refresh_futu_readonly
 from .models import ProposalCreate, ProposalStatus, Side
 
 mcp = FastMCP("AI Investment Agent Control Plane")
@@ -34,6 +36,18 @@ def get_watchlist_quotes() -> list[dict]:
 def get_news_digest(symbol: str | None = None, limit: int = 10) -> list[dict]:
     """Return locally cached market and watchlist news items."""
     return _json(get_store().list_news(limit=limit, symbol=symbol))
+
+
+@mcp.tool()
+def get_futu_connection_status() -> dict:
+    """Check whether local Futu OpenD read-only integration is enabled and reachable."""
+    return get_futu_status(get_settings())
+
+
+@mcp.tool()
+def refresh_futu_readonly_snapshot(refresh_cache: bool = False) -> dict:
+    """Refresh local portfolio and quotes from Futu OpenD without unlocking trading."""
+    return refresh_futu_readonly(get_settings(), get_store(), refresh_cache=refresh_cache).as_dict()
 
 
 @mcp.tool()

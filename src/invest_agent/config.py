@@ -28,6 +28,12 @@ class Settings(BaseModel):
     futu_monitor_port: int = 11111
     futu_trade_port: int = 11112
     futu_trade_password: str = ""
+    futu_read_enabled: bool = False
+    futu_trd_market: str = "US"
+    futu_currency: str = "USD"
+    futu_acc_id: int = 0
+    futu_acc_index: int = 0
+    futu_is_encrypt: bool | None = None
     telegram_bot_token: str = ""
     telegram_allowed_users: str = ""
     finnhub_api_key: str = ""
@@ -81,8 +87,21 @@ def get_settings() -> Settings:
         futu_monitor_port=_int_env("FUTU_MONITOR_PORT", 11111),
         futu_trade_port=_int_env("FUTU_TRADE_PORT", 11112),
         futu_trade_password=os.getenv("FUTU_TRADE_PASSWORD", ""),
+        futu_read_enabled=_bool_env("FUTU_READ_ENABLED", False),
+        futu_trd_market=os.getenv("FUTU_TRD_MARKET", "US").strip().upper(),
+        futu_currency=os.getenv("FUTU_CURRENCY", "USD").strip().upper(),
+        futu_acc_id=_int_env("FUTU_ACC_ID", 0),
+        futu_acc_index=_int_env("FUTU_ACC_INDEX", 0),
+        futu_is_encrypt=_optional_bool_env("FUTU_IS_ENCRYPT"),
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
         telegram_allowed_users=os.getenv("TELEGRAM_ALLOWED_USERS", ""),
         finnhub_api_key=os.getenv("FINNHUB_API_KEY", ""),
         alpha_vantage_api_key=os.getenv("ALPHA_VANTAGE_API_KEY", ""),
     )
+
+
+def _optional_bool_env(name: str) -> bool | None:
+    value = os.getenv(name)
+    if value in (None, ""):
+        return None
+    return value.strip().lower() in {"1", "true", "yes", "on"}

@@ -8,6 +8,7 @@
 - SQLite 狀態儲存：proposal、approval、paper executions、portfolio、quotes、news、audit events
 - 風控/審批狀態機：TTL、重複單、notional、confidence、price drift revalidation
 - Hermes stdio MCP server：讓 Hermes 讀 portfolio/news/proposals 並建立/批准/拒絕 proposal
+- Futu OpenD read-only refresh：讀取資金、持倉與持倉 quote snapshot，不 unlock trade
 - 本機 dashboard：可看持倉、新聞、pending proposal，並在瀏覽器批准/拒絕
 - launchd 與 Hermes config 範例
 
@@ -17,13 +18,34 @@
 cd /Users/apple/Documents/AIinvestmentAgent
 /opt/homebrew/bin/python3.12 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,futu]"
 cp .env.example .env
 python -m invest_agent.cli seed
 python -m invest_agent.api
 ```
 
 開啟 `http://127.0.0.1:8788`。
+
+## Futu OpenD Read-Only
+
+從你目前的 OpenD 畫面來看，API port 是 `11111`，已 connected，交易仍 locked。這個 MVP 只使用 read-only API：
+
+```bash
+FUTU_READ_ENABLED=true
+FUTU_HOST=127.0.0.1
+FUTU_MONITOR_PORT=11111
+FUTU_TRD_MARKET=US
+FUTU_CURRENCY=USD
+```
+
+刷新本機資料：
+
+```bash
+source .venv/bin/activate
+python -m invest_agent.cli futu-refresh
+```
+
+或者開 dashboard 後按 `Refresh Futu`。這只會呼叫 `accinfo_query`、`position_list_query`、`get_market_snapshot`，不會呼叫 `unlock_trade` 或任何下單 API。
 
 ## Hermes + Codex LLM 設定
 
@@ -51,6 +73,8 @@ mcp_servers:
         - get_portfolio_snapshot
         - get_watchlist_quotes
         - get_news_digest
+        - get_futu_connection_status
+        - refresh_futu_readonly_snapshot
         - list_pending_proposals
         - create_trade_proposal
         - approve_trade_proposal

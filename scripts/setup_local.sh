@@ -5,7 +5,7 @@ cd /Users/apple/Documents/AIinvestmentAgent
 /opt/homebrew/bin/python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,futu]"
 cp -n .env.example .env
 python -m invest_agent.cli seed
 python -m pytest

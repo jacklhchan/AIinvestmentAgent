@@ -6,6 +6,7 @@ import json
 from .config import get_settings
 from .demo_data import seed_demo_data
 from .deps import get_service, get_store
+from .futu_adapter import refresh_futu_readonly
 from .models import ProposalCreate, Side
 
 
@@ -33,6 +34,23 @@ def smoke_main() -> None:
     print(json.dumps(_json(result), indent=2, ensure_ascii=False))
 
 
+def futu_refresh_main() -> None:
+    result = refresh_futu_readonly(get_settings(), get_store())
+    print(
+        json.dumps(
+            {
+                "source": result.source,
+                "position_count": result.position_count,
+                "quote_count": result.quote_count,
+                "portfolio_source": result.portfolio.source,
+                "updated_at": result.portfolio.updated_at.isoformat(),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    )
+
+
 def _json(value):
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
@@ -45,12 +63,14 @@ def _json(value):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="AI Investment Agent helper commands")
-    parser.add_argument("command", choices=["seed", "smoke"])
+    parser.add_argument("command", choices=["seed", "smoke", "futu-refresh"])
     args = parser.parse_args()
     if args.command == "seed":
         seed_main()
     if args.command == "smoke":
         smoke_main()
+    if args.command == "futu-refresh":
+        futu_refresh_main()
 
 
 if __name__ == "__main__":
