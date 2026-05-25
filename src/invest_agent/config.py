@@ -1,0 +1,88 @@
+from __future__ import annotations
+
+import os
+from functools import lru_cache
+from pathlib import Path
+
+from dotenv import load_dotenv
+from pydantic import BaseModel, Field
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+class Settings(BaseModel):
+    db_path: Path = Field(default=PROJECT_ROOT / "data" / "invest_agent.db")
+    host: str = "127.0.0.1"
+    port: int = 8788
+    mode: str = "paper"
+
+    max_trade_notional_usd: float = 5000.0
+    max_position_pct: float = 35.0
+    approval_ttl_minutes: int = 15
+    max_price_drift_bps: float = 30.0
+    min_confidence: float = 0.35
+    allow_live_trading: bool = False
+
+    futu_host: str = "127.0.0.1"
+    futu_monitor_port: int = 11111
+    futu_trade_port: int = 11112
+    futu_trade_password: str = ""
+    telegram_bot_token: str = ""
+    telegram_allowed_users: str = ""
+    finnhub_api_key: str = ""
+    alpha_vantage_api_key: str = ""
+
+    @property
+    def is_paper(self) -> bool:
+        return self.mode.lower() != "live" or not self.allow_live_trading
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _float_env(name: str, default: float) -> float:
+    value = os.getenv(name)
+    return default if value in (None, "") else float(value)
+
+
+def _int_env(name: str, default: int) -> int:
+    value = os.getenv(name)
+    return default if value in (None, "") else int(value)
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    load_dotenv(PROJECT_ROOT / ".env", override=False)
+    if Path.cwd() != PROJECT_ROOT:
+        load_dotenv(Path.cwd() / ".env", override=False)
+
+    db_value = os.getenv("INVEST_AGENT_DB_PATH")
+    db_path = Path(db_value) if db_value else PROJECT_ROOT / "data" / "invest_agent.db"
+    if not db_path.is_absolute():
+        db_path = PROJECT_ROOT / db_path
+
+    return Settings(
+        db_path=db_path,
+        host=os.getenv("INVEST_AGENT_HOST", "127.0.0.1"),
+        port=_int_env("INVEST_AGENT_PORT", 8788),
+        mode=os.getenv("INVEST_AGENT_MODE", "paper"),
+        max_trade_notional_usd=_float_env("INVEST_AGENT_MAX_TRADE_NOTIONAL_USD", 5000.0),
+        max_position_pct=_float_env("INVEST_AGENT_MAX_POSITION_PCT", 35.0),
+        approval_ttl_minutes=_int_env("INVEST_AGENT_APPROVAL_TTL_MINUTES", 15),
+        max_price_drift_bps=_float_env("INVEST_AGENT_MAX_PRICE_DRIFT_BPS", 30.0),
+        min_confidence=_float_env("INVEST_AGENT_MIN_CONFIDENCE", 0.35),
+        allow_live_trading=_bool_env("INVEST_AGENT_ALLOW_LIVE_TRADING", False),
+        futu_host=os.getenv("FUTU_HOST", "127.0.0.1"),
+        futu_monitor_port=_int_env("FUTU_MONITOR_PORT", 11111),
+        futu_trade_port=_int_env("FUTU_TRADE_PORT", 11112),
+        futu_trade_password=os.getenv("FUTU_TRADE_PASSWORD", ""),
+        telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
+        telegram_allowed_users=os.getenv("TELEGRAM_ALLOWED_USERS", ""),
+        finnhub_api_key=os.getenv("FINNHUB_API_KEY", ""),
+        alpha_vantage_api_key=os.getenv("ALPHA_VANTAGE_API_KEY", ""),
+    )

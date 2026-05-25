@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.local.invest-agent-api</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/apple/Documents/AIinvestmentAgent/.venv/bin/python</string>
+    <string>-m</string>
+    <string>invest_agent.api</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/apple/Documents/AIinvestmentAgent</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/apple/Documents/AIinvestmentAgent/logs/invest-agent-api.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/apple/Documents/AIinvestmentAgent/logs/invest-agent-api.err.log</string>
+</dict>
+</plist>
