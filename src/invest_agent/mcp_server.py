@@ -11,9 +11,10 @@ from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event
 from .futu_adapter import get_futu_status, refresh_futu_readonly
 from .ir_feeds import IrFeedIngestor
 from .market_news import MarketNewsIngestor, external_ticker, resolve_watchlist_symbols
-from .models import ProposalCreate, ProposalStatus, Side
+from .models import ProposalCreate, ProposalStatus, ResearchEvidenceCreate, ResearchGoalCreate, ResearchGoalStatus, Side
 from .primary_sources import refresh_primary_sources
 from .proposal_drafts import ProposalDraftEngine
+from .research_goals import ResearchGoalService
 from .sec_companyfacts import SecCompanyFactsIngestor
 from .sec_edgar import SecEdgarIngestor
 
@@ -125,6 +126,70 @@ def get_fundamental_snapshot(symbol: str | None = None) -> dict | list[dict]:
             snapshot = next((item for item in store.list_fundamentals() if external_ticker(item.symbol) == ticker), None)
         return _json(snapshot) if snapshot else {"error": f"fundamental snapshot not found for {symbol.upper()}"}
     return _json(store.list_fundamentals())
+
+
+@mcp.tool()
+def list_research_goals(
+    status: Literal["ACTIVE", "COMPLETED", "INSUFFICIENT", "REJECTED"] | None = None,
+    symbol: str | None = None,
+    limit: int = 20,
+) -> list[dict]:
+    """List research-only goals and evidence gate summaries before proposal creation."""
+    parsed_status = ResearchGoalStatus(status) if status else None
+    return _json(get_store().list_research_goals(status=parsed_status, symbol=symbol, limit=limit))
+
+
+@mcp.tool()
+def create_research_goal(
+    objective: str,
+    symbol: str | None = None,
+    claims: list[str] | None = None,
+    criteria: list[str] | None = None,
+) -> dict:
+    """Create a research-only goal. Objectives that ask for approval, unlock, or broker execution are rejected."""
+    goal = ResearchGoalService(get_store()).create_goal(
+        ResearchGoalCreate(
+            symbol=symbol,
+            objective=objective,
+            claims=claims or [],
+            criteria=criteria or [],
+        )
+    )
+    return _json(goal)
+
+
+@mcp.tool()
+def add_research_evidence(
+    goal_id: str,
+    source_type: str,
+    text: str,
+    symbol: str | None = None,
+    source_uri: str | None = None,
+    verification_status: Literal["verified", "unverified"] = "unverified",
+    confidence: float = 0.5,
+    caveat: str = "",
+) -> dict:
+    """Attach an evidence row to a research goal. This writes only to research tables, never execution tables."""
+    evidence = ResearchGoalService(get_store()).add_evidence(
+        ResearchEvidenceCreate(
+            goal_id=goal_id,
+            symbol=symbol,
+            source_type=source_type,
+            source_uri=source_uri,
+            text=text,
+            verification_status=verification_status,
+            confidence=confidence,
+            caveat=caveat,
+        )
+    )
+    return _json(evidence)
+
+
+@mcp.tool()
+def get_research_goal_snapshot(goal_id: str) -> dict:
+    """Return one research goal with claims, criteria, and evidence rows."""
+    goal = get_store().get_research_goal(goal_id)
+    return _json(goal) if goal else {"error": f"research goal not found: {goal_id}"}
 
 
 @mcp.tool()

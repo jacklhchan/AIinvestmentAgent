@@ -17,9 +17,10 @@ This version is intentionally paper-only. It can create trade proposals, run pol
 - Market/news ingestion from GDELT, Google News RSS fallback, and optional Finnhub company news when `FINNHUB_API_KEY` is configured.
 - SEC EDGAR primary-source ingestion for company filings, plus configurable company IR RSS ingestion.
 - SEC companyfacts/XBRL fundamentals ingestion for revenue, net income, operating income, operating cash flow, assets, liabilities, equity, and diluted EPS.
+- Research Goal / Evidence Ledger layer with research-only goals, claims, criteria, evidence rows, verification status, caveats, and evidence gate summaries.
 - Event replay export/import for portfolio, quotes, news/evidence, and fundamental snapshot JSONL.
-- Proposal draft engine that turns recent symbol-specific watchlist news into structured draft proposals and can optionally send them through the existing policy engine.
-- Safe autonomy loop that refreshes read-only data, drafts watchlist proposals, applies proposal cooldown, and creates only paper-mode pending proposals for human approval.
+- Proposal draft engine that turns recent symbol-specific watchlist news into structured draft proposals, records a research goal for each draft, and only creates policy-checked proposals when evidence gate passes.
+- Safe autonomy loop that refreshes read-only data, drafts watchlist proposals, applies evidence gate and proposal cooldown, and creates only paper-mode pending proposals for human approval.
 - Risk checks for max notional, cash availability, portfolio percentage, confidence floor, duplicate pending proposals, and approval-time price drift.
 - Traditional Chinese browser dashboard for portfolio, pending proposals, create proposal, approve/reject, positions, news digest, source provenance, refresh timestamps, and recent audit events.
 - Futu OpenD read-only refresh for account funds, positions, and position quote snapshots.
@@ -32,6 +33,10 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - `refresh_primary_source_filings`
   - `refresh_sec_company_facts`
   - `get_fundamental_snapshot`
+  - `list_research_goals`
+  - `create_research_goal`
+  - `add_research_evidence`
+  - `get_research_goal_snapshot`
   - `get_safe_autonomy_status`
   - `run_safe_autonomy_cycle`
   - `export_event_replay_file`
@@ -60,7 +65,7 @@ The global Hermes config at `/Users/apple/.hermes/config.yaml` has been updated 
 
 `hermes auth status openai-codex` shows logged in.
 
-`hermes mcp list` shows `invest_agent` enabled with 19 selected tools.
+`hermes mcp list` shows `invest_agent` enabled with 23 selected tools after adding the 4 research/evidence tools.
 
 ## Futu Setup
 
@@ -121,6 +126,31 @@ The app now parses SEC `companyfacts` XBRL JSON into local fundamental snapshots
 
 This phase still does not unlock Futu OpenD and does not place live orders.
 
+## Research Goal / Evidence Ledger
+
+The app has started the next research-quality phase inspired by Anthropic-style thesis discipline and Vibe-style research goal ledgers, implemented locally without copying external code.
+
+- SQLite now has `research_goals` and `research_evidence` tables.
+- `ResearchGoalService` creates research-only goals and rejects objectives that ask for broker execution, trade unlock, direct order placement, or approval.
+- Each proposal draft now creates a research goal with a directional claim, acceptance criteria, and evidence rows.
+- Evidence rows track source type, source URI, data date, retrieved time, freshness, verification status, confidence, caveat, and contradicting claim IDs.
+- The evidence gate requires both recent directional market/news evidence and verified primary-source or SEC companyfacts evidence before `create_proposals=true` can create a `PENDING` proposal.
+- If the gate fails, the draft remains research output and the skip reason is recorded; no pending proposal is created.
+- Safe autonomy now checks this same gate before cooldown / proposal creation.
+- REST endpoints:
+  - `GET /api/research-goals`
+  - `POST /api/research-goals`
+  - `GET /api/research-goals/{goal_id}`
+  - `POST /api/research-goals/{goal_id}/evidence`
+- Hermes MCP research tools:
+  - `list_research_goals`
+  - `create_research_goal`
+  - `add_research_evidence`
+  - `get_research_goal_snapshot`
+- Dashboard has a `研究目標與證據帳本` panel showing goal status, gate summary, evidence count, claims, and criteria.
+
+This phase still does not unlock Futu OpenD and does not place live orders.
+
 ## Safe Autonomy Loop
 
 The app now has a safe autonomous scheduler.
@@ -174,12 +204,15 @@ Latest verification completed:
 
 ```bash
 .venv/bin/python -m pytest
+.venv/bin/python -m compileall -q src
+/Users/apple/.hermes/hermes-agent/venv/bin/hermes mcp list
+.venv/bin/python -m invest_agent.cli draft-proposals
 ```
 
 Result:
 
 ```text
-30 passed
+34 passed
 ```
 
 HTTP checks were also verified:
@@ -190,6 +223,10 @@ HTTP checks were also verified:
 - `POST /api/primary-sources/refresh`
 - `GET /api/fundamentals`
 - `POST /api/fundamentals/refresh`
+- `GET /api/research-goals`
+- `POST /api/research-goals`
+- `GET /api/research-goals/{goal_id}`
+- `POST /api/research-goals/{goal_id}/evidence`
 - `GET /api/autonomy/status`
 - `POST /api/autonomy/run`
 - `POST /api/events/export`
@@ -213,11 +250,19 @@ HTTP checks were also verified:
 
 The dashboard was visually checked in the Codex in-app browser.
 
+Latest dashboard screenshot after adding the research panel:
+
+```text
+artifacts/dashboard-research-goals.png
+```
+
 Futu OpenD read-only refresh was validated against the local OpenD on port `11111`; it refreshed 7 positions and 7 quote snapshots.
 
 SEC companyfacts live smoke was validated against the configured watchlist. It refreshed 5 company snapshots; `US.VOO` was skipped because SEC companyfacts has no company CIK for the ETF.
 
-Safe autonomy smoke was validated locally. It runs without live trading, records audit events, and creates only paper-mode pending proposals when cooldown allows.
+Safe autonomy smoke was validated locally. It runs without live trading, records audit events, and creates only paper-mode pending proposals when evidence gate and cooldown allow.
+
+Research/evidence smoke was validated locally. `draft-proposals` created research goals for evidence-gated AAPL/MSFT drafts and did not create proposals because the command was run in draft-only mode.
 
 ## Not Tracked In Git
 
@@ -233,5 +278,7 @@ The following are local runtime artifacts and intentionally ignored:
 ## Next Steps
 
 - Decide whether Telegram approval should be handled directly by Hermes Gateway or a dedicated approval bot.
+- Add thesis tracker and catalyst calendar tables on top of the research goal layer.
+- Add trade journal / behavior report import for Futu CSV exports.
 - Add valuation ratios and filing-period normalization on top of SEC companyfacts.
 - Keep live execution disabled until Keychain secret loading, two-OpenD separation, broker-side revalidation, order/deal reconciliation, and a small live smoke-test plan are implemented.

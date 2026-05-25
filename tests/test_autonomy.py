@@ -3,7 +3,7 @@ from __future__ import annotations
 from invest_agent.autonomy import SafeAutonomyRunner, autonomy_status
 from invest_agent.config import Settings
 from invest_agent.demo_data import seed_demo_data
-from invest_agent.models import ProposalStatus
+from invest_agent.models import NewsItem, ProposalStatus, utc_now
 from invest_agent.services import InvestmentService
 from invest_agent.store import Store
 
@@ -20,6 +20,16 @@ def make_runner(tmp_path):
     )
     store = Store(settings.db_path)
     seed_demo_data(store, force=True)
+    store.upsert_news(
+        NewsItem(
+            symbol="NVDA",
+            title="SEC 10-Q filed for NVDA",
+            source="sec-edgar",
+            tags=["primary-source", "sec-edgar", "10-q"],
+            published_at=utc_now(),
+            summary="Primary-source filing used to satisfy research evidence gate in autonomy tests.",
+        )
+    )
     service = InvestmentService(settings, store)
     return SafeAutonomyRunner(settings, store, service), settings, store
 

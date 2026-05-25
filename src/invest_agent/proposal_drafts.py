@@ -13,9 +13,11 @@ from .models import (
     ProposalCreate,
     ProposalDraft,
     Quote,
+    ResearchEvidenceCreate,
     Side,
     utc_now,
 )
+from .research_goals import evidence_from_news, research_goal_from_draft
 from .services import InvestmentService
 from .store import Store
 
@@ -101,6 +103,9 @@ class ProposalDraftEngine:
         created = []
         if create_proposals:
             for draft in drafts:
+                if not draft.evidence_gate_passed:
+                    skipped.append(f"{draft.symbol}: research evidence gate insufficient before proposal creation")
+                    continue
                 proposal = self.service.create_proposal(
                     ProposalCreate(
                         symbol=draft.symbol,
@@ -202,7 +207,7 @@ class ProposalDraftEngine:
         )
         trigger = f"{len(signal_items)} directional item(s), {len(primary_items)} primary-source item(s), score {score}"
 
-        return ProposalDraft(
+        draft = ProposalDraft(
             symbol=symbol,
             side=side,
             qty=qty,
@@ -215,6 +220,80 @@ class ProposalDraftEngine:
             score=score,
             news_count=len(news),
             source_news_ids=[item.id for item in [*top_news, *top_primary]],
+        )
+        gate = self._record_research_goal(
+            draft=draft,
+            news_items=top_news,
+            primary_items=top_primary,
+            fundamentals=fundamentals,
+            fundamental_reference=fundamental_reference,
+            score=score,
+        )
+        draft.research_goal_id = gate.goal_id
+        draft.evidence_gate_passed = gate.passed
+        draft.evidence_gate_reasons = gate.reasons
+        draft.research_evidence_count = gate.evidence_count
+        if not gate.passed:
+            draft.counter_evidence.extend(gate.reasons)
+        return draft
+
+    def _record_research_goal(
+        self,
+        *,
+        draft: ProposalDraft,
+        news_items: list[NewsItem],
+        primary_items: list[NewsItem],
+        fundamentals: FundamentalSnapshot | None,
+        fundamental_reference: str | None,
+        score: int,
+    ):
+        news_evidence = [
+            evidence_from_news(
+                goal_id="_pending",
+                symbol=draft.symbol,
+                source_type=item.source or "market-news",
+                title=item.title,
+                source_uri=item.url,
+                published_at=item.published_at,
+                verified=_is_primary_source(item),
+            )
+            for item in news_items
+        ]
+        verified_evidence = [
+            evidence_from_news(
+                goal_id="_pending",
+                symbol=draft.symbol,
+                source_type=item.source or "primary-source",
+                title=item.title,
+                source_uri=item.url,
+                published_at=item.published_at,
+                verified=True,
+            )
+            for item in primary_items
+        ]
+        if fundamentals and fundamental_reference:
+            verified_evidence.append(
+                ResearchEvidenceCreate(
+                    goal_id="_pending",
+                    symbol=draft.symbol,
+                    source_type="sec-companyfacts",
+                    source_uri=None,
+                    text=fundamental_reference,
+                    data_as_of=fundamentals.updated_at,
+                    freshness_status="latest-local",
+                    verification_status="verified",
+                    confidence=0.68,
+                    caveat="SEC companyfacts snapshot parsed locally; still requires human interpretation.",
+                )
+            )
+        return research_goal_from_draft(
+            store=self.store,
+            symbol=draft.symbol,
+            side=draft.side.value,
+            score=score,
+            thesis=draft.thesis,
+            news_evidence=news_evidence,
+            verified_evidence=verified_evidence,
         )
 
     def _draft_qty(self, side: Side, last_price: float, position_qty: float) -> int:

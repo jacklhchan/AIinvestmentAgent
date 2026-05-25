@@ -182,6 +182,9 @@ class SafeAutonomyRunner:
         draft_result = ProposalDraftEngine(self.settings, self.store, self.service).draft_from_watchlist(create_proposals=False)
         if create_proposals:
             for draft in draft_result.drafts:
+                if not draft.evidence_gate_passed:
+                    skipped.append(f"{draft.symbol} {draft.side.value}: research evidence gate insufficient")
+                    continue
                 if self._is_in_cooldown(draft):
                     skipped.append(f"{draft.symbol} {draft.side.value}: proposal cooldown active")
                     continue

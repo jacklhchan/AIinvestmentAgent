@@ -18,4 +18,5 @@ def test_dashboard_is_traditional_chinese_with_data_provenance() -> None:
     assert "SEC 基本面快照" in response.text
     assert "執行自治循環" in response.text
     assert "安全自治狀態" in response.text
+    assert "研究目標與證據帳本" in response.text
     assert "操作紀錄" in response.text

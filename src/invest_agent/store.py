@@ -14,6 +14,9 @@ from .models import (
     Proposal,
     ProposalStatus,
     Quote,
+    ResearchEvidence,
+    ResearchGoal,
+    ResearchGoalStatus,
 )
 
 
@@ -84,6 +87,24 @@ class Store:
                     entity_id TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS research_goals (
+                    id TEXT PRIMARY KEY,
+                    symbol TEXT,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS research_evidence (
+                    id TEXT PRIMARY KEY,
+                    goal_id TEXT NOT NULL,
+                    symbol TEXT,
+                    source_type TEXT NOT NULL,
+                    retrieved_at TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    FOREIGN KEY (goal_id) REFERENCES research_goals(id)
                 );
                 """
             )
@@ -169,6 +190,131 @@ class Store:
         with self.connect() as conn:
             rows = conn.execute("SELECT payload FROM fundamentals ORDER BY symbol").fetchall()
         return [FundamentalSnapshot.model_validate_json(row["payload"]) for row in rows]
+
+    def create_research_goal(self, goal: ResearchGoal) -> ResearchGoal:
+        goal.evidence = []
+        goal.evidence_count = 0
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO research_goals(id, symbol, status, created_at, payload)
+                VALUES(?, ?, ?, ?, ?)
+                """,
+                (
+                    goal.id,
+                    goal.symbol,
+                    goal.status.value,
+                    goal.created_at.isoformat(),
+                    self._dump(goal),
+                ),
+            )
+        self.audit(
+            "research_goal_created",
+            "research_goal",
+            goal.id,
+            {"symbol": goal.symbol, "status": goal.status.value, "risk_tier": goal.risk_tier},
+        )
+        return self.get_research_goal(goal.id) or goal
+
+    def update_research_goal(self, goal: ResearchGoal, event_type: str = "research_goal_updated") -> ResearchGoal:
+        stored_goal = goal.model_copy(update={"evidence": [], "evidence_count": 0})
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE research_goals
+                SET symbol = ?, status = ?, payload = ?
+                WHERE id = ?
+                """,
+                (stored_goal.symbol, stored_goal.status.value, self._dump(stored_goal), stored_goal.id),
+            )
+        self.audit(event_type, "research_goal", goal.id, {"symbol": goal.symbol, "status": goal.status.value})
+        return self.get_research_goal(goal.id) or goal
+
+    def get_research_goal(self, goal_id: str) -> ResearchGoal | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT payload FROM research_goals WHERE id = ?", (goal_id,)).fetchone()
+        if not row:
+            return None
+        goal = ResearchGoal.model_validate_json(row["payload"])
+        goal.evidence = self.list_research_evidence(goal_id)
+        goal.evidence_count = len(goal.evidence)
+        return goal
+
+    def list_research_goals(
+        self,
+        status: ResearchGoalStatus | None = None,
+        *,
+        symbol: str | None = None,
+        limit: int = 50,
+    ) -> list[ResearchGoal]:
+        clauses: list[str] = []
+        args: list[Any] = []
+        if status:
+            clauses.append("status = ?")
+            args.append(status.value)
+        if symbol:
+            clauses.append("symbol = ?")
+            args.append(symbol.upper())
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"SELECT payload FROM research_goals {where} ORDER BY created_at DESC LIMIT ?"
+        args.append(limit)
+        with self.connect() as conn:
+            rows = conn.execute(query, tuple(args)).fetchall()
+        goals = [ResearchGoal.model_validate_json(row["payload"]) for row in rows]
+        evidence_counts = self._research_evidence_counts([goal.id for goal in goals])
+        for goal in goals:
+            goal.evidence_count = evidence_counts.get(goal.id, 0)
+        return goals
+
+    def add_research_evidence(self, evidence: ResearchEvidence) -> ResearchEvidence:
+        if not self.get_research_goal(evidence.goal_id):
+            raise ValueError(f"research goal not found: {evidence.goal_id}")
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO research_evidence(id, goal_id, symbol, source_type, retrieved_at, payload)
+                VALUES(?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    evidence.id,
+                    evidence.goal_id,
+                    evidence.symbol,
+                    evidence.source_type,
+                    evidence.retrieved_at.isoformat(),
+                    self._dump(evidence),
+                ),
+            )
+        self.audit(
+            "research_evidence_added",
+            "research_goal",
+            evidence.goal_id,
+            {
+                "evidence_id": evidence.id,
+                "symbol": evidence.symbol,
+                "source_type": evidence.source_type,
+                "verification_status": evidence.verification_status,
+            },
+        )
+        return evidence
+
+    def list_research_evidence(self, goal_id: str) -> list[ResearchEvidence]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT payload FROM research_evidence WHERE goal_id = ? ORDER BY retrieved_at DESC",
+                (goal_id,),
+            ).fetchall()
+        return [ResearchEvidence.model_validate_json(row["payload"]) for row in rows]
+
+    def _research_evidence_counts(self, goal_ids: list[str]) -> dict[str, int]:
+        if not goal_ids:
+            return {}
+        placeholders = ",".join("?" for _ in goal_ids)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"SELECT goal_id, COUNT(*) AS count FROM research_evidence WHERE goal_id IN ({placeholders}) GROUP BY goal_id",
+                tuple(goal_ids),
+            ).fetchall()
+        return {row["goal_id"]: int(row["count"]) for row in rows}
 
     def create_proposal(self, proposal: Proposal) -> Proposal:
         with self.connect() as conn:

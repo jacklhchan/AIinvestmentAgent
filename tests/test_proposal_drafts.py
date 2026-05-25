@@ -36,6 +36,28 @@ def test_drafts_buy_candidate_from_positive_news(tmp_path) -> None:
     assert result.drafts[0].side == Side.BUY
     assert result.drafts[0].qty == 5
     assert result.drafts[0].confidence >= 0.6
+    assert result.drafts[0].evidence_gate_passed is False
+    assert result.drafts[0].research_goal_id
+
+
+def test_news_only_draft_does_not_create_policy_proposal(tmp_path) -> None:
+    engine, store = make_engine(tmp_path)
+    store.upsert_news(
+        NewsItem(
+            symbol="GOOGL",
+            title="Alphabet shares rise as AI demand growth beats expectations",
+            source="gdelt",
+            published_at=utc_now(),
+            summary="Analysts raise guidance after strong demand.",
+        )
+    )
+
+    result = engine.draft_from_watchlist(symbols=["GOOGL"], create_proposals=True)
+
+    assert len(result.drafts) == 1
+    assert result.drafts[0].evidence_gate_passed is False
+    assert result.created == []
+    assert any("research evidence gate insufficient" in item for item in result.skipped)
 
 
 def test_macro_news_does_not_create_symbol_directional_draft(tmp_path) -> None:
@@ -58,12 +80,23 @@ def test_draft_can_create_policy_checked_proposal(tmp_path) -> None:
             summary="Growth and demand remain strong.",
         )
     )
+    store.upsert_news(
+        NewsItem(
+            symbol="GOOGL",
+            title="SEC 10-Q filed for GOOGL",
+            source="sec-edgar",
+            published_at=utc_now(),
+            tags=["primary-source", "sec-edgar", "10-q"],
+            summary="Primary-source SEC EDGAR filing.",
+        )
+    )
 
     result = engine.draft_from_watchlist(symbols=["GOOGL"], create_proposals=True)
 
     assert len(result.created) == 1
     assert result.created[0].status == ProposalStatus.PENDING
     assert result.created[0].evidence
+    assert result.drafts[0].evidence_gate_passed is True
 
 
 def test_primary_source_context_is_attached_to_news_draft(tmp_path) -> None:
@@ -93,6 +126,7 @@ def test_primary_source_context_is_attached_to_news_draft(tmp_path) -> None:
     assert len(result.drafts) == 1
     assert any("sec-edgar" in item for item in result.drafts[0].evidence)
     assert "SEC/IR primary-source context is attached" in result.drafts[0].counter_evidence[0]
+    assert result.drafts[0].evidence_gate_passed is True
 
 
 def test_primary_source_lookback_is_longer_than_news_window(tmp_path) -> None:
@@ -122,6 +156,7 @@ def test_primary_source_lookback_is_longer_than_news_window(tmp_path) -> None:
     result = engine.draft_from_watchlist(symbols=["GOOGL"], lookback_hours=24)
 
     assert any("SEC 10-Q" in item for item in result.drafts[0].evidence)
+    assert result.drafts[0].evidence_gate_passed is True
 
 
 def test_companyfacts_counter_signal_is_attached_to_positive_draft(tmp_path) -> None:
@@ -160,3 +195,4 @@ def test_companyfacts_counter_signal_is_attached_to_positive_draft(tmp_path) -> 
 
     assert any("sec-companyfacts" in item for item in result.drafts[0].evidence)
     assert any("declined YoY" in item for item in result.drafts[0].counter_evidence)
+    assert result.drafts[0].evidence_gate_passed is True

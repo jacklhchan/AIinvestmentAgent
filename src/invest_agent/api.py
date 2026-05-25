@@ -12,9 +12,10 @@ from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event
 from .futu_adapter import FutuIntegrationError, get_futu_status, refresh_futu_readonly
 from .ir_feeds import IrFeedIngestor
 from .market_news import MarketNewsIngestor, external_ticker, resolve_watchlist_symbols
-from .models import ProposalCreate, ProposalStatus
+from .models import ProposalCreate, ProposalStatus, ResearchEvidenceCreate, ResearchGoalCreate, ResearchGoalStatus
 from .primary_sources import refresh_primary_sources
 from .proposal_drafts import ProposalDraftEngine
+from .research_goals import ResearchGoalService
 from .sec_companyfacts import SecCompanyFactsIngestor
 from .sec_edgar import SecEdgarIngestor
 
@@ -168,6 +169,35 @@ def refresh_fundamentals(request: FundamentalsRefreshRequest | None = None):
         max_symbols=request.max_symbols,
         forms=request.forms,
     )
+
+
+@app.get("/api/research-goals")
+def research_goals(status: ResearchGoalStatus | None = None, symbol: str | None = None, limit: int = 50):
+    return get_store().list_research_goals(status=status, symbol=symbol, limit=limit)
+
+
+@app.post("/api/research-goals")
+def create_research_goal(request: ResearchGoalCreate):
+    try:
+        return ResearchGoalService(get_store()).create_goal(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/research-goals/{goal_id}")
+def research_goal(goal_id: str):
+    item = get_store().get_research_goal(goal_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="research goal not found")
+    return item
+
+
+@app.post("/api/research-goals/{goal_id}/evidence")
+def add_research_evidence(goal_id: str, request: ResearchEvidenceCreate):
+    try:
+        return ResearchGoalService(get_store()).add_evidence(request.model_copy(update={"goal_id": goal_id}))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/api/autonomy/status")
@@ -470,6 +500,9 @@ DASHBOARD_HTML = """
     .PENDING { color: var(--amber); border-color: #dfc68a; background: #fff7df; }
     .APPROVED, .EXECUTED { color: var(--mint); border-color: #9ad6c5; background: #eaf8f3; }
     .REJECTED, .RISK_REJECTED, .EXPIRED { color: var(--coral); border-color: #e6aaa5; background: #fff0ee; }
+    .ACTIVE { color: var(--blue); border-color: #9ab3df; background: #eef4ff; }
+    .COMPLETED { color: var(--mint); border-color: #9ad6c5; background: #eaf8f3; }
+    .INSUFFICIENT { color: var(--amber); border-color: #dfc68a; background: #fff7df; }
     .actions {
       display: flex;
       gap: 8px;
@@ -593,6 +626,13 @@ DASHBOARD_HTML = """
       <div class="source-strip" id="autonomy-strip"></div>
     </section>
     <section class="panel">
+      <h2>研究目標與證據帳本</h2>
+      <table>
+        <thead><tr><th>狀態</th><th>研究目標</th><th>證據 Gate</th><th>Claims / Criteria</th></tr></thead>
+        <tbody id="research-goals"></tbody>
+      </table>
+    </section>
+    <section class="panel">
       <h2>SEC 基本面快照</h2>
       <table>
         <thead><tr><th>標的</th><th>收入</th><th>淨收入</th><th>現金流 / 來源</th></tr></thead>
@@ -676,6 +716,18 @@ DASHBOARD_HTML = """
       EXECUTED: "已執行"
     };
     const sideLabels = { BUY: "買入", SELL: "賣出" };
+    const goalStatusLabels = {
+      ACTIVE: "進行中",
+      COMPLETED: "證據足夠",
+      INSUFFICIENT: "證據不足",
+      REJECTED: "已拒絕"
+    };
+    const criterionStatusLabels = {
+      PENDING: "待補",
+      SATISFIED: "已滿足",
+      INSUFFICIENT: "不足",
+      WAIVED: "略過"
+    };
     const sourceLabels = {
       demo: "Demo",
       "futu-opend": "富途 OpenD",
@@ -706,7 +758,12 @@ DASHBOARD_HTML = """
       autonomy_cycle_completed: "自治循環已完成",
       ir_feeds_refreshed: "公司 IR 已刷新",
       event_replay_exported: "事件重播已匯出",
-      events_replayed: "事件已重播"
+      events_replayed: "事件已重播",
+      research_goal_created: "研究目標已建立",
+      research_evidence_added: "研究證據已加入",
+      research_goal_completed: "研究 Gate 已通過",
+      research_goal_insufficient: "研究 Gate 證據不足",
+      research_goal_evaluated: "研究目標已評估"
     };
     const sourceClass = source => `source-${String(source || "local").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
     const sourceBadge = source => `<span class="source-badge ${sourceClass(source)}">${escapeHtml(sourceLabels[source] || source || "本機")}</span>`;
@@ -838,6 +895,23 @@ DASHBOARD_HTML = """
       `).join("") || `<tr><td colspan="4" class="muted">尚未刷新 SEC Company Facts 基本面</td></tr>`;
     }
 
+    function renderResearchGoals(goals) {
+      document.querySelector("#research-goals").innerHTML = goals.map(goal => {
+        const claims = (goal.claims || []).slice(0, 2).map(claim =>
+          `<div>${escapeHtml(claim.text)} <span class="muted">(${escapeHtml(claim.status)})</span></div>`
+        ).join("");
+        const criteria = (goal.criteria || []).slice(0, 3).map(criterion =>
+          `<div>${escapeHtml(criterionStatusLabels[criterion.status] || criterion.status)} · ${escapeHtml(criterion.text)}</div>`
+        ).join("");
+        return `<tr>
+          <td>${pill(goal.status, goalStatusLabels[goal.status] || goal.status)}</td>
+          <td><strong>${escapeHtml(goal.symbol || "組合")}</strong><br><span class="muted">${escapeHtml(goal.objective)}</span><br><span class="muted">${formatDate(goal.created_at)}</span></td>
+          <td><strong>${escapeHtml(goal.evidence_count || 0)} 筆證據</strong><br><span class="muted">${escapeHtml(goal.summary || "等待證據寫入")}</span></td>
+          <td>${claims || '<span class="muted">未有 claim</span>'}${criteria ? `<div class="muted">${criteria}</div>` : ""}</td>
+        </tr>`;
+      }).join("") || `<tr><td colspan="4" class="muted">尚未建立研究目標；新聞草稿會自動建立 evidence ledger。</td></tr>`;
+    }
+
     function renderProposals(proposals) {
       document.querySelector("#proposals").innerHTML = proposals.map(p => {
         const risk = p.risk_check.passed ? "通過" : (p.risk_check.reasons || []).map(escapeHtml).join("; ");
@@ -875,7 +949,7 @@ DASHBOARD_HTML = """
     }
 
     async function loadAll() {
-      const [health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy] = await Promise.all([
+      const [health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, researchGoals] = await Promise.all([
         api("/health"),
         api("/api/portfolio"),
         api("/api/quotes"),
@@ -884,7 +958,8 @@ DASHBOARD_HTML = """
         api("/api/audit?limit=6"),
         apiOptional("/api/futu/status", error => ({ connected: false, message: error.message })),
         api("/api/fundamentals"),
-        api("/api/autonomy/status")
+        api("/api/autonomy/status"),
+        api("/api/research-goals?limit=8")
       ]);
       document.querySelector("#mode").textContent = health.paper_only ? "紙上交易模式" : "已要求實盤模式";
       const futuButton = document.querySelector("#futu-refresh");
@@ -896,6 +971,7 @@ DASHBOARD_HTML = """
       document.querySelector("#pending").textContent = proposals.filter(p => p.status === "PENDING").length;
       renderSourceStrip(health, portfolio, quotes, futuStatus);
       renderAutonomy(autonomy);
+      renderResearchGoals(researchGoals);
       renderFundamentals(fundamentals);
       renderPositions(portfolio, quotes);
       renderProposals(proposals);

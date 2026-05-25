@@ -5,13 +5,14 @@
 ## 已包含
 
 - FastAPI 本機控制平面：`http://127.0.0.1:8788`
-- SQLite 狀態儲存：proposal、approval、paper executions、portfolio、quotes、news、audit events
+- SQLite 狀態儲存：proposal、approval、paper executions、portfolio、quotes、news、fundamentals、research goals、evidence rows、audit events
 - 風控/審批狀態機：TTL、重複單、notional、confidence、price drift revalidation
 - Hermes stdio MCP server：讓 Hermes 讀 portfolio/news/proposals 並建立/批准/拒絕 proposal
 - Futu OpenD read-only refresh：讀取資金、持倉與持倉 quote snapshot，不 unlock trade
 - Market/news ingestion：從 watchlist 抓取 GDELT，並在有 `FINNHUB_API_KEY` 時補 Finnhub company news
 - SEC/IR primary-source ingestion：SEC EDGAR filings 預設可用；公司 IR RSS 可透過 `.env` 設定
 - SEC XBRL companyfacts 基本面快照：解析收入、淨收入、現金流、資產、負債、權益與 diluted EPS，並附上 YoY 變化
+- Research Goal / Evidence Ledger：每個自動草擬的 proposal 先建立 research-only goal，寫入 claims、criteria 與 evidence rows，再通過 evidence gate 才能建立待審批 proposal
 - Event replay：把 portfolio、quotes、news/evidence、fundamental snapshots 匯出成 JSONL，再重播用於信號驗證
 - Hermes proposal drafting：根據 watchlist 新聞產生結構化 draft，可選擇送入既有風控與審批狀態機
 - Safe autonomy loop：定時刷新 Futu/新聞/SEC/基本面並建立 paper-only proposal，所有交易仍需人工批准
@@ -83,7 +84,27 @@ python -m invest_agent.cli news-refresh
 python -m invest_agent.cli draft-proposals
 ```
 
-Dashboard 的 `刷新市場新聞` 會把最新新聞寫入本機 store；`草擬並送風控` 會把 draft 轉成現有 proposal，然後由風控決定 `PENDING` 或 `RISK_REJECTED`。即使通過審批，仍然只做 paper execution。
+Dashboard 的 `刷新市場新聞` 會把最新新聞寫入本機 store；`草擬並送風控` 會先建立 research goal / evidence ledger，再把 evidence gate 通過的 draft 轉成現有 proposal，然後由風控決定 `PENDING` 或 `RISK_REJECTED`。如果只有新聞線索、沒有 SEC/IR primary-source 或 SEC companyfacts 這類 verified evidence，系統會保留研究紀錄但不建立待審批 proposal。即使通過審批，仍然只做 paper execution。
+
+## Research Goals + Evidence Ledger
+
+這一層是吸收 Anthropic financial-services 的 thesis discipline 與 Vibe-Trading 的 Research Goal runtime 概念後，先落地在本機控制平面的安全版本。它只寫研究表，不會批准或執行交易。
+
+- `research_goals`：保存 objective、risk tier、claims、acceptance criteria、status 與 gate summary。
+- `research_evidence`：保存來源、URL、資料日期、retrieved time、freshness、verification status、confidence、caveat 與反證關聯。
+- Proposal draft 會自動建立一個 research-only goal；必須同時具備方向性市場/news evidence 與 verified primary-source/fundamentals evidence，才允許 `create_proposals=true` 建立 proposal。
+- Hermes 只能透過 MCP 建立/讀取研究目標與新增 evidence rows；這些工具不能寫 execution/order tables。
+
+REST API：
+
+```bash
+curl http://127.0.0.1:8788/api/research-goals
+curl -X POST http://127.0.0.1:8788/api/research-goals \
+  -H "Content-Type: application/json" \
+  -d '{"symbol":"AAPL","objective":"Evaluate whether AAPL evidence supports a watchlist proposal."}'
+```
+
+Dashboard 會顯示 `研究目標與證據帳本`，包含 gate 狀態、證據數、claims 與 criteria。
 
 ## SEC/IR Primary Sources + Event Replay
 
@@ -121,7 +142,7 @@ Proposal draft 仍只由 directional news 觸發；SEC/IR primary-source evidenc
 
 ## Safe Autonomy Loop
 
-自治層會跑一個安全循環：刷新只讀資料、更新新聞與 primary sources、解析 SEC companyfacts、草擬交易提案，並在 cooldown 允許時建立 `PENDING` proposal。它不會批准 proposal、不會 unlock Futu、不會送 live order。
+自治層會跑一個安全循環：刷新只讀資料、更新新聞與 primary sources、解析 SEC companyfacts、草擬交易提案，並在 evidence gate 與 cooldown 都允許時建立 `PENDING` proposal。它不會批准 proposal、不會 unlock Futu、不會送 live order。
 
 ```bash
 INVEST_AGENT_AUTONOMY_CYCLE_SECONDS=900
@@ -176,6 +197,10 @@ mcp_servers:
         - refresh_primary_source_filings
         - refresh_sec_company_facts
         - get_fundamental_snapshot
+        - list_research_goals
+        - create_research_goal
+        - add_research_evidence
+        - get_research_goal_snapshot
         - get_safe_autonomy_status
         - run_safe_autonomy_cycle
         - export_event_replay_file

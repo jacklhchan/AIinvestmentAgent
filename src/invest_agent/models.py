@@ -35,6 +35,27 @@ class ExecutionMode(StrEnum):
     LIVE = "LIVE"
 
 
+class ResearchGoalStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    COMPLETED = "COMPLETED"
+    INSUFFICIENT = "INSUFFICIENT"
+    REJECTED = "REJECTED"
+
+
+class ResearchClaimStatus(StrEnum):
+    OPEN = "OPEN"
+    SUPPORTED = "SUPPORTED"
+    CONTRADICTED = "CONTRADICTED"
+    NEUTRAL = "NEUTRAL"
+
+
+class ResearchCriterionStatus(StrEnum):
+    PENDING = "PENDING"
+    SATISFIED = "SATISFIED"
+    INSUFFICIENT = "INSUFFICIENT"
+    WAIVED = "WAIVED"
+
+
 class Position(BaseModel):
     symbol: str
     qty: float
@@ -167,6 +188,102 @@ class FundamentalSnapshot(BaseModel):
         return value.strip().upper()
 
 
+class ResearchClaim(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("claim"))
+    goal_id: str = ""
+    claim_type: str = "thesis"
+    text: str
+    status: ResearchClaimStatus = ResearchClaimStatus.OPEN
+
+
+class ResearchCriterion(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("crit"))
+    goal_id: str = ""
+    text: str
+    required: bool = True
+    freshness_requirement: str = ""
+    status: ResearchCriterionStatus = ResearchCriterionStatus.PENDING
+
+
+class ResearchEvidence(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("evid"))
+    goal_id: str
+    symbol: str | None = None
+    source_type: str
+    source_uri: str | None = None
+    text: str
+    data_as_of: datetime | None = None
+    retrieved_at: datetime = Field(default_factory=utc_now)
+    freshness_status: str = "unknown"
+    verification_status: str = "unverified"
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    caveat: str = ""
+    contradicts_claim_ids: list[str] = Field(default_factory=list)
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_optional_symbol(cls, value: str | None) -> str | None:
+        return value.strip().upper() if value else None
+
+
+class ResearchGoal(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("goal"))
+    symbol: str | None = None
+    objective: str
+    protocol: str = "evidence-ledger-v1"
+    risk_tier: str = "research-only"
+    status: ResearchGoalStatus = ResearchGoalStatus.ACTIVE
+    token_budget: int | None = Field(default=None, gt=0)
+    turn_budget: int | None = Field(default=None, gt=0)
+    created_at: datetime = Field(default_factory=utc_now)
+    completed_at: datetime | None = None
+    claims: list[ResearchClaim] = Field(default_factory=list)
+    criteria: list[ResearchCriterion] = Field(default_factory=list)
+    evidence: list[ResearchEvidence] = Field(default_factory=list)
+    evidence_count: int = 0
+    summary: str = ""
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_goal_symbol(cls, value: str | None) -> str | None:
+        return value.strip().upper() if value else None
+
+
+class ResearchGoalCreate(BaseModel):
+    symbol: str | None = None
+    objective: str = Field(min_length=8)
+    protocol: str = "evidence-ledger-v1"
+    risk_tier: str = "research-only"
+    token_budget: int | None = Field(default=None, gt=0)
+    turn_budget: int | None = Field(default=None, gt=0)
+    claims: list[str] = Field(default_factory=list)
+    criteria: list[str] = Field(default_factory=list)
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_create_symbol(cls, value: str | None) -> str | None:
+        return value.strip().upper() if value else None
+
+
+class ResearchEvidenceCreate(BaseModel):
+    goal_id: str
+    symbol: str | None = None
+    source_type: str = Field(min_length=2)
+    source_uri: str | None = None
+    text: str = Field(min_length=3)
+    data_as_of: datetime | None = None
+    freshness_status: str = "unknown"
+    verification_status: str = "unverified"
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    caveat: str = ""
+    contradicts_claim_ids: list[str] = Field(default_factory=list)
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_evidence_symbol(cls, value: str | None) -> str | None:
+        return value.strip().upper() if value else None
+
+
 class FundamentalsRefreshResult(BaseModel):
     symbols: list[str] = Field(default_factory=list)
     total_count: int = 0
@@ -188,6 +305,10 @@ class ProposalDraft(BaseModel):
     score: int
     news_count: int
     source_news_ids: list[str] = Field(default_factory=list)
+    research_goal_id: str | None = None
+    evidence_gate_passed: bool = False
+    evidence_gate_reasons: list[str] = Field(default_factory=list)
+    research_evidence_count: int = 0
 
 
 class DraftProposalResult(BaseModel):
