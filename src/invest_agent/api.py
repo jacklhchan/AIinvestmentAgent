@@ -10,10 +10,11 @@ from .deps import get_service, get_store
 from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event_file
 from .futu_adapter import FutuIntegrationError, get_futu_status, refresh_futu_readonly
 from .ir_feeds import IrFeedIngestor
-from .market_news import MarketNewsIngestor, resolve_watchlist_symbols
+from .market_news import MarketNewsIngestor, external_ticker, resolve_watchlist_symbols
 from .models import ProposalCreate, ProposalStatus
 from .primary_sources import refresh_primary_sources
 from .proposal_drafts import ProposalDraftEngine
+from .sec_companyfacts import SecCompanyFactsIngestor
 from .sec_edgar import SecEdgarIngestor
 
 
@@ -45,6 +46,12 @@ class PrimarySourceRefreshRequest(BaseModel):
     forms: list[str] | None = None
     max_filings: int | None = None
     max_symbols: int | None = None
+
+
+class FundamentalsRefreshRequest(BaseModel):
+    symbols: list[str] | None = None
+    max_symbols: int | None = None
+    forms: list[str] | None = None
 
 
 class EventReplayRequest(BaseModel):
@@ -127,6 +134,33 @@ def refresh_primary_sources_api(request: PrimarySourceRefreshRequest | None = No
         forms=request.forms,
         max_filings=request.max_filings,
         max_symbols=request.max_symbols,
+    )
+
+
+@app.get("/api/fundamentals")
+def fundamentals():
+    return get_store().list_fundamentals()
+
+
+@app.get("/api/fundamentals/{symbol}")
+def fundamental_snapshot(symbol: str):
+    store = get_store()
+    item = store.get_fundamentals(symbol)
+    if not item:
+        ticker = external_ticker(symbol)
+        item = next((snapshot for snapshot in store.list_fundamentals() if external_ticker(snapshot.symbol) == ticker), None)
+    if not item:
+        raise HTTPException(status_code=404, detail="fundamental snapshot not found")
+    return item
+
+
+@app.post("/api/fundamentals/refresh")
+def refresh_fundamentals(request: FundamentalsRefreshRequest | None = None):
+    request = request or FundamentalsRefreshRequest()
+    return SecCompanyFactsIngestor(get_settings(), get_store()).refresh_fundamentals(
+        symbols=request.symbols,
+        max_symbols=request.max_symbols,
+        forms=request.forms,
     )
 
 
@@ -409,6 +443,7 @@ DASHBOARD_HTML = """
     .source-google-news { color: #3f6b20; border-color: #a8c990; background: #f1faed; }
     .source-finnhub { color: #0f7a8a; border-color: #91cfda; background: #edfafd; }
     .source-sec-edgar { color: #74431b; border-color: #d7b48a; background: #fff5e8; }
+    .source-sec-companyfacts { color: #265b47; border-color: #9cc9b8; background: #effaf5; }
     .source-company-ir { color: #7a2457; border-color: #d6a2c0; background: #fff0f8; }
     .source-local { color: var(--slate); border-color: #b6c0bd; background: #f3f6f5; }
     .PENDING { color: var(--amber); border-color: #dfc68a; background: #fff7df; }
@@ -513,6 +548,7 @@ DASHBOARD_HTML = """
       <div class="bar-actions">
         <button class="secondary" id="news-refresh" type="button">刷新市場新聞</button>
         <button class="secondary" id="primary-refresh" type="button">刷新 SEC/IR</button>
+        <button class="secondary" id="fundamentals-refresh" type="button">刷新 SEC Fundamentals</button>
         <button class="secondary" id="draft-proposals" type="button">草擬並送風控</button>
         <button class="secondary" id="futu-refresh" type="button">刷新富途 OpenD</button>
         <div class="mode" id="mode">載入中</div>
@@ -529,6 +565,13 @@ DASHBOARD_HTML = """
     <section class="panel">
       <h2>資料來源與刷新狀態</h2>
       <div class="source-strip" id="source-strip"></div>
+    </section>
+    <section class="panel">
+      <h2>SEC 基本面快照</h2>
+      <table>
+        <thead><tr><th>標的</th><th>收入</th><th>淨收入</th><th>現金流 / 來源</th></tr></thead>
+        <tbody id="fundamentals"></tbody>
+      </table>
     </section>
     <section class="grid">
       <div class="panel">
@@ -614,6 +657,7 @@ DASHBOARD_HTML = """
       "google-news": "Google News",
       finnhub: "Finnhub",
       "sec-edgar": "SEC EDGAR",
+      "sec-companyfacts": "SEC Company Facts",
       "company-ir": "公司 IR",
       local: "本機"
     };
@@ -630,6 +674,8 @@ DASHBOARD_HTML = """
       market_news_refreshed: "市場新聞已刷新",
       proposal_drafts_generated: "提案草稿已產生",
       sec_filings_refreshed: "SEC filings 已刷新",
+      sec_companyfacts_refreshed: "SEC 基本面已刷新",
+      fundamentals_upserted: "基本面快照已更新",
       ir_feeds_refreshed: "公司 IR 已刷新",
       event_replay_exported: "事件重播已匯出",
       events_replayed: "事件已重播"
@@ -705,6 +751,35 @@ DASHBOARD_HTML = """
       document.querySelector("#position-rows").innerHTML = rows || `<tr><td colspan="4" class="muted">目前沒有持倉資料</td></tr>`;
     }
 
+    const metricValue = metric => {
+      if (!metric || metric.value === null || metric.value === undefined) return "未有資料";
+      if ((metric.unit || "").toLowerCase().includes("share")) return Number(metric.value).toFixed(2);
+      if ((metric.unit || "").toUpperCase() === "USD") {
+        const absolute = Math.abs(Number(metric.value));
+        if (absolute >= 1_000_000_000) return `$${(Number(metric.value) / 1_000_000_000).toFixed(1)}B`;
+        if (absolute >= 1_000_000) return `$${(Number(metric.value) / 1_000_000).toFixed(1)}M`;
+      }
+      return new Intl.NumberFormat("zh-HK", { maximumFractionDigits: 2 }).format(metric.value);
+    };
+    const metricCell = metric => {
+      if (!metric) return `<span class="muted">未有資料</span>`;
+      const period = [metric.fiscal_year, metric.fiscal_period].filter(Boolean).join(" ") || metric.end_date || "未有期間";
+      const yoy = metric.yoy_change_pct === null || metric.yoy_change_pct === undefined
+        ? ""
+        : ` · YoY ${metric.yoy_change_pct > 0 ? "+" : ""}${Number(metric.yoy_change_pct).toFixed(1)}%`;
+      return `<strong>${metricValue(metric)}</strong><br><span class="muted">${escapeHtml(period)}${escapeHtml(yoy)} · ${escapeHtml(metric.form || "SEC")}</span>`;
+    };
+    function renderFundamentals(snapshots) {
+      document.querySelector("#fundamentals").innerHTML = snapshots.map(snapshot => `
+        <tr>
+          <td><strong>${escapeHtml(snapshot.symbol)}</strong><br><span class="muted">${escapeHtml(snapshot.entity_name || snapshot.cik)}</span></td>
+          <td>${metricCell(snapshot.metrics?.revenue)}</td>
+          <td>${metricCell(snapshot.metrics?.net_income)}</td>
+          <td>${metricCell(snapshot.metrics?.operating_cash_flow)}<br>${sourceBadge(snapshot.source || "sec-companyfacts")} <span class="muted">${formatDate(snapshot.updated_at)}</span></td>
+        </tr>
+      `).join("") || `<tr><td colspan="4" class="muted">尚未刷新 SEC Company Facts 基本面</td></tr>`;
+    }
+
     function renderProposals(proposals) {
       document.querySelector("#proposals").innerHTML = proposals.map(p => {
         const risk = p.risk_check.passed ? "通過" : (p.risk_check.reasons || []).map(escapeHtml).join("; ");
@@ -742,14 +817,15 @@ DASHBOARD_HTML = """
     }
 
     async function loadAll() {
-      const [health, portfolio, quotes, proposals, news, auditEvents, futuStatus] = await Promise.all([
+      const [health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals] = await Promise.all([
         api("/health"),
         api("/api/portfolio"),
         api("/api/quotes"),
         api("/api/proposals"),
         api("/api/news?limit=8"),
         api("/api/audit?limit=6"),
-        apiOptional("/api/futu/status", error => ({ connected: false, message: error.message }))
+        apiOptional("/api/futu/status", error => ({ connected: false, message: error.message })),
+        api("/api/fundamentals")
       ]);
       document.querySelector("#mode").textContent = health.paper_only ? "紙上交易模式" : "已要求實盤模式";
       const futuButton = document.querySelector("#futu-refresh");
@@ -760,6 +836,7 @@ DASHBOARD_HTML = """
       document.querySelector("#positions").textContent = portfolio.positions.length;
       document.querySelector("#pending").textContent = proposals.filter(p => p.status === "PENDING").length;
       renderSourceStrip(health, portfolio, quotes, futuStatus);
+      renderFundamentals(fundamentals);
       renderPositions(portfolio, quotes);
       renderProposals(proposals);
       renderNews(news);
@@ -818,6 +895,20 @@ DASHBOARD_HTML = """
         const result = await api("/api/primary-sources/refresh", { method: "POST", body: JSON.stringify({}) });
         const errorNote = result.errors?.length ? `；${result.errors.length} 個來源有錯誤` : "";
         setToast(`SEC/IR 已入庫：${result.stored_count} 筆 primary-source evidence${errorNote}`);
+        await loadAll();
+      } catch (error) {
+        setToast(error.message);
+      } finally {
+        event.target.disabled = false;
+      }
+    });
+    document.querySelector("#fundamentals-refresh").addEventListener("click", async event => {
+      event.target.disabled = true;
+      setToast("正在刷新 SEC Company Facts 基本面...");
+      try {
+        const result = await api("/api/fundamentals/refresh", { method: "POST", body: JSON.stringify({}) });
+        const errorNote = result.errors?.length ? `；${result.errors.length} 個來源有錯誤` : "";
+        setToast(`SEC 基本面已更新：${result.stored_count} 個標的${errorNote}`);
         await loadAll();
       } catch (error) {
         setToast(error.message);

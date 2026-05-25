@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Settings
-from .models import EventReplayResult, NewsItem, PortfolioSnapshot, Quote
+from .models import EventReplayResult, FundamentalSnapshot, NewsItem, PortfolioSnapshot, Quote
 from .proposal_drafts import ProposalDraftEngine
 from .services import InvestmentService
 from .store import Store
@@ -18,7 +18,7 @@ def export_event_replay(store: Store, path: Path | str = DEFAULT_REPLAY_PATH, *,
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    counts = {"portfolio": 0, "quote": 0, "news_item": 0}
+    counts = {"portfolio": 0, "quote": 0, "news_item": 0, "fundamental_snapshot": 0}
     with output_path.open("w", encoding="utf-8") as handle:
         _write_event(handle, "portfolio", store.get_portfolio())
         counts["portfolio"] += 1
@@ -28,6 +28,9 @@ def export_event_replay(store: Store, path: Path | str = DEFAULT_REPLAY_PATH, *,
         for item in store.list_news(limit=news_limit):
             _write_event(handle, "news_item", item)
             counts["news_item"] += 1
+        for snapshot in store.list_fundamentals():
+            _write_event(handle, "fundamental_snapshot", snapshot)
+            counts["fundamental_snapshot"] += 1
 
     store.audit("event_replay_exported", "event_replay", str(output_path), counts)
     return EventReplayResult(path=str(output_path), exported_counts=counts)
@@ -90,5 +93,8 @@ def _apply_event(store: Store, event_type: str, payload: Any) -> None:
         return
     if event_type == "news_item":
         store.upsert_news(NewsItem.model_validate(payload))
+        return
+    if event_type == "fundamental_snapshot":
+        store.upsert_fundamentals(FundamentalSnapshot.model_validate(payload))
         return
     raise ValueError(f"unsupported event type {event_type!r}")

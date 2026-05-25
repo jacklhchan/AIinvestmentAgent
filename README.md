@@ -11,7 +11,8 @@
 - Futu OpenD read-only refresh：讀取資金、持倉與持倉 quote snapshot，不 unlock trade
 - Market/news ingestion：從 watchlist 抓取 GDELT，並在有 `FINNHUB_API_KEY` 時補 Finnhub company news
 - SEC/IR primary-source ingestion：SEC EDGAR filings 預設可用；公司 IR RSS 可透過 `.env` 設定
-- Event replay：把 portfolio、quotes、news/evidence 匯出成 JSONL，再重播用於信號驗證
+- SEC XBRL companyfacts 基本面快照：解析收入、淨收入、現金流、資產、負債、權益與 diluted EPS，並附上 YoY 變化
+- Event replay：把 portfolio、quotes、news/evidence、fundamental snapshots 匯出成 JSONL，再重播用於信號驗證
 - Hermes proposal drafting：根據 watchlist 新聞產生結構化 draft，可選擇送入既有風控與審批狀態機
 - 繁體中文本機 dashboard：可看持倉、新聞、pending proposal、資料來源、刷新時間、audit trail，並在瀏覽器批准/拒絕
 - launchd 與 Hermes config 範例
@@ -95,11 +96,27 @@ INVEST_AGENT_IR_RSS_FEEDS=AAPL=https://example.com/aapl-ir.xml;MSFT=https://exam
 
 ```bash
 python -m invest_agent.cli primary-refresh
+python -m invest_agent.cli fundamentals-refresh
 python -m invest_agent.cli event-export --path artifacts/replay/latest-events.jsonl
 python -m invest_agent.cli event-replay --path artifacts/replay/latest-events.jsonl
 ```
 
 Proposal draft 仍只由 directional news 觸發；SEC/IR primary-source evidence 會被附加作為背景證據，不會單靠 filing 自動產生交易方向。
+
+## SEC Company Facts Fundamentals
+
+`fundamentals-refresh` 會使用 SEC 官方 `companyfacts` XBRL JSON，按 CIK 抓取 watchlist 的基本面 snapshot。資料會寫入本機 SQLite `fundamentals` table，並在 proposal draft 裡作為 evidence / counter-evidence 使用：
+
+- `revenue`
+- `net_income`
+- `operating_income`
+- `operating_cash_flow`
+- `assets`
+- `liabilities`
+- `equity`
+- `eps_diluted`
+
+如果 revenue、net income 或 operating cash flow 的 YoY 變化與新聞方向相反，draft 會降低信心分數並把反證寫入 `counter_evidence`。這仍然不會自動建立實盤交易，只是讓 Hermes/Codex 在審閱 proposal 時有更硬的 primary-source context。
 
 ## Hermes + Codex LLM 設定
 
@@ -130,6 +147,8 @@ mcp_servers:
         - get_news_digest
         - refresh_market_news
         - refresh_primary_source_filings
+        - refresh_sec_company_facts
+        - get_fundamental_snapshot
         - export_event_replay_file
         - replay_event_file
         - draft_trade_proposals_from_watchlist
@@ -149,6 +168,7 @@ mcp_servers:
 
 ```text
 請用 invest_agent 工具列出 pending proposals，並解釋每個提案的風險檢查。
+請刷新 AAPL 的 SEC companyfacts，然後說明收入、淨收入和 operating cash flow 是否支持最新 draft。
 ```
 
 ## 安全邊界

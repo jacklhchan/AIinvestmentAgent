@@ -16,7 +16,8 @@ This version is intentionally paper-only. It can create trade proposals, run pol
 - Watchlist resolver that merges configured symbols, held positions, and locally cached quotes.
 - Market/news ingestion from GDELT, Google News RSS fallback, and optional Finnhub company news when `FINNHUB_API_KEY` is configured.
 - SEC EDGAR primary-source ingestion for company filings, plus configurable company IR RSS ingestion.
-- Event replay export/import for portfolio, quotes, and news/evidence JSONL.
+- SEC companyfacts/XBRL fundamentals ingestion for revenue, net income, operating income, operating cash flow, assets, liabilities, equity, and diluted EPS.
+- Event replay export/import for portfolio, quotes, news/evidence, and fundamental snapshot JSONL.
 - Proposal draft engine that turns recent symbol-specific watchlist news into structured draft proposals and can optionally send them through the existing policy engine.
 - Risk checks for max notional, cash availability, portfolio percentage, confidence floor, duplicate pending proposals, and approval-time price drift.
 - Traditional Chinese browser dashboard for portfolio, pending proposals, create proposal, approve/reject, positions, news digest, source provenance, refresh timestamps, and recent audit events.
@@ -28,6 +29,8 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - `get_news_digest`
   - `refresh_market_news`
   - `refresh_primary_source_filings`
+  - `refresh_sec_company_facts`
+  - `get_fundamental_snapshot`
   - `export_event_replay_file`
   - `replay_event_file`
   - `draft_trade_proposals_from_watchlist`
@@ -54,7 +57,7 @@ The global Hermes config at `/Users/apple/.hermes/config.yaml` has been updated 
 
 `hermes auth status openai-codex` shows logged in.
 
-`hermes mcp list` shows `invest_agent` enabled with 15 selected tools.
+`hermes mcp list` shows `invest_agent` enabled with 17 selected tools.
 
 ## Futu Setup
 
@@ -101,6 +104,20 @@ The app now ingests primary-source evidence before relying on news-derived propo
 - `python -m invest_agent.cli event-replay` replays that JSONL and re-runs draft generation for signal review.
 - Dashboard has a `刷新 SEC/IR` action and displays `SEC EDGAR` / `公司 IR` source badges.
 
+## SEC Company Facts Fundamentals
+
+The app now parses SEC `companyfacts` XBRL JSON into local fundamental snapshots.
+
+- `POST /api/fundamentals/refresh` refreshes watchlist fundamentals.
+- `GET /api/fundamentals` and `GET /api/fundamentals/{symbol}` expose cached snapshots.
+- `python -m invest_agent.cli fundamentals-refresh` refreshes fundamentals from the CLI.
+- Hermes MCP exposes `refresh_sec_company_facts` and `get_fundamental_snapshot`.
+- Event replay now includes `fundamental_snapshot` events.
+- Proposal drafts attach SEC companyfacts evidence and add counter-evidence when revenue, net income, or operating cash flow YoY contradicts the news-derived direction.
+- Dashboard has a `刷新 SEC Fundamentals` action and a `SEC 基本面快照` table.
+
+This phase still does not unlock Futu OpenD and does not place live orders.
+
 ## Dashboard UX
 
 The dashboard is now localized in Traditional Chinese and includes:
@@ -136,7 +153,7 @@ Latest verification completed:
 Result:
 
 ```text
-24 passed
+27 passed
 ```
 
 HTTP checks were also verified:
@@ -145,6 +162,8 @@ HTTP checks were also verified:
 - `GET /api/news`
 - `POST /api/news/refresh`
 - `POST /api/primary-sources/refresh`
+- `GET /api/fundamentals`
+- `POST /api/fundamentals/refresh`
 - `POST /api/events/export`
 - `POST /api/events/replay`
 - `POST /api/proposal-drafts`
@@ -157,6 +176,7 @@ HTTP checks were also verified:
 - `python -m invest_agent.cli futu-refresh`
 - `python -m invest_agent.cli news-refresh`
 - `python -m invest_agent.cli primary-refresh`
+- `python -m invest_agent.cli fundamentals-refresh`
 - `python -m invest_agent.cli event-export`
 - `python -m invest_agent.cli event-replay`
 - `python -m invest_agent.cli draft-proposals`
@@ -164,6 +184,8 @@ HTTP checks were also verified:
 The dashboard was visually checked in the Codex in-app browser.
 
 Futu OpenD read-only refresh was validated against the local OpenD on port `11111`; it refreshed 7 positions and 7 quote snapshots.
+
+SEC companyfacts live smoke was validated against the configured watchlist. It refreshed 5 company snapshots; `US.VOO` was skipped because SEC companyfacts has no company CIK for the ETF.
 
 ## Not Tracked In Git
 
@@ -179,5 +201,5 @@ The following are local runtime artifacts and intentionally ignored:
 ## Next Steps
 
 - Decide whether Telegram approval should be handled directly by Hermes Gateway or a dedicated approval bot.
-- Add richer SEC XBRL companyfacts interpretation before increasing draft confidence from primary-source evidence.
+- Add valuation ratios and filing-period normalization on top of SEC companyfacts.
 - Keep live execution disabled until Keychain secret loading, two-OpenD separation, broker-side revalidation, order/deal reconciliation, and a small live smoke-test plan are implemented.

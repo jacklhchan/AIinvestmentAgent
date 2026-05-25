@@ -137,6 +137,44 @@ class NewsIngestResult(BaseModel):
     items: list[NewsItem] = Field(default_factory=list)
 
 
+class FundamentalMetric(BaseModel):
+    name: str
+    label: str = ""
+    concept: str = ""
+    value: float | None = None
+    unit: str = ""
+    fiscal_year: int | None = None
+    fiscal_period: str = ""
+    end_date: str = ""
+    form: str = ""
+    filed_at: datetime | None = None
+    frame: str | None = None
+    yoy_change_pct: float | None = None
+    source: str = "sec-companyfacts"
+
+
+class FundamentalSnapshot(BaseModel):
+    symbol: str
+    cik: str
+    entity_name: str = ""
+    metrics: dict[str, FundamentalMetric] = Field(default_factory=dict)
+    updated_at: datetime = Field(default_factory=utc_now)
+    source: str = "sec-companyfacts"
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+
+class FundamentalsRefreshResult(BaseModel):
+    symbols: list[str] = Field(default_factory=list)
+    total_count: int = 0
+    stored_count: int = 0
+    errors: list[str] = Field(default_factory=list)
+    snapshots: list[FundamentalSnapshot] = Field(default_factory=list)
+
+
 class ProposalDraft(BaseModel):
     symbol: str
     side: Side

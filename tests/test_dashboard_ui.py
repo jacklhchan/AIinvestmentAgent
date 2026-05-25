@@ -14,4 +14,6 @@ def test_dashboard_is_traditional_chinese_with_data_provenance() -> None:
     assert "資料來源與刷新狀態" in response.text
     assert "刷新富途 OpenD" in response.text
     assert "刷新 SEC/IR" in response.text
+    assert "刷新 SEC Fundamentals" in response.text
+    assert "SEC 基本面快照" in response.text
     assert "操作紀錄" in response.text

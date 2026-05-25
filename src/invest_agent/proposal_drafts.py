@@ -4,7 +4,18 @@ from datetime import timedelta
 
 from .config import Settings
 from .market_news import external_ticker, resolve_watchlist_symbols
-from .models import DraftProposalResult, NewsItem, Position, ProposalCreate, ProposalDraft, Quote, Side, utc_now
+from .models import (
+    DraftProposalResult,
+    FundamentalMetric,
+    FundamentalSnapshot,
+    NewsItem,
+    Position,
+    ProposalCreate,
+    ProposalDraft,
+    Quote,
+    Side,
+    utc_now,
+)
 from .services import InvestmentService
 from .store import Store
 
@@ -151,9 +162,22 @@ class ProposalDraftEngine:
         top_news = signal_items[:3]
         top_primary = [item for item in primary_items[:2] if item.id not in {news_item.id for news_item in top_news}]
         evidence = [_news_reference(item) for item in [*top_news, *top_primary]]
+        fundamentals = self._find_fundamentals(symbol)
+        fundamental_reference = _fundamental_reference(fundamentals)
+        if fundamental_reference:
+            evidence.append(fundamental_reference)
+        fundamental_counter_evidence = _fundamental_counter_evidence(fundamentals, side)
+        fundamental_adjustment = 0.03 if fundamentals and not fundamental_counter_evidence else -0.05 if fundamental_counter_evidence else 0.0
         confidence = min(
             0.82,
-            0.42 + min(abs(score), 5) * 0.055 + min(len(signal_items), 4) * 0.025 + (0.04 if primary_items else 0.0),
+            max(
+                0.35,
+                0.42
+                + min(abs(score), 5) * 0.055
+                + min(len(signal_items), 4) * 0.025
+                + (0.04 if primary_items else 0.0)
+                + fundamental_adjustment,
+            ),
         )
         counter_evidence = (
             [
@@ -166,6 +190,12 @@ class ProposalDraftEngine:
                 "Draft is generated from news cadence only; human review is required.",
             ]
         )
+        if fundamentals:
+            counter_evidence.extend(fundamental_counter_evidence)
+            if not fundamental_counter_evidence:
+                counter_evidence.append("SEC companyfacts fundamentals are parsed locally, but the draft still requires human approval.")
+        else:
+            counter_evidence.append("No SEC companyfacts fundamentals snapshot is available for this symbol.")
         thesis = (
             f"Watchlist news flow is {direction} for {symbol}. "
             f"The draft keeps notional small and sends the idea through policy checks before approval."
@@ -204,6 +234,13 @@ class ProposalDraftEngine:
         ticker = external_ticker(symbol)
         return next((item for item in self.store.get_portfolio().positions if external_ticker(item.symbol) == ticker), None)
 
+    def _find_fundamentals(self, symbol: str) -> FundamentalSnapshot | None:
+        snapshot = self.store.get_fundamentals(symbol)
+        if snapshot:
+            return snapshot
+        ticker = external_ticker(symbol)
+        return next((item for item in self.store.list_fundamentals() if external_ticker(item.symbol) == ticker), None)
+
 
 def _score_news(item: NewsItem) -> int:
     haystack = f"{item.title} {item.summary}".lower()
@@ -225,3 +262,71 @@ def _news_reference(item: NewsItem) -> str:
     if item.url:
         return f"{item.source}: {item.title} ({item.url})"
     return f"{item.source}: {item.title}"
+
+
+def _fundamental_reference(snapshot: FundamentalSnapshot | None) -> str | None:
+    if not snapshot:
+        return None
+    metric_parts = []
+    for metric_name in ("revenue", "net_income", "operating_cash_flow"):
+        metric = snapshot.metrics.get(metric_name)
+        if metric:
+            metric_parts.append(_metric_summary(metric))
+    if not metric_parts:
+        return None
+    return f"sec-companyfacts: {snapshot.entity_name or snapshot.symbol} · " + "; ".join(metric_parts)
+
+
+def _metric_summary(metric: FundamentalMetric) -> str:
+    period = " ".join(part for part in [str(metric.fiscal_year or ""), metric.fiscal_period] if part).strip()
+    yoy = f", YoY {metric.yoy_change_pct:+.1f}%" if metric.yoy_change_pct is not None else ""
+    filed = f", filed {metric.filed_at.date().isoformat()}" if metric.filed_at else ""
+    return f"{metric.label} {_format_metric_value(metric)} ({period or metric.end_date}{yoy}{filed})"
+
+
+def _fundamental_counter_evidence(snapshot: FundamentalSnapshot | None, side: Side) -> list[str]:
+    if not snapshot:
+        return []
+    notes: list[str] = []
+    deterioration = _deteriorating_metrics(snapshot)
+    improvement = _improving_metrics(snapshot)
+    if side == Side.BUY and deterioration:
+        notes.append(f"SEC companyfacts counter-signal: {', '.join(deterioration)} declined YoY.")
+    if side == Side.SELL and improvement:
+        notes.append(f"SEC companyfacts counter-signal: {', '.join(improvement)} improved YoY.")
+    net_income = snapshot.metrics.get("net_income")
+    if side == Side.BUY and net_income and net_income.value is not None and net_income.value < 0:
+        notes.append("SEC companyfacts counter-signal: latest net income is negative.")
+    return notes
+
+
+def _deteriorating_metrics(snapshot: FundamentalSnapshot) -> list[str]:
+    names = []
+    for metric_name in ("revenue", "net_income", "operating_cash_flow"):
+        metric = snapshot.metrics.get(metric_name)
+        if metric and metric.yoy_change_pct is not None and metric.yoy_change_pct < -2:
+            names.append(metric.label)
+    return names
+
+
+def _improving_metrics(snapshot: FundamentalSnapshot) -> list[str]:
+    names = []
+    for metric_name in ("revenue", "net_income", "operating_cash_flow"):
+        metric = snapshot.metrics.get(metric_name)
+        if metric and metric.yoy_change_pct is not None and metric.yoy_change_pct > 2:
+            names.append(metric.label)
+    return names
+
+
+def _format_metric_value(metric: FundamentalMetric) -> str:
+    if metric.value is None:
+        return "n/a"
+    if "share" in metric.unit.lower():
+        return f"{metric.value:.2f}"
+    prefix = "$" if metric.unit.upper() == "USD" else ""
+    abs_value = abs(metric.value)
+    if abs_value >= 1_000_000_000:
+        return f"{prefix}{metric.value / 1_000_000_000:.1f}B"
+    if abs_value >= 1_000_000:
+        return f"{prefix}{metric.value / 1_000_000:.1f}M"
+    return f"{prefix}{metric.value:,.2f}"

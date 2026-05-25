@@ -9,10 +9,11 @@ from .config import get_settings
 from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event_file as replay_events_from_file
 from .futu_adapter import get_futu_status, refresh_futu_readonly
 from .ir_feeds import IrFeedIngestor
-from .market_news import MarketNewsIngestor, resolve_watchlist_symbols
+from .market_news import MarketNewsIngestor, external_ticker, resolve_watchlist_symbols
 from .models import ProposalCreate, ProposalStatus, Side
 from .primary_sources import refresh_primary_sources
 from .proposal_drafts import ProposalDraftEngine
+from .sec_companyfacts import SecCompanyFactsIngestor
 from .sec_edgar import SecEdgarIngestor
 
 mcp = FastMCP("AI Investment Agent Control Plane")
@@ -94,6 +95,35 @@ def refresh_primary_source_filings(
             max_symbols=max_symbols,
         )
     )
+
+
+@mcp.tool()
+def refresh_sec_company_facts(
+    symbols: list[str] | None = None,
+    max_symbols: int | None = None,
+    forms: list[str] | None = None,
+) -> dict:
+    """Refresh SEC XBRL companyfacts fundamentals for watchlist symbols and store local snapshots."""
+    return _json(
+        SecCompanyFactsIngestor(get_settings(), get_store()).refresh_fundamentals(
+            symbols=symbols,
+            max_symbols=max_symbols,
+            forms=forms,
+        )
+    )
+
+
+@mcp.tool()
+def get_fundamental_snapshot(symbol: str | None = None) -> dict | list[dict]:
+    """Return stored SEC companyfacts fundamentals for one symbol, or all cached watchlist snapshots."""
+    store = get_store()
+    if symbol:
+        snapshot = store.get_fundamentals(symbol)
+        if not snapshot:
+            ticker = external_ticker(symbol)
+            snapshot = next((item for item in store.list_fundamentals() if external_ticker(item.symbol) == ticker), None)
+        return _json(snapshot) if snapshot else {"error": f"fundamental snapshot not found for {symbol.upper()}"}
+    return _json(store.list_fundamentals())
 
 
 @mcp.tool()

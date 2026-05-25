@@ -8,6 +8,7 @@ from typing import Any
 from .models import (
     AuditEvent,
     ExecutionRecord,
+    FundamentalSnapshot,
     NewsItem,
     PortfolioSnapshot,
     Proposal,
@@ -49,6 +50,12 @@ class Store:
                     symbol TEXT,
                     payload TEXT NOT NULL,
                     published_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS fundamentals (
+                    symbol TEXT PRIMARY KEY,
+                    payload TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS proposals (
@@ -137,6 +144,31 @@ class Store:
         with self.connect() as conn:
             rows = conn.execute(query, args).fetchall()
         return [NewsItem.model_validate_json(row["payload"]) for row in rows]
+
+    def upsert_fundamentals(self, snapshot: FundamentalSnapshot) -> None:
+        symbol = snapshot.symbol.upper()
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO fundamentals(symbol, payload, updated_at) VALUES(?, ?, ?) "
+                "ON CONFLICT(symbol) DO UPDATE SET payload=excluded.payload, updated_at=excluded.updated_at",
+                (symbol, self._dump(snapshot), snapshot.updated_at.isoformat()),
+            )
+        self.audit(
+            "fundamentals_upserted",
+            "fundamentals",
+            symbol,
+            {"source": snapshot.source, "metric_count": len(snapshot.metrics)},
+        )
+
+    def get_fundamentals(self, symbol: str) -> FundamentalSnapshot | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT payload FROM fundamentals WHERE symbol = ?", (symbol.upper(),)).fetchone()
+        return FundamentalSnapshot.model_validate_json(row["payload"]) if row else None
+
+    def list_fundamentals(self) -> list[FundamentalSnapshot]:
+        with self.connect() as conn:
+            rows = conn.execute("SELECT payload FROM fundamentals ORDER BY symbol").fetchall()
+        return [FundamentalSnapshot.model_validate_json(row["payload"]) for row in rows]
 
     def create_proposal(self, proposal: Proposal) -> Proposal:
         with self.connect() as conn:

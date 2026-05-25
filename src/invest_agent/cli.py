@@ -13,6 +13,7 @@ from .market_news import MarketNewsIngestor
 from .models import ProposalCreate, Side
 from .primary_sources import refresh_primary_sources
 from .proposal_drafts import ProposalDraftEngine
+from .sec_companyfacts import SecCompanyFactsIngestor
 from .sec_edgar import SecEdgarIngestor
 
 
@@ -79,6 +80,11 @@ def primary_refresh_main() -> None:
     print(json.dumps(_json(result), indent=2, ensure_ascii=False))
 
 
+def fundamentals_refresh_main() -> None:
+    result = SecCompanyFactsIngestor(get_settings(), get_store()).refresh_fundamentals()
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
 def event_export_main(path: str | None = None) -> None:
     result = export_event_replay(get_store(), path or DEFAULT_REPLAY_PATH)
     print(json.dumps(_json(result), indent=2, ensure_ascii=False))
@@ -111,6 +117,7 @@ def main() -> None:
             "draft-proposals",
             "draft-and-create",
             "primary-refresh",
+            "fundamentals-refresh",
             "event-export",
             "event-replay",
         ],
@@ -131,6 +138,8 @@ def main() -> None:
         draft_and_create_main()
     if args.command == "primary-refresh":
         primary_refresh_main()
+    if args.command == "fundamentals-refresh":
+        fundamentals_refresh_main()
     if args.command == "event-export":
         event_export_main(args.path)
     if args.command == "event-replay":
