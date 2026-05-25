@@ -8,6 +8,8 @@ from invest_agent.models import (
     NewsItem,
     ProposalCreate,
     ProposalStatus,
+    CreatedBy,
+    CreatedVia,
     ResearchEvidenceCreate,
     ResearchGoalCreate,
     Side,
@@ -17,6 +19,7 @@ from invest_agent.models import (
     ThesisPillarInput,
     ThesisRiskInput,
     ThesisUpdateCreate,
+    ThesisStatus,
     utc_now,
 )
 from invest_agent.proposal_drafts import ProposalDraftEngine
@@ -149,6 +152,40 @@ def test_invalidated_thesis_blocks_pending_proposal(tmp_path) -> None:
 
     assert proposal.status == ProposalStatus.RISK_REJECTED
     assert any("thesis status" in reason for reason in proposal.risk_check.reasons)
+
+
+def test_unconfirmed_mcp_style_thesis_is_watch_only_context(tmp_path) -> None:
+    _settings, store, service = make_stack(tmp_path)
+    goal_id = create_passed_goal(store)
+    thesis = ThesisTrackerService(store).create_thesis(
+        ThesisCreate(
+            symbol="GOOGL",
+            thesis_statement="Hermes drafted thesis should wait for human confirmation.",
+            status=ThesisStatus.WATCH,
+            created_via=CreatedVia.MCP,
+            created_by=CreatedBy.HERMES,
+            human_confirmed=False,
+            confirmed_by="",
+        )
+    )
+
+    proposal = service.create_proposal(
+        ProposalCreate(
+            symbol="GOOGL",
+            side=Side.BUY,
+            qty=5,
+            limit_price=175.70,
+            thesis="Try to use an unconfirmed MCP thesis in a proposal.",
+            trigger="pytest",
+            confidence=0.65,
+            research_goal_id=goal_id,
+            thesis_id=thesis.id,
+        )
+    )
+
+    assert store.get_active_thesis_for_symbol("GOOGL") is None
+    assert proposal.status == ProposalStatus.RISK_REJECTED
+    assert any("not human-confirmed" in reason for reason in proposal.risk_check.reasons)
 
 
 def test_proposal_draft_attaches_active_thesis(tmp_path) -> None:

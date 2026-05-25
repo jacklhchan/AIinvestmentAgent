@@ -6,6 +6,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from .autonomy import SafeAutonomyRunner, autonomy_status
+from .catalysts import CatalystCalendarService
 from .config import get_settings
 from .deps import get_service, get_store
 from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event_file
@@ -13,6 +14,12 @@ from .futu_adapter import FutuIntegrationError, get_futu_status, refresh_futu_re
 from .ir_feeds import IrFeedIngestor
 from .market_news import MarketNewsIngestor, external_ticker, resolve_watchlist_symbols
 from .models import (
+    CatalystCompleteRequest,
+    CatalystCreate,
+    CatalystReviewCreate,
+    CatalystStatus,
+    CreatedBy,
+    CreatedVia,
     ProposalCreate,
     ProposalStatus,
     ResearchEvidenceCreate,
@@ -217,7 +224,16 @@ def theses(status: ThesisStatus | None = None, symbol: str | None = None, limit:
 
 @app.post("/api/theses")
 def create_thesis(request: ThesisCreate):
-    return ThesisTrackerService(get_store()).create_thesis(request)
+    return ThesisTrackerService(get_store()).create_thesis(
+        request.model_copy(
+            update={
+                "created_via": CreatedVia.DASHBOARD,
+                "created_by": CreatedBy.HUMAN,
+                "human_confirmed": True,
+                "confirmed_by": "dashboard",
+            }
+        )
+    )
 
 
 @app.get("/api/theses/{thesis_id}")
@@ -232,6 +248,49 @@ def thesis(thesis_id: str):
 def add_thesis_update(thesis_id: str, request: ThesisUpdateCreate):
     try:
         return ThesisTrackerService(get_store()).add_update(thesis_id, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/catalysts/upcoming")
+def upcoming_catalysts(days: int = 14, symbol: str | None = None, limit: int = 50):
+    return CatalystCalendarService(get_store()).list_upcoming(days=days, symbol=symbol, limit=limit)
+
+
+@app.get("/api/catalysts")
+def catalysts(status: CatalystStatus | None = None, symbol: str | None = None, limit: int = 50):
+    return get_store().list_catalysts(status=status, symbol=symbol, limit=limit)
+
+
+@app.post("/api/catalysts")
+def create_catalyst(request: CatalystCreate):
+    return CatalystCalendarService(get_store()).create_catalyst(
+        request.model_copy(update={"created_via": CreatedVia.DASHBOARD, "created_by": CreatedBy.HUMAN}),
+        human_verified=True,
+    )
+
+
+@app.get("/api/catalysts/{catalyst_id}")
+def catalyst(catalyst_id: str):
+    store = get_store()
+    item = store.get_catalyst(catalyst_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="catalyst not found")
+    return {"catalyst": item, "reviews": store.list_catalyst_reviews(catalyst_id)}
+
+
+@app.post("/api/catalysts/{catalyst_id}/complete")
+def complete_catalyst(catalyst_id: str, request: CatalystCompleteRequest):
+    try:
+        return CatalystCalendarService(get_store()).complete_catalyst(catalyst_id, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/catalysts/{catalyst_id}/review")
+def review_catalyst(catalyst_id: str, request: CatalystReviewCreate):
+    try:
+        return CatalystCalendarService(get_store()).create_review(catalyst_id, request)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -542,6 +601,12 @@ DASHBOARD_HTML = """
     .active { color: var(--mint); border-color: #9ad6c5; background: #eaf8f3; }
     .watch { color: var(--amber); border-color: #dfc68a; background: #fff7df; }
     .invalidated, .archived { color: var(--coral); border-color: #e6aaa5; background: #fff0ee; }
+    .upcoming { color: var(--blue); border-color: #9ab3df; background: #eef4ff; }
+    .completed { color: var(--mint); border-color: #9ad6c5; background: #eaf8f3; }
+    .cancelled, .missed { color: var(--coral); border-color: #e6aaa5; background: #fff0ee; }
+    .high { color: var(--coral); border-color: #e6aaa5; background: #fff0ee; }
+    .medium { color: var(--amber); border-color: #dfc68a; background: #fff7df; }
+    .low { color: var(--mint); border-color: #9ad6c5; background: #eaf8f3; }
     .actions {
       display: flex;
       gap: 8px;
@@ -700,6 +765,29 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         </form>
       </div>
     </section>
+    <section class="grid">
+      <div class="panel">
+        <h2>催化事件</h2>
+        <table>
+          <thead><tr><th>狀態</th><th>事件</th><th>時間 / 影響</th><th>來源 / Review</th></tr></thead>
+          <tbody id="catalysts"></tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <h2>新增催化事件</h2>
+        <form id="catalyst-form">
+          <div class="form-grid">
+            <div class="field"><label for="catalyst_symbol">標的</label><input id="catalyst_symbol" name="symbol" value="AAPL" /></div>
+            <div class="field"><label for="catalyst_event_type">事件類型</label><select id="catalyst_event_type" name="event_type"><option value="earnings">Earnings</option><option value="investor_day">Investor Day</option><option value="product">產品</option><option value="regulatory">監管</option><option value="macro">宏觀</option><option value="conference">會議</option><option value="other">其他</option></select></div>
+            <div class="field"><label for="catalyst_event_date">事件時間</label><input id="catalyst_event_date" name="event_date" type="datetime-local" required /></div>
+            <div class="field"><label for="catalyst_impact">預期影響</label><select id="catalyst_impact" name="expected_impact"><option value="high">高</option><option value="medium">中</option><option value="low">低</option></select></div>
+          </div>
+          <div class="field"><label for="catalyst_title">事件標題</label><textarea id="catalyst_title" name="title" required>AAPL earnings / high-impact event 待確認</textarea></div>
+          <div class="field"><label for="catalyst_description">備註</label><textarea id="catalyst_description" name="description">Dashboard 手動新增，視為 human_verified；proposal 前仍會受 catalyst invariant 約束。</textarea></div>
+          <button class="primary" type="submit">建立事件</button>
+        </form>
+      </div>
+    </section>
     <section class="panel">
       <h2>SEC 基本面快照</h2>
       <table>
@@ -813,6 +901,31 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       medium: "中",
       low: "低"
     };
+    const catalystStatusLabels = {
+      upcoming: "未發生",
+      completed: "已完成",
+      cancelled: "已取消",
+      missed: "未追蹤"
+    };
+    const catalystTypeLabels = {
+      earnings: "Earnings",
+      investor_day: "Investor Day",
+      analyst_day: "Analyst Day",
+      product: "產品",
+      regulatory: "監管",
+      conference: "會議",
+      macro: "宏觀",
+      industry_data: "行業數據",
+      shareholder_meeting: "股東會",
+      other: "其他"
+    };
+    const impactLabels = { high: "高影響", medium: "中影響", low: "低影響" };
+    const verificationLabels = {
+      unverified: "未驗證",
+      source_verified: "來源驗證",
+      human_verified: "人工確認",
+      rejected: "已拒絕"
+    };
     const sourceLabels = {
       demo: "Demo",
       "futu-opend": "富途 OpenD",
@@ -822,6 +935,11 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       "sec-edgar": "SEC EDGAR",
       "sec-companyfacts": "SEC Company Facts",
       "company-ir": "公司 IR",
+      "exchange-calendar": "交易所日曆",
+      "macro-calendar": "宏觀日曆",
+      manual: "手動",
+      news: "新聞",
+      other: "其他",
       local: "本機"
     };
     const eventLabels = {
@@ -852,6 +970,12 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       thesis_created: "投資論點已建立",
       thesis_updated: "投資論點已更新",
       thesis_update_added: "投資論點更新已加入",
+      catalyst_created: "催化事件已建立",
+      catalyst_updated: "催化事件已更新",
+      catalyst_completed: "催化事件已完成",
+      catalyst_review_created: "催化事件 Review 已建立",
+      catalyst_review_applied: "催化事件 Review 已套用",
+      catalyst_post_event_goal_created: "事件後研究目標已建立",
       proposal_research_invariant_rejected: "提案違反研究 Gate 不變式"
     };
     const sourceClass = source => `source-${String(source || "local").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
@@ -1022,6 +1146,21 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       }).join("") || `<tr><td colspan="4" class="muted">尚未建立投資論點；可先為 watchlist 建立 thesis，再讓 draft proposal 自動引用。</td></tr>`;
     }
 
+    function renderCatalysts(catalysts) {
+      document.querySelector("#catalysts").innerHTML = catalysts.map(catalyst => {
+        const source = `${sourceBadge(catalyst.source_type || "manual")} <span class="muted">${escapeHtml(verificationLabels[catalyst.verification_status] || catalyst.verification_status)}</span>`;
+        const review = catalyst.linked_research_goal_id
+          ? `Research Goal ${escapeHtml(catalyst.linked_research_goal_id)}`
+          : (catalyst.status === "completed" ? "等待 post-event review" : "未發生");
+        return `<tr>
+          <td>${pill(catalyst.status, catalystStatusLabels[catalyst.status] || catalyst.status)}</td>
+          <td><strong>${escapeHtml(catalyst.symbol || "組合")}</strong><br>${escapeHtml(catalyst.title)}<br><span class="muted">${escapeHtml(catalystTypeLabels[catalyst.event_type] || catalyst.event_type)}</span></td>
+          <td>${formatDate(catalyst.event_date)}<br>${pill(catalyst.expected_impact, impactLabels[catalyst.expected_impact] || catalyst.expected_impact)} <span class="muted">${escapeHtml(catalyst.event_time_hint || "unknown")}</span></td>
+          <td>${source}<br><span class="muted">${escapeHtml(review)}</span></td>
+        </tr>`;
+      }).join("") || `<tr><td colspan="4" class="muted">未來 14 天沒有催化事件；可先手動新增 earnings / macro / investor day。</td></tr>`;
+    }
+
     function renderProposals(proposals) {
       document.querySelector("#proposals").innerHTML = proposals.map(p => {
         const risk = p.risk_check.passed ? "通過" : (p.risk_check.reasons || []).map(escapeHtml).join("; ");
@@ -1059,7 +1198,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
     }
 
     async function loadAll() {
-      const [health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, researchGoals, theses] = await Promise.all([
+      const [health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, researchGoals, theses, catalysts] = await Promise.all([
         api("/health"),
         api("/api/portfolio"),
         api("/api/quotes"),
@@ -1070,7 +1209,8 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         api("/api/fundamentals"),
         api("/api/autonomy/status"),
         api("/api/research-goals?limit=8"),
-        api("/api/theses?limit=8")
+        api("/api/theses?limit=8"),
+        api("/api/catalysts/upcoming?days=14&limit=8")
       ]);
       document.querySelector("#mode").textContent = health.paper_only ? "紙上交易模式" : "已要求實盤模式";
       const futuButton = document.querySelector("#futu-refresh");
@@ -1084,6 +1224,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       renderAutonomy(autonomy);
       renderResearchGoals(researchGoals);
       renderTheses(theses);
+      renderCatalysts(catalysts);
       renderFundamentals(fundamentals);
       renderPositions(portfolio, quotes);
       renderProposals(proposals);
@@ -1244,6 +1385,28 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       try {
         const created = await api("/api/theses", { method: "POST", body: JSON.stringify(body) });
         setToast(`已建立投資論點 ${created.id}`);
+        await loadAll();
+      } catch (error) {
+        setToast(error.message);
+      }
+    });
+    document.querySelector("#catalyst-form").addEventListener("submit", async event => {
+      event.preventDefault();
+      const form = new FormData(event.target);
+      const eventDate = new Date(form.get("event_date"));
+      const body = {
+        symbol: form.get("symbol") || null,
+        event_type: form.get("event_type"),
+        title: form.get("title"),
+        description: form.get("description"),
+        event_date: eventDate.toISOString(),
+        expected_impact: form.get("expected_impact"),
+        source_type: "manual",
+        verification_status: "human_verified"
+      };
+      try {
+        const created = await api("/api/catalysts", { method: "POST", body: JSON.stringify(body) });
+        setToast(`已建立催化事件 ${created.id}`);
         await loadAll();
       } catch (error) {
         setToast(error.message);

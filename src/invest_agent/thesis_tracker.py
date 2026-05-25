@@ -22,13 +22,20 @@ class ThesisTrackerService:
         self.store = store
 
     def create_thesis(self, request: ThesisCreate) -> Thesis:
+        confirmed_at = utc_now() if request.human_confirmed else None
         thesis = Thesis(
             symbol=request.symbol,
             side=request.side,
             thesis_statement=request.thesis_statement.strip(),
+            status=request.status,
             conviction=request.conviction,
             target_price=request.target_price,
             stop_loss_trigger=request.stop_loss_trigger.strip(),
+            created_via=request.created_via,
+            created_by=request.created_by,
+            human_confirmed=request.human_confirmed,
+            confirmed_at=confirmed_at,
+            confirmed_by=request.confirmed_by.strip() if request.human_confirmed else "",
         )
         thesis.pillars = [
             ThesisPillar(thesis_id=thesis.id, text=pillar.text.strip(), status=pillar.status)

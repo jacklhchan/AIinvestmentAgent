@@ -56,6 +56,21 @@ class ResearchCriterionStatus(StrEnum):
     WAIVED = "WAIVED"
 
 
+class CreatedVia(StrEnum):
+    DASHBOARD = "dashboard"
+    CLI = "cli"
+    REST = "rest"
+    MCP = "mcp"
+    SYSTEM = "system"
+
+
+class CreatedBy(StrEnum):
+    HUMAN = "human"
+    HERMES = "hermes"
+    SCHEDULER = "scheduler"
+    SYSTEM = "system"
+
+
 class ThesisSide(StrEnum):
     LONG = "long"
     SHORT = "short"
@@ -101,6 +116,73 @@ class ThesisActionBias(StrEnum):
     TRIM = "trim"
     EXIT = "exit"
     WATCH_ONLY = "watch_only"
+
+
+class CatalystEventType(StrEnum):
+    EARNINGS = "earnings"
+    INVESTOR_DAY = "investor_day"
+    ANALYST_DAY = "analyst_day"
+    PRODUCT = "product"
+    REGULATORY = "regulatory"
+    CONFERENCE = "conference"
+    MACRO = "macro"
+    INDUSTRY_DATA = "industry_data"
+    SHAREHOLDER_MEETING = "shareholder_meeting"
+    OTHER = "other"
+
+
+class CatalystTimeHint(StrEnum):
+    PRE_MARKET = "pre_market"
+    MARKET_HOURS = "market_hours"
+    POST_MARKET = "post_market"
+    UNKNOWN = "unknown"
+
+
+class CatalystExpectedImpact(StrEnum):
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class CatalystSourceType(StrEnum):
+    SEC_EDGAR = "sec-edgar"
+    COMPANY_IR = "company-ir"
+    EXCHANGE_CALENDAR = "exchange-calendar"
+    MACRO_CALENDAR = "macro-calendar"
+    MANUAL = "manual"
+    NEWS = "news"
+    OTHER = "other"
+
+
+class CatalystVerificationStatus(StrEnum):
+    UNVERIFIED = "unverified"
+    SOURCE_VERIFIED = "source_verified"
+    HUMAN_VERIFIED = "human_verified"
+    REJECTED = "rejected"
+
+
+class CatalystStatus(StrEnum):
+    UPCOMING = "upcoming"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+    MISSED = "missed"
+
+
+class CatalystThesisDelta(StrEnum):
+    STRENGTHENS = "strengthens"
+    WEAKENS = "weakens"
+    NEUTRAL = "neutral"
+    INVALIDATES = "invalidates"
+    UNKNOWN = "unknown"
+
+
+class CatalystActionBias(StrEnum):
+    NO_CHANGE = "no_change"
+    WATCH_ONLY = "watch_only"
+    INCREASE = "increase"
+    TRIM = "trim"
+    EXIT = "exit"
+    BLOCK_NEW_PROPOSAL = "block_new_proposal"
 
 
 class Position(BaseModel):
@@ -395,6 +477,11 @@ class Thesis(BaseModel):
     stop_loss_trigger: str = ""
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+    created_via: CreatedVia = CreatedVia.REST
+    created_by: CreatedBy = CreatedBy.HUMAN
+    human_confirmed: bool = True
+    confirmed_at: datetime | None = Field(default_factory=utc_now)
+    confirmed_by: str = "local-user"
     pillars: list[ThesisPillar] = Field(default_factory=list)
     risks: list[ThesisRisk] = Field(default_factory=list)
     updates: list[ThesisUpdate] = Field(default_factory=list)
@@ -409,9 +496,14 @@ class ThesisCreate(BaseModel):
     symbol: str
     side: ThesisSide = ThesisSide.LONG
     thesis_statement: str = Field(min_length=8)
+    status: ThesisStatus = ThesisStatus.ACTIVE
     conviction: ThesisConviction = ThesisConviction.MEDIUM
     target_price: float | None = Field(default=None, gt=0)
     stop_loss_trigger: str = ""
+    created_via: CreatedVia = CreatedVia.REST
+    created_by: CreatedBy = CreatedBy.HUMAN
+    human_confirmed: bool = True
+    confirmed_by: str = "local-user"
     pillars: list[ThesisPillarInput] = Field(default_factory=list)
     risks: list[ThesisRiskInput] = Field(default_factory=list)
 
@@ -428,6 +520,83 @@ class ThesisUpdateCreate(BaseModel):
     summary: str = Field(min_length=3)
     action_bias: ThesisActionBias = ThesisActionBias.NO_CHANGE
     conviction: ThesisConviction | None = None
+
+
+class Catalyst(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("cat"))
+    symbol: str | None = None
+    event_type: CatalystEventType = CatalystEventType.OTHER
+    title: str = Field(min_length=3)
+    description: str = ""
+    event_date: datetime
+    event_time_hint: CatalystTimeHint = CatalystTimeHint.UNKNOWN
+    timezone: str = "America/New_York"
+    expected_impact: CatalystExpectedImpact = CatalystExpectedImpact.MEDIUM
+    source_uri: str | None = None
+    source_type: CatalystSourceType = CatalystSourceType.MANUAL
+    verification_status: CatalystVerificationStatus = CatalystVerificationStatus.UNVERIFIED
+    source_verified: bool = False
+    status: CatalystStatus = CatalystStatus.UPCOMING
+    linked_thesis_id: str | None = None
+    linked_research_goal_id: str | None = None
+    actual_outcome_summary: str | None = None
+    thesis_delta: CatalystThesisDelta = CatalystThesisDelta.UNKNOWN
+    created_via: CreatedVia = CreatedVia.REST
+    created_by: CreatedBy = CreatedBy.HUMAN
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_catalyst_symbol(cls, value: str | None) -> str | None:
+        return value.strip().upper() if value else None
+
+
+class CatalystCreate(BaseModel):
+    symbol: str | None = None
+    event_type: CatalystEventType = CatalystEventType.OTHER
+    title: str = Field(min_length=3)
+    description: str = ""
+    event_date: datetime
+    event_time_hint: CatalystTimeHint = CatalystTimeHint.UNKNOWN
+    timezone: str = "America/New_York"
+    expected_impact: CatalystExpectedImpact = CatalystExpectedImpact.MEDIUM
+    source_uri: str | None = None
+    source_type: CatalystSourceType = CatalystSourceType.MANUAL
+    verification_status: CatalystVerificationStatus = CatalystVerificationStatus.UNVERIFIED
+    source_verified: bool = False
+    linked_thesis_id: str | None = None
+    created_via: CreatedVia = CreatedVia.REST
+    created_by: CreatedBy = CreatedBy.HUMAN
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_create_catalyst_symbol(cls, value: str | None) -> str | None:
+        return value.strip().upper() if value else None
+
+
+class CatalystReview(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("catrev"))
+    catalyst_id: str
+    research_goal_id: str | None = None
+    evidence_hash: str = ""
+    actual_outcome_summary: str
+    thesis_delta: CatalystThesisDelta = CatalystThesisDelta.UNKNOWN
+    action_bias: CatalystActionBias = CatalystActionBias.NO_CHANGE
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class CatalystReviewCreate(BaseModel):
+    research_goal_id: str | None = None
+    evidence_hash: str | None = None
+    actual_outcome_summary: str = Field(min_length=3)
+    thesis_delta: CatalystThesisDelta = CatalystThesisDelta.UNKNOWN
+    action_bias: CatalystActionBias = CatalystActionBias.NO_CHANGE
+
+
+class CatalystCompleteRequest(BaseModel):
+    actual_outcome_summary: str = Field(min_length=3)
+    create_research_goal: bool = True
 
 
 class FundamentalsRefreshResult(BaseModel):

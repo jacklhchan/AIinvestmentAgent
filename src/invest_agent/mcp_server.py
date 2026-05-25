@@ -5,6 +5,7 @@ from typing import Literal
 from mcp.server.fastmcp import FastMCP
 
 from .autonomy import SafeAutonomyRunner, autonomy_status
+from .catalysts import CatalystCalendarService, mcp_catalyst_request
 from .deps import get_service, get_store
 from .config import get_settings
 from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event_file as replay_events_from_file
@@ -14,10 +15,17 @@ from .market_news import MarketNewsIngestor, external_ticker, resolve_watchlist_
 from .models import (
     ProposalCreate,
     ProposalStatus,
+    CatalystCompleteRequest,
+    CatalystCreate,
+    CatalystEventType,
+    CatalystExpectedImpact,
+    CatalystStatus,
     ResearchEvidenceCreate,
     ResearchGoalCreate,
     ResearchGoalStatus,
     Side,
+    CreatedBy,
+    CreatedVia,
     ThesisActionBias,
     ThesisConviction,
     ThesisCreate,
@@ -229,9 +237,14 @@ def create_thesis(
         symbol=symbol,
         side=ThesisSide(side),
         thesis_statement=thesis_statement,
+        status=ThesisStatus.WATCH,
         conviction=ThesisConviction(conviction),
         target_price=target_price,
         stop_loss_trigger=stop_loss_trigger,
+        created_via=CreatedVia.MCP,
+        created_by=CreatedBy.HERMES,
+        human_confirmed=False,
+        confirmed_by="",
         pillars=[ThesisPillarInput(text=text) for text in (pillars or [])],
         risks=[
             ThesisRiskInput(
@@ -260,6 +273,77 @@ def get_thesis_snapshot(thesis_id: str) -> dict:
     """Return one tracked thesis with pillars, risks, and evidence-linked updates."""
     thesis = get_store().get_thesis(thesis_id)
     return _json(thesis) if thesis else {"error": f"thesis not found: {thesis_id}"}
+
+
+@mcp.tool()
+def list_catalysts(
+    symbol: str | None = None,
+    status: Literal["upcoming", "completed", "cancelled", "missed"] | None = None,
+    days: int | None = None,
+    limit: int = 20,
+) -> list[dict]:
+    """List catalyst calendar events. Use days for an upcoming-event preview."""
+    parsed_status = CatalystStatus(status) if status else None
+    service = CatalystCalendarService(get_store())
+    if days is not None:
+        return _json(service.list_upcoming(days=days, symbol=symbol, limit=limit))
+    return _json(get_store().list_catalysts(status=parsed_status, symbol=symbol, limit=limit))
+
+
+@mcp.tool()
+def create_catalyst(
+    title: str,
+    event_date: str,
+    symbol: str | None = None,
+    event_type: Literal[
+        "earnings",
+        "investor_day",
+        "analyst_day",
+        "product",
+        "regulatory",
+        "conference",
+        "macro",
+        "industry_data",
+        "shareholder_meeting",
+        "other",
+    ] = "other",
+    expected_impact: Literal["high", "medium", "low"] = "medium",
+    description: str = "",
+    source_uri: str | None = None,
+    linked_thesis_id: str | None = None,
+) -> dict:
+    """Create an unverified research-only catalyst calendar event. MCP-created catalysts never count as source-verified."""
+    request = mcp_catalyst_request(
+        symbol=symbol,
+        event_type=CatalystEventType(event_type),
+        title=title,
+        event_date=event_date,
+        expected_impact=CatalystExpectedImpact(expected_impact),
+        description=description,
+        source_uri=source_uri,
+        linked_thesis_id=linked_thesis_id,
+    )
+    return _json(CatalystCalendarService(get_store()).create_catalyst(request))
+
+
+@mcp.tool()
+def get_catalyst_snapshot(catalyst_id: str) -> dict:
+    """Return one catalyst event plus any local review rows."""
+    store = get_store()
+    catalyst = store.get_catalyst(catalyst_id)
+    if not catalyst:
+        return {"error": f"catalyst not found: {catalyst_id}"}
+    return {"catalyst": _json(catalyst), "reviews": _json(store.list_catalyst_reviews(catalyst_id))}
+
+
+@mcp.tool()
+def complete_catalyst_with_research_goal(catalyst_id: str, actual_outcome_summary: str) -> dict:
+    """Mark a catalyst completed and create a post-event research goal candidate. It does not create proposals."""
+    catalyst = CatalystCalendarService(get_store()).complete_catalyst(
+        catalyst_id,
+        CatalystCompleteRequest(actual_outcome_summary=actual_outcome_summary, create_research_goal=True),
+    )
+    return _json(catalyst)
 
 
 @mcp.tool()

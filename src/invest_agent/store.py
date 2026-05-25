@@ -7,6 +7,9 @@ from typing import Any
 
 from .models import (
     AuditEvent,
+    Catalyst,
+    CatalystReview,
+    CatalystStatus,
     ExecutionRecord,
     FundamentalSnapshot,
     NewsItem,
@@ -145,6 +148,27 @@ class Store:
                     created_at TEXT NOT NULL,
                     payload TEXT NOT NULL,
                     FOREIGN KEY (thesis_id) REFERENCES theses(id),
+                    FOREIGN KEY (research_goal_id) REFERENCES research_goals(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS catalysts (
+                    id TEXT PRIMARY KEY,
+                    symbol TEXT,
+                    event_type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    event_date TEXT NOT NULL,
+                    expected_impact TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS catalyst_reviews (
+                    id TEXT PRIMARY KEY,
+                    catalyst_id TEXT NOT NULL,
+                    research_goal_id TEXT,
+                    thesis_delta TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    FOREIGN KEY (catalyst_id) REFERENCES catalysts(id),
                     FOREIGN KEY (research_goal_id) REFERENCES research_goals(id)
                 );
                 """
@@ -498,7 +522,11 @@ class Store:
         return theses
 
     def get_active_thesis_for_symbol(self, symbol: str) -> Thesis | None:
-        candidates = self.list_theses(status=ThesisStatus.ACTIVE, symbol=symbol, limit=1)
+        candidates = [
+            thesis
+            for thesis in self.list_theses(status=ThesisStatus.ACTIVE, symbol=symbol, limit=5)
+            if thesis.human_confirmed
+        ]
         return candidates[0] if candidates else None
 
     def list_thesis_pillars(self, thesis_id: str) -> list[ThesisPillar]:
@@ -524,6 +552,118 @@ class Store:
                 (thesis_id,),
             ).fetchall()
         return [ThesisUpdate.model_validate_json(row["payload"]) for row in rows]
+
+    def create_catalyst(self, catalyst: Catalyst) -> Catalyst:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO catalysts(id, symbol, event_type, status, event_date, expected_impact, payload)
+                VALUES(?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    catalyst.id,
+                    catalyst.symbol,
+                    catalyst.event_type.value,
+                    catalyst.status.value,
+                    catalyst.event_date.isoformat(),
+                    catalyst.expected_impact.value,
+                    self._dump(catalyst),
+                ),
+            )
+        self.audit(
+            "catalyst_created",
+            "catalyst",
+            catalyst.id,
+            {
+                "symbol": catalyst.symbol,
+                "event_type": catalyst.event_type.value,
+                "expected_impact": catalyst.expected_impact.value,
+                "verification_status": catalyst.verification_status.value,
+            },
+        )
+        return catalyst
+
+    def update_catalyst(self, catalyst: Catalyst, event_type: str = "catalyst_updated") -> Catalyst:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE catalysts
+                SET symbol = ?, event_type = ?, status = ?, event_date = ?, expected_impact = ?, payload = ?
+                WHERE id = ?
+                """,
+                (
+                    catalyst.symbol,
+                    catalyst.event_type.value,
+                    catalyst.status.value,
+                    catalyst.event_date.isoformat(),
+                    catalyst.expected_impact.value,
+                    self._dump(catalyst),
+                    catalyst.id,
+                ),
+            )
+        self.audit(event_type, "catalyst", catalyst.id, {"symbol": catalyst.symbol, "status": catalyst.status.value})
+        return self.get_catalyst(catalyst.id) or catalyst
+
+    def get_catalyst(self, catalyst_id: str) -> Catalyst | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT payload FROM catalysts WHERE id = ?", (catalyst_id,)).fetchone()
+        return Catalyst.model_validate_json(row["payload"]) if row else None
+
+    def list_catalysts(
+        self,
+        status: CatalystStatus | None = None,
+        *,
+        symbol: str | None = None,
+        limit: int = 50,
+    ) -> list[Catalyst]:
+        clauses: list[str] = []
+        args: list[Any] = []
+        if status:
+            clauses.append("status = ?")
+            args.append(status.value)
+        if symbol:
+            clauses.append("symbol = ?")
+            args.append(symbol.upper())
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"SELECT payload FROM catalysts {where} ORDER BY event_date ASC LIMIT ?"
+        args.append(limit)
+        with self.connect() as conn:
+            rows = conn.execute(query, tuple(args)).fetchall()
+        return [Catalyst.model_validate_json(row["payload"]) for row in rows]
+
+    def create_catalyst_review(self, review: CatalystReview) -> CatalystReview:
+        if not self.get_catalyst(review.catalyst_id):
+            raise ValueError(f"catalyst not found: {review.catalyst_id}")
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO catalyst_reviews(id, catalyst_id, research_goal_id, thesis_delta, created_at, payload)
+                VALUES(?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    review.id,
+                    review.catalyst_id,
+                    review.research_goal_id,
+                    review.thesis_delta.value,
+                    review.created_at.isoformat(),
+                    self._dump(review),
+                ),
+            )
+        self.audit(
+            "catalyst_review_created",
+            "catalyst",
+            review.catalyst_id,
+            {"review_id": review.id, "thesis_delta": review.thesis_delta.value},
+        )
+        return review
+
+    def list_catalyst_reviews(self, catalyst_id: str) -> list[CatalystReview]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT payload FROM catalyst_reviews WHERE catalyst_id = ? ORDER BY created_at DESC",
+                (catalyst_id,),
+            ).fetchall()
+        return [CatalystReview.model_validate_json(row["payload"]) for row in rows]
 
     def create_proposal(self, proposal: Proposal) -> Proposal:
         with self.connect() as conn:

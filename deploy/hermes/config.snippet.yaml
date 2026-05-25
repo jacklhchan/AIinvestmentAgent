@@ -30,6 +30,10 @@ mcp_servers:
         - list_theses
         - get_thesis_snapshot
         - add_thesis_update_from_research_goal
+        - list_catalysts
+        - create_catalyst
+        - get_catalyst_snapshot
+        - complete_catalyst_with_research_goal
         - get_safe_autonomy_status
         - run_safe_autonomy_cycle
         - export_event_replay_file

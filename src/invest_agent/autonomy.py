@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 from fastapi import HTTPException
 
+from .catalysts import CatalystCalendarService
 from .config import Settings
 from .futu_adapter import FutuIntegrationError, refresh_futu_readonly
 from .ir_feeds import IrFeedIngestor
@@ -57,6 +58,7 @@ class SafeAutonomyRunner:
             result.steps.append(_skipped_step("primary_sources", "not due in this cycle"))
             result.steps.append(_skipped_step("sec_companyfacts", "not due in this cycle"))
 
+        result.steps.append(self._run_step("catalyst_calendar", self._review_catalysts))
         draft_step, created, skipped = self._draft_and_optionally_create(create)
         result.steps.append(draft_step)
         result.created_proposals = created
@@ -223,6 +225,18 @@ class SafeAutonomyRunner:
             if external_ticker(proposal.symbol) == ticker and proposal.side == draft.side:
                 return True
         return False
+
+    def _review_catalysts(self) -> dict[str, Any]:
+        service = CatalystCalendarService(self.store)
+        upcoming = service.list_upcoming(days=14, limit=50)
+        created_goal_ids = service.create_post_event_goals_for_completed(limit=20)
+        high_impact = [item for item in upcoming if item.expected_impact == "high"]
+        return {
+            "upcoming_count": len(upcoming),
+            "high_impact_count": len(high_impact),
+            "post_event_goal_count": len(created_goal_ids),
+            "post_event_goal_ids": created_goal_ids,
+        }
 
 
 def autonomy_status(settings: Settings, store: Store) -> dict[str, Any]:

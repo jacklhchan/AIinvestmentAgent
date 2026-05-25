@@ -626,6 +626,38 @@ thesis_updates
 - impact: strengthens | weakens | neutral | invalidates
 - summary
 - action_bias
+
+catalysts
+- id
+- symbol nullable
+- event_type
+- title
+- description
+- event_date
+- event_time_hint
+- timezone
+- expected_impact
+- source_uri
+- source_type
+- verification_status
+- source_verified
+- status
+- linked_thesis_id
+- linked_research_goal_id
+- actual_outcome_summary
+- thesis_delta
+- created_via
+- created_by
+
+catalyst_reviews
+- id
+- catalyst_id
+- research_goal_id
+- evidence_hash
+- actual_outcome_summary
+- thesis_delta
+- action_bias
+- created_at
 ```
 
 **新的 proposal flow**
@@ -667,8 +699,10 @@ src/invest_agent/autonomy.py
 src/invest_agent/api.py
 src/invest_agent/mcp_server.py
 src/invest_agent/thesis_tracker.py
+src/invest_agent/catalysts.py
 tests/test_research_goals.py
 tests/test_thesis_tracker.py
+tests/test_catalysts.py
 ```
 
 **下一步**
@@ -676,8 +710,9 @@ tests/test_thesis_tracker.py
 1. 持續守住 proposal invariant：所有 `PENDING` proposal 必須有 `research_goal_id` 或明確 `manual_override_reason`。
 2. 持續守住 verified provenance：MCP / user-submitted evidence 不能直接變成 source-verified。
 3. Thesis Tracker 已落地第一版：持倉 thesis、pillar、risk、invalidation condition、research-goal-backed thesis updates，並在 proposal creation 前做 thesis invariant。
-4. 下一步新增 Catalyst Calendar：earnings、investor day、product、regulatory、macro、conference、expected impact、post-event review。
-5. 新增 Earnings Review：把 SEC companyfacts、filing、IR release、transcript 摘要輸出成 `thesis_delta = strengthen | weaken | neutral | invalidates`。
-6. 新增 Trade Journal / Behavior Report：先支援 Futu CSV export 的 FIFO roundtrip、win rate、PnL ratio、drawdown、overtrading。
-7. 將 Vibe / backtest sidecar 保持為 research-only adapter，輸出 run card 到 evidence ledger，不接 approval/execution。
-8. 最後才碰 live path：Keychain、雙 OpenD、atomic approval、idempotency、broker-side revalidation、order/deal reconciliation。
+4. Catalyst Calendar 已落地第一版：earnings、investor day、product、regulatory、macro、conference、expected impact、post-event review，並在 proposal creation 前做 catalyst invariant。
+5. 下一步新增 Earnings Review：把 SEC companyfacts、filing、IR release、transcript 摘要輸出成 `thesis_delta = strengthen | weaken | neutral | invalidates`。
+6. 新增 Run Card / Trust Layer artifact：讓 catalyst review / earnings review / event replay / backtest sidecar 輸出可追溯 artifact。
+7. 新增 Trade Journal / Behavior Report：先支援 Futu CSV export 的 FIFO roundtrip、win rate、PnL ratio、drawdown、overtrading。
+8. 將 Vibe / backtest sidecar 保持為 research-only adapter，輸出 run card 到 evidence ledger，不接 approval/execution。
+9. 最後才碰 live path：Keychain、雙 OpenD、atomic approval、idempotency、broker-side revalidation、order/deal reconciliation。

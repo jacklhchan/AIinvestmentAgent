@@ -5,6 +5,7 @@ from datetime import timedelta
 from fastapi import HTTPException
 
 from .config import Settings
+from .catalysts import CatalystCalendarService
 from .models import (
     ExecutionMode,
     ExecutionRecord,
@@ -38,6 +39,17 @@ class InvestmentService:
             research_goal, invariant_reasons = self._research_invariant_reasons(request)
         thesis_reasons = self._thesis_invariant_reasons(request)
         invariant_reasons.extend(thesis_reasons)
+        catalyst_reasons, catalyst_warnings = CatalystCalendarService(self.store).proposal_catalyst_findings(
+            request.symbol,
+            has_manual_override=bool(request.manual_override_reason),
+        )
+        invariant_reasons.extend(catalyst_reasons)
+        risk_check.warnings.extend(catalyst_warnings)
+        if catalyst_warnings and not catalyst_reasons:
+            risk_check.metrics["catalyst_warning_count"] = len(catalyst_warnings)
+            risk_check.metrics["catalyst_effective_confidence"] = max(0.0, request.confidence - 0.10)
+            if risk_check.metrics["catalyst_effective_confidence"] < self.settings.min_confidence:
+                invariant_reasons.append("medium-impact catalyst confidence haircut falls below minimum confidence")
         if invariant_reasons:
             risk_check.passed = False
             risk_check.reasons.extend(invariant_reasons)
@@ -98,6 +110,8 @@ class InvestmentService:
         if thesis.symbol != request.symbol:
             return [f"thesis symbol {thesis.symbol} does not match proposal symbol {request.symbol}"]
         reasons: list[str] = []
+        if not thesis.human_confirmed:
+            reasons.append("thesis is not human-confirmed; keep it as research context until confirmed")
         if thesis.status in {ThesisStatus.INVALIDATED, ThesisStatus.ARCHIVED}:
             reasons.append(f"thesis status is {thesis.status.value}; do not create pending proposal from it")
         if thesis.side == ThesisSide.NEUTRAL_WATCH:

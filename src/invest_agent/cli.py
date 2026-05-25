@@ -4,6 +4,7 @@ import argparse
 import json
 
 from .autonomy import SafeAutonomyRunner, autonomy_status
+from .catalysts import CatalystCalendarService
 from .config import get_settings
 from .demo_data import seed_demo_data
 from .deps import get_service, get_store
@@ -114,6 +115,15 @@ def list_theses_main() -> None:
     print(json.dumps(_json(get_store().list_theses()), indent=2, ensure_ascii=False))
 
 
+def list_catalysts_main(days: int | None = None) -> None:
+    service = CatalystCalendarService(get_store())
+    if days is not None:
+        result = service.list_upcoming(days=days)
+    else:
+        result = get_store().list_catalysts()
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
 def _json(value):
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
@@ -143,9 +153,12 @@ def main() -> None:
             "autonomy-loop",
             "autonomy-status",
             "list-theses",
+            "list-catalysts",
+            "catalyst-preview",
         ],
     )
     parser.add_argument("--path", default=str(DEFAULT_REPLAY_PATH))
+    parser.add_argument("--days", type=int, default=None)
     args = parser.parse_args()
     if args.command == "seed":
         seed_main()
@@ -175,6 +188,10 @@ def main() -> None:
         autonomy_status_main()
     if args.command == "list-theses":
         list_theses_main()
+    if args.command == "list-catalysts":
+        list_catalysts_main(args.days)
+    if args.command == "catalyst-preview":
+        list_catalysts_main(args.days or 14)
 
 
 if __name__ == "__main__":
