@@ -7,7 +7,9 @@ from .config import get_settings
 from .demo_data import seed_demo_data
 from .deps import get_service, get_store
 from .futu_adapter import refresh_futu_readonly
+from .market_news import MarketNewsIngestor
 from .models import ProposalCreate, Side
+from .proposal_drafts import ProposalDraftEngine
 
 
 def seed_main() -> None:
@@ -51,6 +53,21 @@ def futu_refresh_main() -> None:
     )
 
 
+def news_refresh_main() -> None:
+    result = MarketNewsIngestor(get_settings(), get_store()).refresh_news()
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def draft_proposals_main() -> None:
+    result = ProposalDraftEngine(get_settings(), get_store(), get_service()).draft_from_watchlist()
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def draft_and_create_main() -> None:
+    result = ProposalDraftEngine(get_settings(), get_store(), get_service()).draft_from_watchlist(create_proposals=True)
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
 def _json(value):
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
@@ -63,7 +80,7 @@ def _json(value):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="AI Investment Agent helper commands")
-    parser.add_argument("command", choices=["seed", "smoke", "futu-refresh"])
+    parser.add_argument("command", choices=["seed", "smoke", "futu-refresh", "news-refresh", "draft-proposals", "draft-and-create"])
     args = parser.parse_args()
     if args.command == "seed":
         seed_main()
@@ -71,6 +88,12 @@ def main() -> None:
         smoke_main()
     if args.command == "futu-refresh":
         futu_refresh_main()
+    if args.command == "news-refresh":
+        news_refresh_main()
+    if args.command == "draft-proposals":
+        draft_proposals_main()
+    if args.command == "draft-and-create":
+        draft_and_create_main()
 
 
 if __name__ == "__main__":

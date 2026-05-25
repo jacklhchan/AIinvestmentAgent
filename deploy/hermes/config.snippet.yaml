@@ -16,7 +16,10 @@ mcp_servers:
       include:
         - get_portfolio_snapshot
         - get_watchlist_quotes
+        - get_watchlist_symbols
         - get_news_digest
+        - refresh_market_news
+        - draft_trade_proposals_from_watchlist
         - get_futu_connection_status
         - refresh_futu_readonly_snapshot
         - list_pending_proposals

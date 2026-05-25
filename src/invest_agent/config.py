@@ -23,6 +23,14 @@ class Settings(BaseModel):
     max_price_drift_bps: float = 30.0
     min_confidence: float = 0.35
     allow_live_trading: bool = False
+    watchlist_symbols: str = "AAPL,MSFT,NVDA,GOOGL"
+    draft_notional_usd: float = 1000.0
+    draft_max_candidates: int = 3
+    news_lookback_days: int = 3
+    news_max_per_symbol: int = 5
+    news_max_symbols: int = 6
+    news_timeout_seconds: float = 5.0
+    google_news_fallback_enabled: bool = True
 
     futu_host: str = "127.0.0.1"
     futu_monitor_port: int = 11111
@@ -83,6 +91,14 @@ def get_settings() -> Settings:
         max_price_drift_bps=_float_env("INVEST_AGENT_MAX_PRICE_DRIFT_BPS", 30.0),
         min_confidence=_float_env("INVEST_AGENT_MIN_CONFIDENCE", 0.35),
         allow_live_trading=_bool_env("INVEST_AGENT_ALLOW_LIVE_TRADING", False),
+        watchlist_symbols=os.getenv("INVEST_AGENT_WATCHLIST", "AAPL,MSFT,NVDA,GOOGL"),
+        draft_notional_usd=_float_env("INVEST_AGENT_DRAFT_NOTIONAL_USD", 1000.0),
+        draft_max_candidates=_int_env("INVEST_AGENT_DRAFT_MAX_CANDIDATES", 3),
+        news_lookback_days=_int_env("INVEST_AGENT_NEWS_LOOKBACK_DAYS", 3),
+        news_max_per_symbol=_int_env("INVEST_AGENT_NEWS_MAX_PER_SYMBOL", 5),
+        news_max_symbols=_int_env("INVEST_AGENT_NEWS_MAX_SYMBOLS", 6),
+        news_timeout_seconds=_float_env("INVEST_AGENT_NEWS_TIMEOUT_SECONDS", 5.0),
+        google_news_fallback_enabled=_bool_env("INVEST_AGENT_GOOGLE_NEWS_FALLBACK_ENABLED", True),
         futu_host=os.getenv("FUTU_HOST", "127.0.0.1"),
         futu_monitor_port=_int_env("FUTU_MONITOR_PORT", 11111),
         futu_trade_port=_int_env("FUTU_TRADE_PORT", 11112),

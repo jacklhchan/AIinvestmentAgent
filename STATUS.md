@@ -13,13 +13,19 @@ This version is intentionally paper-only. It can create trade proposals, run pol
 - FastAPI control plane on `127.0.0.1:8788`.
 - SQLite-backed local store for portfolio snapshot, quotes, news, proposals, executions, and audit events.
 - Demo portfolio, quotes, and news seed data.
+- Watchlist resolver that merges configured symbols, held positions, and locally cached quotes.
+- Market/news ingestion from GDELT, Google News RSS fallback, and optional Finnhub company news when `FINNHUB_API_KEY` is configured.
+- Proposal draft engine that turns recent symbol-specific watchlist news into structured draft proposals and can optionally send them through the existing policy engine.
 - Risk checks for max notional, cash availability, portfolio percentage, confidence floor, duplicate pending proposals, and approval-time price drift.
 - Traditional Chinese browser dashboard for portfolio, pending proposals, create proposal, approve/reject, positions, news digest, source provenance, refresh timestamps, and recent audit events.
 - Futu OpenD read-only refresh for account funds, positions, and position quote snapshots.
 - Hermes stdio MCP server exposing:
   - `get_portfolio_snapshot`
   - `get_watchlist_quotes`
+  - `get_watchlist_symbols`
   - `get_news_digest`
+  - `refresh_market_news`
+  - `draft_trade_proposals_from_watchlist`
   - `get_futu_connection_status`
   - `refresh_futu_readonly_snapshot`
   - `list_pending_proposals`
@@ -28,7 +34,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - `reject_trade_proposal`
 - Hermes config snippet at `deploy/hermes/config.snippet.yaml`.
 - launchd example plist at `deploy/launchd/com.local.invest-agent-api.plist`.
-- Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, non-pending state handling, Futu adapter mapping, and dashboard localization.
+- Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, non-pending state handling, Futu adapter mapping, dashboard localization, news parsing, watchlist resolution, and proposal draft creation.
 
 ## Local Hermes/Codex Setup
 
@@ -43,7 +49,7 @@ The global Hermes config at `/Users/apple/.hermes/config.yaml` has been updated 
 
 `hermes auth status openai-codex` shows logged in.
 
-`hermes mcp list` shows `invest_agent` enabled with 9 selected tools.
+`hermes mcp list` shows `invest_agent` enabled with 12 selected tools.
 
 ## Futu Setup
 
@@ -64,6 +70,19 @@ curl -X POST http://127.0.0.1:8788/api/futu/refresh
 ```
 
 This integration only calls account/quote read APIs and does not call `unlock_trade`, `place_order`, or `modify_order`.
+
+## Market News + Proposal Drafting
+
+The app now implements the next design-plan slice: a middle-loop news cadence plus structured proposal drafts.
+
+- `POST /api/news/refresh` refreshes watchlist news from GDELT, Google News RSS fallback, and optional Finnhub.
+- `POST /api/proposal-drafts` generates structured draft proposals from recent news.
+- `create_proposals=false` keeps drafts as research output for Hermes/Codex review.
+- `create_proposals=true` sends the drafts through the existing policy engine and creates `PENDING` or `RISK_REJECTED` proposals.
+- Dashboard buttons are available for `刷新市場新聞` and `草擬並送風控`.
+- CLI commands are available through `python -m invest_agent.cli news-refresh`, `draft-proposals`, and `draft-and-create`.
+
+This phase still does not unlock Futu OpenD and does not place live orders.
 
 ## Dashboard UX
 
@@ -100,19 +119,24 @@ Latest verification completed:
 Result:
 
 ```text
-8 passed
+15 passed
 ```
 
 HTTP checks were also verified:
 
 - `GET /health`
 - `GET /api/news`
+- `POST /api/news/refresh`
+- `POST /api/proposal-drafts`
+- `GET /api/watchlist`
 - `GET /api/proposals`
 - `GET /api/quotes`
 - `GET /api/audit`
 - `GET /api/futu/status`
 - `POST /api/futu/refresh`
 - `python -m invest_agent.cli futu-refresh`
+- `python -m invest_agent.cli news-refresh`
+- `python -m invest_agent.cli draft-proposals`
 
 The dashboard was visually checked in the Codex in-app browser.
 
@@ -132,5 +156,5 @@ The following are local runtime artifacts and intentionally ignored:
 ## Next Steps
 
 - Decide whether Telegram approval should be handled directly by Hermes Gateway or a dedicated approval bot.
-- Add real market/news ingestion behind the current store abstraction.
+- Add SEC/IR primary-source ingestion and event replay before relying on news-derived proposal quality.
 - Keep live execution disabled until Keychain secret loading, two-OpenD separation, broker-side revalidation, order/deal reconciliation, and a small live smoke-test plan are implemented.

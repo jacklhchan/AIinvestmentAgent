@@ -8,11 +8,30 @@ from pydantic import BaseModel
 from .config import get_settings
 from .deps import get_service, get_store
 from .futu_adapter import FutuIntegrationError, get_futu_status, refresh_futu_readonly
+from .market_news import MarketNewsIngestor, resolve_watchlist_symbols
 from .models import ProposalCreate, ProposalStatus
+from .proposal_drafts import ProposalDraftEngine
 
 
 class RejectRequest(BaseModel):
     reason: str = "Rejected by user"
+
+
+class NewsRefreshRequest(BaseModel):
+    symbols: list[str] | None = None
+    days: int | None = None
+    max_per_symbol: int | None = None
+    max_symbols: int | None = None
+    include_gdelt: bool = True
+    include_google_news: bool | None = None
+    include_finnhub: bool = True
+
+
+class DraftRequest(BaseModel):
+    symbols: list[str] | None = None
+    lookback_hours: int = 72
+    max_drafts: int | None = None
+    create_proposals: bool = False
 
 
 app = FastAPI(
@@ -51,14 +70,44 @@ def quotes():
     return get_store().list_quotes()
 
 
+@app.get("/api/watchlist")
+def watchlist():
+    return {"symbols": resolve_watchlist_symbols(get_settings(), get_store())}
+
+
 @app.get("/api/news")
 def news(limit: int = 20, symbol: str | None = None):
     return get_store().list_news(limit=limit, symbol=symbol)
 
 
+@app.post("/api/news/refresh")
+def refresh_news(request: NewsRefreshRequest | None = None):
+    request = request or NewsRefreshRequest()
+    return MarketNewsIngestor(get_settings(), get_store()).refresh_news(
+        symbols=request.symbols,
+        days=request.days,
+        max_per_symbol=request.max_per_symbol,
+        max_symbols=request.max_symbols,
+        include_gdelt=request.include_gdelt,
+        include_google_news=request.include_google_news,
+        include_finnhub=request.include_finnhub,
+    )
+
+
 @app.get("/api/proposals")
 def proposals(status: ProposalStatus | None = None, limit: int = 100):
     return get_store().list_proposals(status=status, limit=limit)
+
+
+@app.post("/api/proposal-drafts")
+def proposal_drafts(request: DraftRequest | None = None):
+    request = request or DraftRequest()
+    return ProposalDraftEngine(get_settings(), get_store(), get_service()).draft_from_watchlist(
+        symbols=request.symbols,
+        lookback_hours=request.lookback_hours,
+        max_drafts=request.max_drafts,
+        create_proposals=request.create_proposals,
+    )
 
 
 @app.get("/api/proposals/{proposal_id}")
@@ -302,6 +351,9 @@ DASHBOARD_HTML = """
     }
     .source-demo { color: var(--amber); border-color: #dfc68a; background: #fff7df; }
     .source-futu-opend { color: var(--blue); border-color: #9ab3df; background: #eef4ff; }
+    .source-gdelt { color: #7047a8; border-color: #c2a8df; background: #f6f0ff; }
+    .source-google-news { color: #3f6b20; border-color: #a8c990; background: #f1faed; }
+    .source-finnhub { color: #0f7a8a; border-color: #91cfda; background: #edfafd; }
     .source-local { color: var(--slate); border-color: #b6c0bd; background: #f3f6f5; }
     .PENDING { color: var(--amber); border-color: #dfc68a; background: #fff7df; }
     .APPROVED, .EXECUTED { color: var(--mint); border-color: #9ad6c5; background: #eaf8f3; }
@@ -403,6 +455,8 @@ DASHBOARD_HTML = """
         <div class="subtitle">Hermes Agent / Codex LLM / 富途 OpenD 只讀資料流</div>
       </div>
       <div class="bar-actions">
+        <button class="secondary" id="news-refresh" type="button">刷新市場新聞</button>
+        <button class="secondary" id="draft-proposals" type="button">草擬並送風控</button>
         <button class="secondary" id="futu-refresh" type="button">刷新富途 OpenD</button>
         <div class="mode" id="mode">載入中</div>
       </div>
@@ -499,6 +553,9 @@ DASHBOARD_HTML = """
     const sourceLabels = {
       demo: "Demo",
       "futu-opend": "富途 OpenD",
+      gdelt: "GDELT",
+      "google-news": "Google News",
+      finnhub: "Finnhub",
       local: "本機"
     };
     const eventLabels = {
@@ -510,7 +567,9 @@ DASHBOARD_HTML = """
       proposal_approved: "提案已批准",
       proposal_rejected: "提案已拒絕",
       proposal_expired: "提案已過期",
-      paper_execution_recorded: "紙上交易紀錄"
+      paper_execution_recorded: "紙上交易紀錄",
+      market_news_refreshed: "市場新聞已刷新",
+      proposal_drafts_generated: "提案草稿已產生"
     };
     const sourceClass = source => `source-${String(source || "local").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
     const sourceBadge = source => `<span class="source-badge ${sourceClass(source)}">${escapeHtml(sourceLabels[source] || source || "本機")}</span>`;
@@ -668,6 +727,36 @@ DASHBOARD_HTML = """
       try {
         const result = await api("/api/futu/refresh", { method: "POST" });
         setToast(`富途已刷新：${result.position_count} 個持倉，${result.quote_count} 筆行情`);
+        await loadAll();
+      } catch (error) {
+        setToast(error.message);
+      } finally {
+        event.target.disabled = false;
+      }
+    });
+    document.querySelector("#news-refresh").addEventListener("click", async event => {
+      event.target.disabled = true;
+      setToast("正在從 watchlist 刷新市場新聞...");
+      try {
+        const result = await api("/api/news/refresh", { method: "POST", body: JSON.stringify({}) });
+        const errorNote = result.errors?.length ? `；${result.errors.length} 個來源有錯誤` : "";
+        setToast(`市場新聞已入庫：${result.stored_count} 筆，watchlist ${result.symbols.length} 個標的${errorNote}`);
+        await loadAll();
+      } catch (error) {
+        setToast(error.message);
+      } finally {
+        event.target.disabled = false;
+      }
+    });
+    document.querySelector("#draft-proposals").addEventListener("click", async event => {
+      event.target.disabled = true;
+      setToast("正在根據新聞草擬提案並送入風控...");
+      try {
+        const result = await api("/api/proposal-drafts", {
+          method: "POST",
+          body: JSON.stringify({ create_proposals: true })
+        });
+        setToast(`已產生 ${result.drafts.length} 個草稿，送入風控 ${result.created.length} 個提案`);
         await loadAll();
       } catch (error) {
         setToast(error.message);

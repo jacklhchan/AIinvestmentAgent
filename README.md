@@ -9,6 +9,8 @@
 - 風控/審批狀態機：TTL、重複單、notional、confidence、price drift revalidation
 - Hermes stdio MCP server：讓 Hermes 讀 portfolio/news/proposals 並建立/批准/拒絕 proposal
 - Futu OpenD read-only refresh：讀取資金、持倉與持倉 quote snapshot，不 unlock trade
+- Market/news ingestion：從 watchlist 抓取 GDELT，並在有 `FINNHUB_API_KEY` 時補 Finnhub company news
+- Hermes proposal drafting：根據 watchlist 新聞產生結構化 draft，可選擇送入既有風控與審批狀態機
 - 繁體中文本機 dashboard：可看持倉、新聞、pending proposal、資料來源、刷新時間、audit trail，並在瀏覽器批准/拒絕
 - launchd 與 Hermes config 範例
 
@@ -47,6 +49,32 @@ python -m invest_agent.cli futu-refresh
 
 或者開 dashboard 後按 `Refresh Futu`。這只會呼叫 `accinfo_query`、`position_list_query`、`get_market_snapshot`，不會呼叫 `unlock_trade` 或任何下單 API。
 
+## Market News + Proposal Drafting
+
+這一段對齊 design plan 的中迴圈：新聞先入庫，Hermes/Codex 只產生結構化提案草稿，真正 proposal 仍要經過本機 policy engine。預設會先試 GDELT，若來源逾時或無結果，會用 Google News RSS 作為可用性 fallback；有 `FINNHUB_API_KEY` 時會再補 Finnhub company news。
+
+```bash
+INVEST_AGENT_WATCHLIST=AAPL,MSFT,NVDA,GOOGL
+INVEST_AGENT_DRAFT_NOTIONAL_USD=1000
+INVEST_AGENT_DRAFT_MAX_CANDIDATES=3
+INVEST_AGENT_NEWS_LOOKBACK_DAYS=3
+INVEST_AGENT_NEWS_MAX_PER_SYMBOL=5
+INVEST_AGENT_NEWS_MAX_SYMBOLS=6
+INVEST_AGENT_NEWS_TIMEOUT_SECONDS=5
+INVEST_AGENT_GOOGLE_NEWS_FALLBACK_ENABLED=true
+FINNHUB_API_KEY=
+```
+
+手動刷新與草擬：
+
+```bash
+source .venv/bin/activate
+python -m invest_agent.cli news-refresh
+python -m invest_agent.cli draft-proposals
+```
+
+Dashboard 的 `刷新市場新聞` 會把最新新聞寫入本機 store；`草擬並送風控` 會把 draft 轉成現有 proposal，然後由風控決定 `PENDING` 或 `RISK_REJECTED`。即使通過審批，仍然只做 paper execution。
+
 ## Hermes + Codex LLM 設定
 
 Hermes 官方文件目前支援 `OpenAI Codex` provider，可用 `hermes model` 進行 ChatGPT OAuth。這個專案預設讓 Hermes 使用 Codex model，再透過 stdio MCP server 連到本機投資控制平面。
@@ -72,7 +100,10 @@ mcp_servers:
       include:
         - get_portfolio_snapshot
         - get_watchlist_quotes
+        - get_watchlist_symbols
         - get_news_digest
+        - refresh_market_news
+        - draft_trade_proposals_from_watchlist
         - get_futu_connection_status
         - refresh_futu_readonly_snapshot
         - list_pending_proposals

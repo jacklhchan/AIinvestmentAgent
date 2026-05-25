@@ -128,6 +128,37 @@ class Proposal(BaseModel):
         return float(self.qty) * float(self.limit_price)
 
 
+class NewsIngestResult(BaseModel):
+    symbols: list[str] = Field(default_factory=list)
+    total_count: int = 0
+    stored_count: int = 0
+    sources: dict[str, int] = Field(default_factory=dict)
+    errors: list[str] = Field(default_factory=list)
+    items: list[NewsItem] = Field(default_factory=list)
+
+
+class ProposalDraft(BaseModel):
+    symbol: str
+    side: Side
+    qty: int
+    limit_price: float
+    confidence: float
+    trigger: str
+    thesis: str
+    evidence: list[str] = Field(default_factory=list)
+    counter_evidence: list[str] = Field(default_factory=list)
+    score: int
+    news_count: int
+    source_news_ids: list[str] = Field(default_factory=list)
+
+
+class DraftProposalResult(BaseModel):
+    watchlist: list[str] = Field(default_factory=list)
+    drafts: list[ProposalDraft] = Field(default_factory=list)
+    created: list[Proposal] = Field(default_factory=list)
+    skipped: list[str] = Field(default_factory=list)
+
+
 class ExecutionRecord(BaseModel):
     id: str = Field(default_factory=lambda: new_id("exec"))
     proposal_id: str

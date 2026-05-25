@@ -28,6 +28,9 @@ invest-agent-mcp = "invest_agent.mcp_server:main"
 invest-agent-seed = "invest_agent.cli:seed_main"
 invest-agent-smoke = "invest_agent.cli:smoke_main"
 invest-agent-futu-refresh = "invest_agent.cli:futu_refresh_main"
+invest-agent-news-refresh = "invest_agent.cli:news_refresh_main"
+invest-agent-draft-proposals = "invest_agent.cli:draft_proposals_main"
+invest-agent-draft-and-create = "invest_agent.cli:draft_and_create_main"
 
 [build-system]
 requires = ["setuptools>=70.0.0", "wheel"]
