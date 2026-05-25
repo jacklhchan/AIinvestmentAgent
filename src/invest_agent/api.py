@@ -12,12 +12,22 @@ from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event
 from .futu_adapter import FutuIntegrationError, get_futu_status, refresh_futu_readonly
 from .ir_feeds import IrFeedIngestor
 from .market_news import MarketNewsIngestor, external_ticker, resolve_watchlist_symbols
-from .models import ProposalCreate, ProposalStatus, ResearchEvidenceCreate, ResearchGoalCreate, ResearchGoalStatus
+from .models import (
+    ProposalCreate,
+    ProposalStatus,
+    ResearchEvidenceCreate,
+    ResearchGoalCreate,
+    ResearchGoalStatus,
+    ThesisCreate,
+    ThesisStatus,
+    ThesisUpdateCreate,
+)
 from .primary_sources import refresh_primary_sources
 from .proposal_drafts import ProposalDraftEngine
 from .research_goals import ResearchGoalService
 from .sec_companyfacts import SecCompanyFactsIngestor
 from .sec_edgar import SecEdgarIngestor
+from .thesis_tracker import ThesisTrackerService
 
 
 class RejectRequest(BaseModel):
@@ -196,6 +206,32 @@ def research_goal(goal_id: str):
 def add_research_evidence(goal_id: str, request: ResearchEvidenceCreate):
     try:
         return ResearchGoalService(get_store()).add_evidence(request.model_copy(update={"goal_id": goal_id}))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/theses")
+def theses(status: ThesisStatus | None = None, symbol: str | None = None, limit: int = 50):
+    return get_store().list_theses(status=status, symbol=symbol, limit=limit)
+
+
+@app.post("/api/theses")
+def create_thesis(request: ThesisCreate):
+    return ThesisTrackerService(get_store()).create_thesis(request)
+
+
+@app.get("/api/theses/{thesis_id}")
+def thesis(thesis_id: str):
+    item = get_store().get_thesis(thesis_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="thesis not found")
+    return item
+
+
+@app.post("/api/theses/{thesis_id}/updates")
+def add_thesis_update(thesis_id: str, request: ThesisUpdateCreate):
+    try:
+        return ThesisTrackerService(get_store()).add_update(thesis_id, request)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -503,6 +539,9 @@ DASHBOARD_HTML = """
     .ACTIVE { color: var(--blue); border-color: #9ab3df; background: #eef4ff; }
     .COMPLETED { color: var(--mint); border-color: #9ad6c5; background: #eaf8f3; }
     .INSUFFICIENT { color: var(--amber); border-color: #dfc68a; background: #fff7df; }
+    .active { color: var(--mint); border-color: #9ad6c5; background: #eaf8f3; }
+    .watch { color: var(--amber); border-color: #dfc68a; background: #fff7df; }
+    .invalidated, .archived { color: var(--coral); border-color: #e6aaa5; background: #fff0ee; }
     .actions {
       display: flex;
       gap: 8px;
@@ -632,6 +671,35 @@ DASHBOARD_HTML = """
         <tbody id="research-goals"></tbody>
       </table>
     </section>
+    <section class="grid">
+      <div class="panel">
+        <h2>投資論點</h2>
+        <table>
+          <thead><tr><th>狀態</th><th>標的</th><th>論點</th><th>支柱 / 風險</th></tr></thead>
+          <tbody id="theses"></tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <h2>新增投資論點</h2>
+        <form id="thesis-form">
+          <div class="form-grid">
+            <div class="field"><label for="thesis_symbol">標的</label><input id="thesis_symbol" name="symbol" value="AAPL" required /></div>
+            <div class="field"><label for="thesis_side">方向</label><select id="thesis_side" name="side"><option value="long">Long</option><option value="short">Short</option><option value="neutral_watch">觀察</option></select></div>
+            <div class="field"><label for="thesis_conviction">信念強度</label><select id="thesis_conviction" name="conviction"><option value="medium">中</option><option value="high">高</option><option value="low">低</option></select></div>
+            <div class="field"><label for="thesis_target_price">目標價</label><input id="thesis_target_price" name="target_price" type="number" min="0.01" step="0.01" /></div>
+          </div>
+          <div class="field"><label for="thesis_statement">核心論點</label><textarea id="thesis_statement" name="thesis_statement" required>長期 thesis 待填；每次 proposal 前都要用 evidence ledger 更新。</textarea></div>
+          <div class="field"><label for="thesis_stop_loss">失效 / 停損觸發</label><textarea id="thesis_stop_loss" name="stop_loss_trigger">若核心營運指標與 thesis 相反，先停止加倉並重做研究。</textarea></div>
+          <div class="field"><label for="thesis_pillars">支柱，每行一個</label><textarea id="thesis_pillars" name="pillars">收入與現金流趨勢支持 thesis
+Primary-source evidence 沒有反向訊號</textarea></div>
+          <div class="field"><label for="thesis_risks">風險，每行一個</label><textarea id="thesis_risks" name="risks">財報或 SEC filing 顯示 growth thesis 被削弱
+估值或倉位風險超過 portfolio policy</textarea></div>
+          <div class="field"><label for="thesis_invalidation">失效條件，每行對應一個風險</label><textarea id="thesis_invalidation" name="invalidation_conditions">收入、淨收入或 operating cash flow 多期惡化
+proposal 需要靠 manual override 才能成立</textarea></div>
+          <button class="primary" type="submit">建立論點</button>
+        </form>
+      </div>
+    </section>
     <section class="panel">
       <h2>SEC 基本面快照</h2>
       <table>
@@ -729,6 +797,22 @@ DASHBOARD_HTML = """
       INSUFFICIENT: "不足",
       WAIVED: "略過"
     };
+    const thesisStatusLabels = {
+      active: "有效",
+      watch: "觀察",
+      invalidated: "已失效",
+      archived: "已封存"
+    };
+    const thesisSideLabels = {
+      long: "Long",
+      short: "Short",
+      neutral_watch: "觀察"
+    };
+    const convictionLabels = {
+      high: "高",
+      medium: "中",
+      low: "低"
+    };
     const sourceLabels = {
       demo: "Demo",
       "futu-opend": "富途 OpenD",
@@ -765,6 +849,9 @@ DASHBOARD_HTML = """
       research_goal_completed: "研究 Gate 已通過",
       research_goal_insufficient: "研究 Gate 證據不足",
       research_goal_evaluated: "研究目標已評估",
+      thesis_created: "投資論點已建立",
+      thesis_updated: "投資論點已更新",
+      thesis_update_added: "投資論點更新已加入",
       proposal_research_invariant_rejected: "提案違反研究 Gate 不變式"
     };
     const sourceClass = source => `source-${String(source || "local").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
@@ -914,6 +1001,27 @@ DASHBOARD_HTML = """
       }).join("") || `<tr><td colspan="4" class="muted">尚未建立研究目標；新聞草稿會自動建立 evidence ledger。</td></tr>`;
     }
 
+    function renderTheses(theses) {
+      document.querySelector("#theses").innerHTML = theses.map(thesis => {
+        const pillars = (thesis.pillars || []).slice(0, 3).map(pillar =>
+          `<div>${escapeHtml(pillar.text)} <span class="muted">(${escapeHtml(pillar.status)})</span></div>`
+        ).join("");
+        const risks = (thesis.risks || []).slice(0, 2).map(risk =>
+          `<div class="muted">風險：${escapeHtml(risk.text)} · ${escapeHtml(risk.invalidation_condition)}</div>`
+        ).join("");
+        const latest = (thesis.updates || [])[0];
+        const latestText = latest
+          ? `<br><span class="muted">最近更新：${escapeHtml(latest.impact)} · ${escapeHtml(latest.summary)}</span>`
+          : "";
+        return `<tr>
+          <td>${pill(thesis.status, thesisStatusLabels[thesis.status] || thesis.status)}<br><span class="muted">信念 ${escapeHtml(convictionLabels[thesis.conviction] || thesis.conviction)}</span></td>
+          <td><strong>${escapeHtml(thesis.symbol)}</strong><br><span class="muted">${escapeHtml(thesisSideLabels[thesis.side] || thesis.side)}${thesis.target_price ? ` · 目標 ${smallMoney(thesis.target_price)}` : ""}</span></td>
+          <td>${escapeHtml(thesis.thesis_statement)}${latestText}<br><span class="muted">失效：${escapeHtml(thesis.stop_loss_trigger || "未設定")}</span></td>
+          <td>${pillars || '<span class="muted">未有 pillar</span>'}${risks}</td>
+        </tr>`;
+      }).join("") || `<tr><td colspan="4" class="muted">尚未建立投資論點；可先為 watchlist 建立 thesis，再讓 draft proposal 自動引用。</td></tr>`;
+    }
+
     function renderProposals(proposals) {
       document.querySelector("#proposals").innerHTML = proposals.map(p => {
         const risk = p.risk_check.passed ? "通過" : (p.risk_check.reasons || []).map(escapeHtml).join("; ");
@@ -951,7 +1059,7 @@ DASHBOARD_HTML = """
     }
 
     async function loadAll() {
-      const [health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, researchGoals] = await Promise.all([
+      const [health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, researchGoals, theses] = await Promise.all([
         api("/health"),
         api("/api/portfolio"),
         api("/api/quotes"),
@@ -961,7 +1069,8 @@ DASHBOARD_HTML = """
         apiOptional("/api/futu/status", error => ({ connected: false, message: error.message })),
         api("/api/fundamentals"),
         api("/api/autonomy/status"),
-        api("/api/research-goals?limit=8")
+        api("/api/research-goals?limit=8"),
+        api("/api/theses?limit=8")
       ]);
       document.querySelector("#mode").textContent = health.paper_only ? "紙上交易模式" : "已要求實盤模式";
       const futuButton = document.querySelector("#futu-refresh");
@@ -974,6 +1083,7 @@ DASHBOARD_HTML = """
       renderSourceStrip(health, portfolio, quotes, futuStatus);
       renderAutonomy(autonomy);
       renderResearchGoals(researchGoals);
+      renderTheses(theses);
       renderFundamentals(fundamentals);
       renderPositions(portfolio, quotes);
       renderProposals(proposals);
@@ -1106,6 +1216,34 @@ DASHBOARD_HTML = """
       try {
         const created = await api("/api/proposals", { method: "POST", body: JSON.stringify(body) });
         setToast(`已建立 ${created.id}，狀態：${statusLabels[created.status] || created.status}`);
+        await loadAll();
+      } catch (error) {
+        setToast(error.message);
+      }
+    });
+    const linesFrom = value => String(value || "").split("\\n").map(item => item.trim()).filter(Boolean);
+    document.querySelector("#thesis-form").addEventListener("submit", async event => {
+      event.preventDefault();
+      const form = new FormData(event.target);
+      const risks = linesFrom(form.get("risks"));
+      const invalidation = linesFrom(form.get("invalidation_conditions"));
+      const targetPrice = Number(form.get("target_price"));
+      const body = {
+        symbol: form.get("symbol"),
+        side: form.get("side"),
+        conviction: form.get("conviction"),
+        target_price: Number.isFinite(targetPrice) && targetPrice > 0 ? targetPrice : null,
+        thesis_statement: form.get("thesis_statement"),
+        stop_loss_trigger: form.get("stop_loss_trigger"),
+        pillars: linesFrom(form.get("pillars")).map(text => ({ text })),
+        risks: risks.map((text, index) => ({
+          text,
+          invalidation_condition: invalidation[index] || text
+        }))
+      };
+      try {
+        const created = await api("/api/theses", { method: "POST", body: JSON.stringify(body) });
+        setToast(`已建立投資論點 ${created.id}`);
         await loadAll();
       } catch (error) {
         setToast(error.message);

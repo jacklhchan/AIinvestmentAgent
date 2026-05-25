@@ -56,6 +56,53 @@ class ResearchCriterionStatus(StrEnum):
     WAIVED = "WAIVED"
 
 
+class ThesisSide(StrEnum):
+    LONG = "long"
+    SHORT = "short"
+    NEUTRAL_WATCH = "neutral_watch"
+
+
+class ThesisStatus(StrEnum):
+    ACTIVE = "active"
+    WATCH = "watch"
+    INVALIDATED = "invalidated"
+    ARCHIVED = "archived"
+
+
+class ThesisConviction(StrEnum):
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class ThesisPillarStatus(StrEnum):
+    ON_TRACK = "on_track"
+    MIXED = "mixed"
+    WEAKENING = "weakening"
+    BROKEN = "broken"
+
+
+class ThesisRiskStatus(StrEnum):
+    OPEN = "open"
+    TRIGGERED = "triggered"
+    DISMISSED = "dismissed"
+
+
+class ThesisImpact(StrEnum):
+    STRENGTHENS = "strengthens"
+    WEAKENS = "weakens"
+    NEUTRAL = "neutral"
+    INVALIDATES = "invalidates"
+
+
+class ThesisActionBias(StrEnum):
+    NO_CHANGE = "no_change"
+    INCREASE = "increase"
+    TRIM = "trim"
+    EXIT = "exit"
+    WATCH_ONLY = "watch_only"
+
+
 class Position(BaseModel):
     symbol: str
     qty: float
@@ -117,6 +164,7 @@ class ProposalCreate(BaseModel):
     counter_evidence: list[str] = Field(default_factory=list)
     research_goal_id: str | None = None
     manual_override_reason: str | None = None
+    thesis_id: str | None = None
 
     @field_validator("symbol")
     @classmethod
@@ -153,6 +201,7 @@ class Proposal(BaseModel):
     research_goal_id: str | None = None
     manual_override_reason: str | None = None
     evidence_hash: str = ""
+    thesis_id: str | None = None
 
     @property
     def notional_usd(self) -> float:
@@ -298,6 +347,89 @@ class ResearchEvidenceCreate(BaseModel):
         return value.strip().upper() if value else None
 
 
+class ThesisPillarInput(BaseModel):
+    text: str = Field(min_length=3)
+    status: ThesisPillarStatus = ThesisPillarStatus.ON_TRACK
+
+
+class ThesisRiskInput(BaseModel):
+    text: str = Field(min_length=3)
+    invalidation_condition: str = Field(min_length=3)
+    status: ThesisRiskStatus = ThesisRiskStatus.OPEN
+
+
+class ThesisPillar(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("pillar"))
+    thesis_id: str = ""
+    text: str
+    status: ThesisPillarStatus = ThesisPillarStatus.ON_TRACK
+
+
+class ThesisRisk(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("risk"))
+    thesis_id: str = ""
+    text: str
+    invalidation_condition: str
+    status: ThesisRiskStatus = ThesisRiskStatus.OPEN
+
+
+class ThesisUpdate(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("thupd"))
+    thesis_id: str
+    research_goal_id: str | None = None
+    evidence_hash: str = ""
+    impact: ThesisImpact
+    summary: str
+    action_bias: ThesisActionBias = ThesisActionBias.NO_CHANGE
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class Thesis(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("thesis"))
+    symbol: str
+    side: ThesisSide = ThesisSide.LONG
+    thesis_statement: str
+    status: ThesisStatus = ThesisStatus.ACTIVE
+    conviction: ThesisConviction = ThesisConviction.MEDIUM
+    target_price: float | None = Field(default=None, gt=0)
+    stop_loss_trigger: str = ""
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+    pillars: list[ThesisPillar] = Field(default_factory=list)
+    risks: list[ThesisRisk] = Field(default_factory=list)
+    updates: list[ThesisUpdate] = Field(default_factory=list)
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_thesis_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+
+class ThesisCreate(BaseModel):
+    symbol: str
+    side: ThesisSide = ThesisSide.LONG
+    thesis_statement: str = Field(min_length=8)
+    conviction: ThesisConviction = ThesisConviction.MEDIUM
+    target_price: float | None = Field(default=None, gt=0)
+    stop_loss_trigger: str = ""
+    pillars: list[ThesisPillarInput] = Field(default_factory=list)
+    risks: list[ThesisRiskInput] = Field(default_factory=list)
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_create_thesis_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+
+class ThesisUpdateCreate(BaseModel):
+    research_goal_id: str | None = None
+    evidence_hash: str | None = None
+    impact: ThesisImpact
+    summary: str = Field(min_length=3)
+    action_bias: ThesisActionBias = ThesisActionBias.NO_CHANGE
+    conviction: ThesisConviction | None = None
+
+
 class FundamentalsRefreshResult(BaseModel):
     symbols: list[str] = Field(default_factory=list)
     total_count: int = 0
@@ -323,6 +455,7 @@ class ProposalDraft(BaseModel):
     evidence_gate_passed: bool = False
     evidence_gate_reasons: list[str] = Field(default_factory=list)
     research_evidence_count: int = 0
+    thesis_id: str | None = None
 
 
 class DraftProposalResult(BaseModel):

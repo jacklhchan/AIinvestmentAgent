@@ -110,6 +110,10 @@ def autonomy_status_main() -> None:
     print(json.dumps(autonomy_status(get_settings(), get_store()), indent=2, ensure_ascii=False))
 
 
+def list_theses_main() -> None:
+    print(json.dumps(_json(get_store().list_theses()), indent=2, ensure_ascii=False))
+
+
 def _json(value):
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
@@ -138,6 +142,7 @@ def main() -> None:
             "autonomy-once",
             "autonomy-loop",
             "autonomy-status",
+            "list-theses",
         ],
     )
     parser.add_argument("--path", default=str(DEFAULT_REPLAY_PATH))
@@ -168,6 +173,8 @@ def main() -> None:
         autonomy_loop_main()
     if args.command == "autonomy-status":
         autonomy_status_main()
+    if args.command == "list-theses":
+        list_theses_main()
 
 
 if __name__ == "__main__":

@@ -15,6 +15,8 @@ from .models import (
     Quote,
     ResearchEvidenceCreate,
     Side,
+    ThesisPillarStatus,
+    ThesisRiskStatus,
     utc_now,
 )
 from .research_goals import evidence_from_news, research_goal_from_draft
@@ -118,6 +120,7 @@ class ProposalDraftEngine:
                         evidence=draft.evidence,
                         counter_evidence=draft.counter_evidence,
                         research_goal_id=draft.research_goal_id,
+                        thesis_id=draft.thesis_id,
                     )
                 )
                 created.append(proposal)
@@ -202,10 +205,33 @@ class ProposalDraftEngine:
                 counter_evidence.append("SEC companyfacts fundamentals are parsed locally, but the draft still requires human approval.")
         else:
             counter_evidence.append("No SEC companyfacts fundamentals snapshot is available for this symbol.")
+        tracked_thesis = self.store.get_active_thesis_for_symbol(symbol)
         thesis = (
             f"Watchlist news flow is {direction} for {symbol}. "
             f"The draft keeps notional small and sends the idea through policy checks before approval."
         )
+        thesis_id = None
+        if tracked_thesis:
+            thesis_id = tracked_thesis.id
+            thesis = (
+                f"Tracked thesis: {tracked_thesis.thesis_statement} "
+                f"Latest watchlist news flow is {direction} for {symbol}; the draft still requires evidence gate, "
+                "policy check, and human approval."
+            )
+            evidence.append(
+                f"thesis-tracker: {tracked_thesis.id} ({tracked_thesis.side.value}, conviction {tracked_thesis.conviction.value})"
+            )
+            triggered_risks = [risk for risk in tracked_thesis.risks if risk.status == ThesisRiskStatus.TRIGGERED]
+            broken_pillars = [pillar for pillar in tracked_thesis.pillars if pillar.status == ThesisPillarStatus.BROKEN]
+            if triggered_risks:
+                confidence = max(0.25, confidence - 0.18)
+                counter_evidence.extend(
+                    f"Tracked thesis risk triggered: {risk.text} ({risk.invalidation_condition})"
+                    for risk in triggered_risks[:3]
+                )
+            if broken_pillars:
+                confidence = max(0.25, confidence - 0.12)
+                counter_evidence.extend(f"Tracked thesis pillar is broken: {pillar.text}" for pillar in broken_pillars[:3])
         trigger = f"{len(signal_items)} directional item(s), {len(primary_items)} primary-source item(s), score {score}"
 
         draft = ProposalDraft(
@@ -221,6 +247,7 @@ class ProposalDraftEngine:
             score=score,
             news_count=len(news),
             source_news_ids=[item.id for item in [*top_news, *top_primary]],
+            thesis_id=thesis_id,
         )
         gate = self._record_research_goal(
             draft=draft,

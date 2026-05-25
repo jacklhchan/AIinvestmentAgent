@@ -257,6 +257,7 @@ def _proposal_request_from_draft(draft: ProposalDraft):
         evidence=draft.evidence,
         counter_evidence=draft.counter_evidence,
         research_goal_id=draft.research_goal_id,
+        thesis_id=draft.thesis_id,
     )
 
 

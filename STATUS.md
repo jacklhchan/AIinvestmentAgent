@@ -1,6 +1,6 @@
 # AI Investment Agent Status
 
-Last updated: 2026-05-25
+Last updated: 2026-05-26
 
 ## Current State
 
@@ -18,6 +18,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
 - SEC EDGAR primary-source ingestion for company filings, plus configurable company IR RSS ingestion.
 - SEC companyfacts/XBRL fundamentals ingestion for revenue, net income, operating income, operating cash flow, assets, liabilities, equity, and diluted EPS.
 - Research Goal / Evidence Ledger layer with research-only goals, claims, criteria, evidence rows, verification status, caveats, and evidence gate summaries.
+- Thesis Tracker layer with long-term symbol theses, pillars, invalidating risks, evidence-linked thesis updates, and proposal-time thesis invariants.
 - Event replay export/import for portfolio, quotes, news/evidence, and fundamental snapshot JSONL.
 - Proposal draft engine that turns recent symbol-specific watchlist news into structured draft proposals, records a research goal for each draft, and only creates policy-checked proposals when evidence gate passes.
 - Safe autonomy loop that refreshes read-only data, drafts watchlist proposals, applies evidence gate and proposal cooldown, and creates only paper-mode pending proposals for human approval.
@@ -37,6 +38,10 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - `create_research_goal`
   - `add_research_evidence`
   - `get_research_goal_snapshot`
+  - `create_thesis`
+  - `list_theses`
+  - `get_thesis_snapshot`
+  - `add_thesis_update_from_research_goal`
   - `get_safe_autonomy_status`
   - `run_safe_autonomy_cycle`
   - `export_event_replay_file`
@@ -50,7 +55,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - `reject_trade_proposal`
 - Hermes config snippet at `deploy/hermes/config.snippet.yaml`.
 - launchd example plists at `deploy/launchd/com.local.invest-agent-api.plist` and `deploy/launchd/com.local.invest-agent-scheduler.plist`.
-- Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, non-pending state handling, Futu adapter mapping, dashboard localization, news parsing, watchlist resolution, SEC/IR parsing, event replay, and proposal draft creation.
+- Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, non-pending state handling, Futu adapter mapping, dashboard localization, news parsing, watchlist resolution, SEC/IR parsing, event replay, proposal draft creation, research evidence gates, and thesis tracker behavior.
 
 ## Local Hermes/Codex Setup
 
@@ -65,7 +70,7 @@ The global Hermes config at `/Users/apple/.hermes/config.yaml` has been updated 
 
 `hermes auth status openai-codex` shows logged in.
 
-`hermes mcp list` shows `invest_agent` enabled with 23 selected tools after adding the 4 research/evidence tools.
+`hermes mcp list` shows `invest_agent` enabled with 27 selected tools after adding the 4 thesis tracker tools.
 
 ## Futu Setup
 
@@ -156,6 +161,31 @@ The app has started the next research-quality phase inspired by Anthropic-style 
 
 This phase still does not unlock Futu OpenD and does not place live orders.
 
+## Thesis Tracker
+
+The app now adds the Anthropic-style thesis discipline as a first-class local data model, without giving Hermes or any external workflow approval or execution authority.
+
+- SQLite now has `theses`, `thesis_pillars`, `thesis_risks`, and `thesis_updates` tables.
+- A thesis stores symbol, side, thesis statement, status, conviction, target price, stop-loss / invalidation trigger, pillars, risks, and evidence-linked updates.
+- Thesis updates can link to a research goal; the update stores an evidence hash that includes the goal evidence and thesis ID.
+- `InvestmentService.create_proposal` now preserves `thesis_id` and blocks pending proposals that point to an invalidated / archived thesis, neutral-watch thesis, triggered invalidation risk, or broken pillar.
+- Proposal drafts automatically attach an active thesis for the symbol, add a thesis-tracker evidence line, and reduce confidence / add counter-evidence when tracked risks or pillars are already impaired.
+- REST endpoints:
+  - `GET /api/theses`
+  - `POST /api/theses`
+  - `GET /api/theses/{thesis_id}`
+  - `POST /api/theses/{thesis_id}/updates`
+- Hermes MCP thesis tools:
+  - `create_thesis`
+  - `list_theses`
+  - `get_thesis_snapshot`
+  - `add_thesis_update_from_research_goal`
+- CLI:
+  - `python -m invest_agent.cli list-theses`
+- Dashboard has a `投資論點` panel and `新增投資論點` form.
+
+This phase still does not unlock Futu OpenD and does not place live orders.
+
 ## Safe Autonomy Loop
 
 The app now has a safe autonomous scheduler.
@@ -218,7 +248,7 @@ curl -s -X POST http://127.0.0.1:8788/api/proposals ...
 Result:
 
 ```text
-40 passed
+44 passed
 ```
 
 HTTP checks were also verified:
@@ -233,6 +263,10 @@ HTTP checks were also verified:
 - `POST /api/research-goals`
 - `GET /api/research-goals/{goal_id}`
 - `POST /api/research-goals/{goal_id}/evidence`
+- `GET /api/theses`
+- `POST /api/theses`
+- `GET /api/theses/{thesis_id}`
+- `POST /api/theses/{thesis_id}/updates`
 - `GET /api/autonomy/status`
 - `POST /api/autonomy/run`
 - `POST /api/events/export`
@@ -253,7 +287,7 @@ HTTP checks were also verified:
 - `python -m invest_agent.cli event-export`
 - `python -m invest_agent.cli event-replay`
 - `python -m invest_agent.cli draft-proposals`
-- invariant tests for direct proposal creation, MCP-unverified evidence, symbol mismatch, stale primary-source evidence, contradictory evidence, and proposal `evidence_hash`
+- invariant tests for direct proposal creation, MCP-unverified evidence, symbol mismatch, stale primary-source evidence, contradictory evidence, proposal `evidence_hash`, active thesis draft attachment, and invalidated thesis proposal blocking
 
 The dashboard was visually checked in the Codex in-app browser.
 
@@ -261,6 +295,12 @@ Latest dashboard screenshot after adding the research panel:
 
 ```text
 artifacts/dashboard-research-invariant.png
+```
+
+Latest dashboard screenshot after adding Thesis Tracker:
+
+```text
+artifacts/dashboard-thesis-tracker.png
 ```
 
 Futu OpenD read-only refresh was validated against the local OpenD on port `11111`; it refreshed 7 positions and 7 quote snapshots.
@@ -290,7 +330,7 @@ The following are local runtime artifacts and intentionally ignored:
 
 - Keep proposal invariant locked: no `PENDING` proposal without `research_goal_id` or explicit `manual_override_reason`.
 - Keep verified provenance locked: MCP/user-submitted text cannot become source-verified evidence.
-- Add Thesis Tracker: position thesis, pillars, risks, catalysts, and invalidation conditions.
+- Add Catalyst Calendar: earnings, investor day, product, regulatory, macro, conference, expected impact, and post-event review.
 - Add Earnings Review: output `thesis_delta = strengthen | weaken | neutral | invalidates`.
 - Add Trade Journal / Behavior Report: Futu CSV import, FIFO roundtrip, win rate, PnL ratio, drawdown, and overtrading checks.
 - Add valuation ratios and filing-period normalization on top of SEC companyfacts.

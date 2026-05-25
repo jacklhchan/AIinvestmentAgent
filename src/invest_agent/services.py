@@ -11,6 +11,10 @@ from .models import (
     Proposal,
     ProposalCreate,
     ProposalStatus,
+    ThesisPillarStatus,
+    ThesisRiskStatus,
+    ThesisSide,
+    ThesisStatus,
     utc_now,
 )
 from .policy import RiskEngine
@@ -32,6 +36,8 @@ class InvestmentService:
         invariant_reasons: list[str] = []
         if self.settings.research_gate_required:
             research_goal, invariant_reasons = self._research_invariant_reasons(request)
+        thesis_reasons = self._thesis_invariant_reasons(request)
+        invariant_reasons.extend(thesis_reasons)
         if invariant_reasons:
             risk_check.passed = False
             risk_check.reasons.extend(invariant_reasons)
@@ -41,6 +47,7 @@ class InvestmentService:
             proposal_evidence=request.evidence,
             counter_evidence=request.counter_evidence,
             manual_override_reason=request.manual_override_reason,
+            thesis_id=request.thesis_id,
         )
         proposal = Proposal(
             symbol=request.symbol,
@@ -60,6 +67,7 @@ class InvestmentService:
             research_goal_id=request.research_goal_id,
             manual_override_reason=request.manual_override_reason,
             evidence_hash=evidence_hash,
+            thesis_id=request.thesis_id,
         )
         return self.store.create_proposal(proposal)
 
@@ -80,6 +88,27 @@ class InvestmentService:
         if request.manual_override_reason:
             return None, []
         return None, ["research gate required: provide research_goal_id or manual_override_reason"]
+
+    def _thesis_invariant_reasons(self, request: ProposalCreate) -> list[str]:
+        if not request.thesis_id:
+            return []
+        thesis = self.store.get_thesis(request.thesis_id)
+        if not thesis:
+            return [f"thesis not found: {request.thesis_id}"]
+        if thesis.symbol != request.symbol:
+            return [f"thesis symbol {thesis.symbol} does not match proposal symbol {request.symbol}"]
+        reasons: list[str] = []
+        if thesis.status in {ThesisStatus.INVALIDATED, ThesisStatus.ARCHIVED}:
+            reasons.append(f"thesis status is {thesis.status.value}; do not create pending proposal from it")
+        if thesis.side == ThesisSide.NEUTRAL_WATCH:
+            reasons.append("thesis is neutral_watch; proposal requires a directional thesis or manual override")
+        triggered_risks = [risk.text for risk in thesis.risks if risk.status == ThesisRiskStatus.TRIGGERED]
+        if triggered_risks:
+            reasons.append(f"thesis invalidation risk triggered: {'; '.join(triggered_risks[:3])}")
+        broken_pillars = [pillar.text for pillar in thesis.pillars if pillar.status == ThesisPillarStatus.BROKEN]
+        if broken_pillars:
+            reasons.append(f"thesis pillar broken: {'; '.join(broken_pillars[:3])}")
+        return reasons
 
     def approve_proposal(self, proposal_id: str, approved_by: str = "local-user") -> dict:
         proposal = self._get_existing(proposal_id)

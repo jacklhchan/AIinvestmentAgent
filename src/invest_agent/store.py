@@ -17,6 +17,11 @@ from .models import (
     ResearchEvidence,
     ResearchGoal,
     ResearchGoalStatus,
+    Thesis,
+    ThesisPillar,
+    ThesisRisk,
+    ThesisStatus,
+    ThesisUpdate,
 )
 
 
@@ -105,6 +110,42 @@ class Store:
                     retrieved_at TEXT NOT NULL,
                     payload TEXT NOT NULL,
                     FOREIGN KEY (goal_id) REFERENCES research_goals(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS theses (
+                    id TEXT PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS thesis_pillars (
+                    id TEXT PRIMARY KEY,
+                    thesis_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    FOREIGN KEY (thesis_id) REFERENCES theses(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS thesis_risks (
+                    id TEXT PRIMARY KEY,
+                    thesis_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    FOREIGN KEY (thesis_id) REFERENCES theses(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS thesis_updates (
+                    id TEXT PRIMARY KEY,
+                    thesis_id TEXT NOT NULL,
+                    research_goal_id TEXT,
+                    impact TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    FOREIGN KEY (thesis_id) REFERENCES theses(id),
+                    FOREIGN KEY (research_goal_id) REFERENCES research_goals(id)
                 );
                 """
             )
@@ -315,6 +356,174 @@ class Store:
                 tuple(goal_ids),
             ).fetchall()
         return {row["goal_id"]: int(row["count"]) for row in rows}
+
+    def create_thesis(self, thesis: Thesis) -> Thesis:
+        stored_thesis = thesis.model_copy(update={"updates": []})
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO theses(id, symbol, side, status, updated_at, payload)
+                VALUES(?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    stored_thesis.id,
+                    stored_thesis.symbol,
+                    stored_thesis.side.value,
+                    stored_thesis.status.value,
+                    stored_thesis.updated_at.isoformat(),
+                    self._dump(stored_thesis),
+                ),
+            )
+            for pillar in stored_thesis.pillars:
+                conn.execute(
+                    """
+                    INSERT INTO thesis_pillars(id, thesis_id, status, payload)
+                    VALUES(?, ?, ?, ?)
+                    """,
+                    (pillar.id, pillar.thesis_id, pillar.status.value, self._dump(pillar)),
+                )
+            for risk in stored_thesis.risks:
+                conn.execute(
+                    """
+                    INSERT INTO thesis_risks(id, thesis_id, status, payload)
+                    VALUES(?, ?, ?, ?)
+                    """,
+                    (risk.id, risk.thesis_id, risk.status.value, self._dump(risk)),
+                )
+        self.audit(
+            "thesis_created",
+            "thesis",
+            thesis.id,
+            {"symbol": thesis.symbol, "status": thesis.status.value, "conviction": thesis.conviction.value},
+        )
+        return self.get_thesis(thesis.id) or thesis
+
+    def update_thesis(self, thesis: Thesis, event_type: str = "thesis_updated") -> Thesis:
+        stored_thesis = thesis.model_copy(update={"updates": []})
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE theses
+                SET symbol = ?, side = ?, status = ?, updated_at = ?, payload = ?
+                WHERE id = ?
+                """,
+                (
+                    stored_thesis.symbol,
+                    stored_thesis.side.value,
+                    stored_thesis.status.value,
+                    stored_thesis.updated_at.isoformat(),
+                    self._dump(stored_thesis),
+                    stored_thesis.id,
+                ),
+            )
+        self.audit(event_type, "thesis", thesis.id, {"symbol": thesis.symbol, "status": thesis.status.value})
+        return self.get_thesis(thesis.id) or thesis
+
+    def add_thesis_update(self, thesis: Thesis, update: ThesisUpdate) -> Thesis:
+        stored_thesis = thesis.model_copy(update={"updates": []})
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO thesis_updates(id, thesis_id, research_goal_id, impact, created_at, payload)
+                VALUES(?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    update.id,
+                    update.thesis_id,
+                    update.research_goal_id,
+                    update.impact.value,
+                    update.created_at.isoformat(),
+                    self._dump(update),
+                ),
+            )
+            conn.execute(
+                """
+                UPDATE theses
+                SET symbol = ?, side = ?, status = ?, updated_at = ?, payload = ?
+                WHERE id = ?
+                """,
+                (
+                    stored_thesis.symbol,
+                    stored_thesis.side.value,
+                    stored_thesis.status.value,
+                    stored_thesis.updated_at.isoformat(),
+                    self._dump(stored_thesis),
+                    stored_thesis.id,
+                ),
+            )
+        self.audit(
+            "thesis_update_added",
+            "thesis",
+            thesis.id,
+            {"impact": update.impact.value, "research_goal_id": update.research_goal_id},
+        )
+        return self.get_thesis(thesis.id) or thesis
+
+    def get_thesis(self, thesis_id: str) -> Thesis | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT payload FROM theses WHERE id = ?", (thesis_id,)).fetchone()
+        if not row:
+            return None
+        thesis = Thesis.model_validate_json(row["payload"])
+        thesis.pillars = self.list_thesis_pillars(thesis.id)
+        thesis.risks = self.list_thesis_risks(thesis.id)
+        thesis.updates = self.list_thesis_updates(thesis.id)
+        return thesis
+
+    def list_theses(
+        self,
+        status: ThesisStatus | None = None,
+        *,
+        symbol: str | None = None,
+        limit: int = 50,
+    ) -> list[Thesis]:
+        clauses: list[str] = []
+        args: list[Any] = []
+        if status:
+            clauses.append("status = ?")
+            args.append(status.value)
+        if symbol:
+            clauses.append("symbol = ?")
+            args.append(symbol.upper())
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"SELECT payload FROM theses {where} ORDER BY updated_at DESC LIMIT ?"
+        args.append(limit)
+        with self.connect() as conn:
+            rows = conn.execute(query, tuple(args)).fetchall()
+        theses = [Thesis.model_validate_json(row["payload"]) for row in rows]
+        for thesis in theses:
+            thesis.pillars = self.list_thesis_pillars(thesis.id)
+            thesis.risks = self.list_thesis_risks(thesis.id)
+            thesis.updates = self.list_thesis_updates(thesis.id)
+        return theses
+
+    def get_active_thesis_for_symbol(self, symbol: str) -> Thesis | None:
+        candidates = self.list_theses(status=ThesisStatus.ACTIVE, symbol=symbol, limit=1)
+        return candidates[0] if candidates else None
+
+    def list_thesis_pillars(self, thesis_id: str) -> list[ThesisPillar]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT payload FROM thesis_pillars WHERE thesis_id = ? ORDER BY id",
+                (thesis_id,),
+            ).fetchall()
+        return [ThesisPillar.model_validate_json(row["payload"]) for row in rows]
+
+    def list_thesis_risks(self, thesis_id: str) -> list[ThesisRisk]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT payload FROM thesis_risks WHERE thesis_id = ? ORDER BY id",
+                (thesis_id,),
+            ).fetchall()
+        return [ThesisRisk.model_validate_json(row["payload"]) for row in rows]
+
+    def list_thesis_updates(self, thesis_id: str) -> list[ThesisUpdate]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT payload FROM thesis_updates WHERE thesis_id = ? ORDER BY created_at DESC",
+                (thesis_id,),
+            ).fetchall()
+        return [ThesisUpdate.model_validate_json(row["payload"]) for row in rows]
 
     def create_proposal(self, proposal: Proposal) -> Proposal:
         with self.connect() as conn:

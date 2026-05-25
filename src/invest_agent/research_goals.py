@@ -217,10 +217,12 @@ def compute_evidence_hash(
     proposal_evidence: list[str],
     counter_evidence: list[str],
     manual_override_reason: str | None = None,
+    thesis_id: str | None = None,
 ) -> str:
     payload = {
         "goal_id": goal.id if goal else None,
         "goal_status": goal.status.value if goal else None,
+        "thesis_id": thesis_id,
         "manual_override_reason": manual_override_reason,
         "proposal_evidence": sorted(proposal_evidence),
         "counter_evidence": sorted(counter_evidence),

@@ -11,12 +11,29 @@ from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event
 from .futu_adapter import get_futu_status, refresh_futu_readonly
 from .ir_feeds import IrFeedIngestor
 from .market_news import MarketNewsIngestor, external_ticker, resolve_watchlist_symbols
-from .models import ProposalCreate, ProposalStatus, ResearchEvidenceCreate, ResearchGoalCreate, ResearchGoalStatus, Side
+from .models import (
+    ProposalCreate,
+    ProposalStatus,
+    ResearchEvidenceCreate,
+    ResearchGoalCreate,
+    ResearchGoalStatus,
+    Side,
+    ThesisActionBias,
+    ThesisConviction,
+    ThesisCreate,
+    ThesisImpact,
+    ThesisPillarInput,
+    ThesisRiskInput,
+    ThesisSide,
+    ThesisStatus,
+    ThesisUpdateCreate,
+)
 from .primary_sources import refresh_primary_sources
 from .proposal_drafts import ProposalDraftEngine
 from .research_goals import ResearchGoalService
 from .sec_companyfacts import SecCompanyFactsIngestor
 from .sec_edgar import SecEdgarIngestor
+from .thesis_tracker import ThesisTrackerService
 
 mcp = FastMCP("AI Investment Agent Control Plane")
 
@@ -194,6 +211,78 @@ def get_research_goal_snapshot(goal_id: str) -> dict:
 
 
 @mcp.tool()
+def create_thesis(
+    symbol: str,
+    thesis_statement: str,
+    side: Literal["long", "short", "neutral_watch"] = "long",
+    conviction: Literal["high", "medium", "low"] = "medium",
+    target_price: float | None = None,
+    stop_loss_trigger: str = "",
+    pillars: list[str] | None = None,
+    risks: list[str] | None = None,
+    invalidation_conditions: list[str] | None = None,
+) -> dict:
+    """Create a research-only thesis with pillars and invalidating risks. It does not approve or execute trades."""
+    risk_texts = risks or []
+    conditions = invalidation_conditions or []
+    request = ThesisCreate(
+        symbol=symbol,
+        side=ThesisSide(side),
+        thesis_statement=thesis_statement,
+        conviction=ThesisConviction(conviction),
+        target_price=target_price,
+        stop_loss_trigger=stop_loss_trigger,
+        pillars=[ThesisPillarInput(text=text) for text in (pillars or [])],
+        risks=[
+            ThesisRiskInput(
+                text=text,
+                invalidation_condition=conditions[index] if index < len(conditions) else text,
+            )
+            for index, text in enumerate(risk_texts)
+        ],
+    )
+    return _json(ThesisTrackerService(get_store()).create_thesis(request))
+
+
+@mcp.tool()
+def list_theses(
+    symbol: str | None = None,
+    status: Literal["active", "watch", "invalidated", "archived"] | None = None,
+    limit: int = 20,
+) -> list[dict]:
+    """List tracked investment theses, including pillars, risks, and recent thesis updates."""
+    parsed_status = ThesisStatus(status) if status else None
+    return _json(get_store().list_theses(status=parsed_status, symbol=symbol, limit=limit))
+
+
+@mcp.tool()
+def get_thesis_snapshot(thesis_id: str) -> dict:
+    """Return one tracked thesis with pillars, risks, and evidence-linked updates."""
+    thesis = get_store().get_thesis(thesis_id)
+    return _json(thesis) if thesis else {"error": f"thesis not found: {thesis_id}"}
+
+
+@mcp.tool()
+def add_thesis_update_from_research_goal(
+    thesis_id: str,
+    research_goal_id: str,
+    impact: Literal["strengthens", "weakens", "neutral", "invalidates"],
+    summary: str,
+    action_bias: Literal["no_change", "increase", "trim", "exit", "watch_only"] = "no_change",
+    conviction: Literal["high", "medium", "low"] | None = None,
+) -> dict:
+    """Attach a research-goal-backed thesis update. This writes research state only and never creates approval."""
+    request = ThesisUpdateCreate(
+        research_goal_id=research_goal_id,
+        impact=ThesisImpact(impact),
+        summary=summary,
+        action_bias=ThesisActionBias(action_bias),
+        conviction=ThesisConviction(conviction) if conviction else None,
+    )
+    return _json(ThesisTrackerService(get_store()).add_update(thesis_id, request))
+
+
+@mcp.tool()
 def get_safe_autonomy_status() -> dict:
     """Return safe-autonomy scheduler settings and the latest completed cycle summary."""
     return autonomy_status(get_settings(), get_store())
@@ -274,6 +363,7 @@ def create_trade_proposal(
     counter_evidence: list[str] | None = None,
     research_goal_id: str | None = None,
     manual_override_reason: str | None = None,
+    thesis_id: str | None = None,
 ) -> dict:
     """Create a risk-checked trade proposal. A passed research_goal_id or explicit manual_override_reason is required."""
     request = ProposalCreate(
@@ -289,6 +379,7 @@ def create_trade_proposal(
         counter_evidence=counter_evidence or [],
         research_goal_id=research_goal_id,
         manual_override_reason=manual_override_reason,
+        thesis_id=thesis_id,
     )
     proposal = get_service().create_proposal(request)
     return _json(proposal)
