@@ -14,7 +14,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
 - SQLite-backed local store for portfolio snapshot, quotes, news, proposals, executions, and audit events.
 - Demo portfolio, quotes, and news seed data.
 - Risk checks for max notional, cash availability, portfolio percentage, confidence floor, duplicate pending proposals, and approval-time price drift.
-- Browser dashboard for portfolio, pending proposals, create proposal, approve/reject, positions, and news digest.
+- Traditional Chinese browser dashboard for portfolio, pending proposals, create proposal, approve/reject, positions, news digest, source provenance, refresh timestamps, and recent audit events.
 - Futu OpenD read-only refresh for account funds, positions, and position quote snapshots.
 - Hermes stdio MCP server exposing:
   - `get_portfolio_snapshot`
@@ -28,7 +28,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - `reject_trade_proposal`
 - Hermes config snippet at `deploy/hermes/config.snippet.yaml`.
 - launchd example plist at `deploy/launchd/com.local.invest-agent-api.plist`.
-- Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, and non-pending state handling.
+- Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, non-pending state handling, Futu adapter mapping, and dashboard localization.
 
 ## Local Hermes/Codex Setup
 
@@ -41,13 +41,9 @@ The global Hermes config at `/Users/apple/.hermes/config.yaml` has been updated 
 - Reasoning effort: `high`
 - MCP server: `invest_agent`
 
-`hermes mcp list` shows `invest_agent` enabled with 7 selected tools.
+`hermes auth status openai-codex` shows logged in.
 
-Codex OAuth is still pending. Hermes currently reports `openai-codex: logged out`. Complete it with:
-
-```bash
-/Users/apple/.local/bin/hermes auth add openai-codex
-```
+`hermes mcp list` shows `invest_agent` enabled with 9 selected tools.
 
 ## Futu Setup
 
@@ -68,6 +64,15 @@ curl -X POST http://127.0.0.1:8788/api/futu/refresh
 ```
 
 This integration only calls account/quote read APIs and does not call `unlock_trade`, `place_order`, or `modify_order`.
+
+## Dashboard UX
+
+The dashboard is now localized in Traditional Chinese and includes:
+
+- Source badges for `Demo`, `富途 OpenD`, and local data.
+- Portfolio, quote, news, and audit refresh timestamps.
+- Futu OpenD connection status for the configured host/port.
+- A recent audit trail panel so proposal, approval, paper execution, and Futu refresh events are visible without leaving the browser.
 
 ## Run Commands
 
@@ -95,7 +100,7 @@ Latest verification completed:
 Result:
 
 ```text
-4 passed
+8 passed
 ```
 
 HTTP checks were also verified:
@@ -103,6 +108,8 @@ HTTP checks were also verified:
 - `GET /health`
 - `GET /api/news`
 - `GET /api/proposals`
+- `GET /api/quotes`
+- `GET /api/audit`
 - `GET /api/futu/status`
 - `POST /api/futu/refresh`
 - `python -m invest_agent.cli futu-refresh`
@@ -124,8 +131,6 @@ The following are local runtime artifacts and intentionally ignored:
 
 ## Next Steps
 
-- Complete Hermes OpenAI Codex OAuth.
 - Decide whether Telegram approval should be handled directly by Hermes Gateway or a dedicated approval bot.
 - Add real market/news ingestion behind the current store abstraction.
-- Add source badges and refresh timestamps to the dashboard so demo data and Futu data are visually distinct.
 - Keep live execution disabled until Keychain secret loading, two-OpenD separation, broker-side revalidation, order/deal reconciliation, and a small live smoke-test plan are implemented.

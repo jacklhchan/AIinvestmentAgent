@@ -9,7 +9,7 @@
 - 風控/審批狀態機：TTL、重複單、notional、confidence、price drift revalidation
 - Hermes stdio MCP server：讓 Hermes 讀 portfolio/news/proposals 並建立/批准/拒絕 proposal
 - Futu OpenD read-only refresh：讀取資金、持倉與持倉 quote snapshot，不 unlock trade
-- 本機 dashboard：可看持倉、新聞、pending proposal，並在瀏覽器批准/拒絕
+- 繁體中文本機 dashboard：可看持倉、新聞、pending proposal、資料來源、刷新時間、audit trail，並在瀏覽器批准/拒絕
 - launchd 與 Hermes config 範例
 
 ## 快速啟動
@@ -24,7 +24,7 @@ python -m invest_agent.cli seed
 python -m invest_agent.api
 ```
 
-開啟 `http://127.0.0.1:8788`。
+開啟 `http://127.0.0.1:8788`。介面預設為繁體中文，並會用來源 badge 區分 `Demo` 與 `富途 OpenD` 資料。
 
 ## Futu OpenD Read-Only
 

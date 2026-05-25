@@ -121,12 +121,12 @@ DASHBOARD_HTML = """
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>AI Investment Agent</title>
+  <title>投資代理控制台</title>
   <style>
     :root {
       color-scheme: light;
       --ink: #17211f;
-      --muted: #66706d;
+      --muted: #65706c;
       --line: #d9ded8;
       --paper: #fbfcf7;
       --panel: #ffffff;
@@ -134,6 +134,7 @@ DASHBOARD_HTML = """
       --blue: #2455a6;
       --amber: #9a6400;
       --coral: #b8443b;
+      --slate: #273238;
       --shadow: 0 12px 28px rgba(23, 33, 31, 0.08);
     }
     * { box-sizing: border-box; }
@@ -145,12 +146,12 @@ DASHBOARD_HTML = """
         linear-gradient(180deg, rgba(23, 33, 31, 0.04) 1px, transparent 1px),
         var(--paper);
       background-size: 32px 32px;
-      font-family: "Avenir Next", "Gill Sans", "Trebuchet MS", sans-serif;
+      font-family: "Avenir Next", "Gill Sans", "PingFang HK", "Microsoft JhengHei", sans-serif;
       letter-spacing: 0;
     }
     header {
       border-bottom: 1px solid var(--line);
-      background: rgba(251, 252, 247, 0.92);
+      background: rgba(251, 252, 247, 0.94);
       backdrop-filter: blur(12px);
       position: sticky;
       top: 0;
@@ -165,19 +166,27 @@ DASHBOARD_HTML = """
       gap: 18px;
       align-items: center;
     }
+    .brand {
+      display: grid;
+      gap: 6px;
+    }
+    h1 {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", "PingFang HK", serif;
+      font-size: 30px;
+      line-height: 1;
+      font-weight: 700;
+    }
+    .subtitle {
+      color: var(--muted);
+      font-size: 13px;
+    }
     .bar-actions {
       display: flex;
       gap: 10px;
       align-items: center;
       justify-content: end;
       flex-wrap: wrap;
-    }
-    h1 {
-      margin: 0;
-      font-family: Georgia, "Times New Roman", serif;
-      font-size: 30px;
-      line-height: 1;
-      font-weight: 700;
     }
     .mode {
       border: 1px solid var(--line);
@@ -187,6 +196,7 @@ DASHBOARD_HTML = """
       border-radius: 6px;
       color: var(--muted);
       font-size: 13px;
+      white-space: nowrap;
     }
     main {
       max-width: 1220px;
@@ -215,11 +225,10 @@ DASHBOARD_HTML = """
     .label {
       color: var(--muted);
       font-size: 12px;
-      text-transform: uppercase;
       letter-spacing: 0;
     }
     .value {
-      font-family: Georgia, "Times New Roman", serif;
+      font-family: Georgia, "Times New Roman", "PingFang HK", serif;
       font-size: 30px;
       line-height: 1;
     }
@@ -229,12 +238,32 @@ DASHBOARD_HTML = """
       gap: 18px;
       align-items: start;
     }
+    .triple-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 0.82fr;
+      gap: 18px;
+      align-items: start;
+    }
     .panel h2 {
       margin: 0;
       padding: 15px 16px;
       font-size: 15px;
       border-bottom: 1px solid var(--line);
     }
+    .source-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0;
+    }
+    .source-cell {
+      min-height: 88px;
+      padding: 14px 16px;
+      border-right: 1px solid var(--line);
+      display: grid;
+      align-content: start;
+      gap: 7px;
+    }
+    .source-cell:last-child { border-right: 0; }
     table {
       width: 100%;
       border-collapse: collapse;
@@ -251,12 +280,11 @@ DASHBOARD_HTML = """
     th {
       color: var(--muted);
       font-size: 12px;
-      text-transform: uppercase;
       letter-spacing: 0;
       background: #f5f7f1;
     }
     tr:last-child td { border-bottom: 0; }
-    .pill {
+    .pill, .source-badge {
       display: inline-flex;
       align-items: center;
       min-height: 24px;
@@ -268,6 +296,13 @@ DASHBOARD_HTML = """
       font-weight: 700;
       white-space: nowrap;
     }
+    .source-badge {
+      width: fit-content;
+      font-weight: 800;
+    }
+    .source-demo { color: var(--amber); border-color: #dfc68a; background: #fff7df; }
+    .source-futu-opend { color: var(--blue); border-color: #9ab3df; background: #eef4ff; }
+    .source-local { color: var(--slate); border-color: #b6c0bd; background: #f3f6f5; }
     .PENDING { color: var(--amber); border-color: #dfc68a; background: #fff7df; }
     .APPROVED, .EXECUTED { color: var(--mint); border-color: #9ad6c5; background: #eaf8f3; }
     .REJECTED, .RISK_REJECTED, .EXPIRED { color: var(--coral); border-color: #e6aaa5; background: #fff0ee; }
@@ -292,13 +327,21 @@ DASHBOARD_HTML = """
     button:disabled { cursor: default; opacity: 0.55; }
     form {
       display: grid;
-      gap: 10px;
+      gap: 12px;
       padding: 16px;
     }
     .form-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 10px;
+    }
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+    .field label {
+      color: var(--muted);
+      font-size: 12px;
     }
     input, select, textarea {
       width: 100%;
@@ -311,16 +354,18 @@ DASHBOARD_HTML = """
       color: var(--ink);
     }
     textarea { min-height: 82px; resize: vertical; }
-    .news-list {
+    .stack-list {
       display: grid;
       gap: 0;
     }
-    .news-item {
+    .stack-item {
       padding: 14px 16px;
       border-bottom: 1px solid var(--line);
+      display: grid;
+      gap: 7px;
     }
-    .news-item:last-child { border-bottom: 0; }
-    .news-title { font-weight: 700; margin-bottom: 6px; }
+    .stack-item:last-child { border-bottom: 0; }
+    .item-title { font-weight: 700; }
     .muted { color: var(--muted); font-size: 13px; }
     .toast {
       min-height: 24px;
@@ -328,8 +373,21 @@ DASHBOARD_HTML = """
       font-size: 13px;
       padding: 0 16px 14px;
     }
+    .empty {
+      padding: 14px 16px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    @media (max-width: 980px) {
+      .triple-grid { grid-template-columns: 1fr; }
+      .source-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .source-cell:nth-child(2) { border-right: 0; }
+      .source-cell:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+    }
     @media (max-width: 820px) {
-      .bar, .grid, .topline, .form-grid { grid-template-columns: 1fr; }
+      .bar, .grid, .topline, .form-grid, .source-strip { grid-template-columns: 1fr; }
+      .source-cell { border-right: 0; border-bottom: 1px solid var(--line); }
+      .source-cell:last-child { border-bottom: 0; }
       h1 { font-size: 26px; }
       .value { font-size: 25px; }
       main { padding: 18px 14px 32px; }
@@ -340,118 +398,264 @@ DASHBOARD_HTML = """
 <body>
   <header>
     <div class="bar">
-      <h1>AI Investment Agent</h1>
+      <div class="brand">
+        <h1>投資代理控制台</h1>
+        <div class="subtitle">Hermes Agent / Codex LLM / 富途 OpenD 只讀資料流</div>
+      </div>
       <div class="bar-actions">
-        <button class="secondary" id="futu-refresh" type="button">Refresh Futu</button>
-        <div class="mode" id="mode">Loading</div>
+        <button class="secondary" id="futu-refresh" type="button">刷新富途 OpenD</button>
+        <div class="mode" id="mode">載入中</div>
       </div>
     </div>
   </header>
   <main>
     <section class="topline">
-      <div class="metric"><div class="label">Portfolio Value</div><div class="value" id="total">$0</div></div>
-      <div class="metric"><div class="label">Cash</div><div class="value" id="cash">$0</div></div>
-      <div class="metric"><div class="label">Positions</div><div class="value" id="positions">0</div></div>
-      <div class="metric"><div class="label">Pending</div><div class="value" id="pending">0</div></div>
+      <div class="metric"><div class="label">總資產</div><div class="value" id="total">$0</div></div>
+      <div class="metric"><div class="label">現金</div><div class="value" id="cash">$0</div></div>
+      <div class="metric"><div class="label">持倉數</div><div class="value" id="positions">0</div></div>
+      <div class="metric"><div class="label">待審批</div><div class="value" id="pending">0</div></div>
+    </section>
+    <section class="panel">
+      <h2>資料來源與刷新狀態</h2>
+      <div class="source-strip" id="source-strip"></div>
     </section>
     <section class="grid">
       <div class="panel">
-        <h2>Proposals</h2>
+        <h2>交易提案</h2>
         <table>
-          <thead><tr><th>Status</th><th>Intent</th><th>Risk</th><th>Actions</th></tr></thead>
+          <thead><tr><th>狀態</th><th>交易意圖</th><th>風控結果</th><th>操作</th></tr></thead>
           <tbody id="proposals"></tbody>
         </table>
       </div>
       <div class="panel">
-        <h2>Create Proposal</h2>
+        <h2>新增提案</h2>
         <form id="proposal-form">
           <div class="form-grid">
-            <input name="symbol" placeholder="Symbol" value="GOOGL" required />
-            <select name="side"><option>BUY</option><option>SELL</option></select>
-            <input name="qty" type="number" min="1" value="5" required />
-            <input name="limit_price" type="number" min="0.01" step="0.01" value="175.70" required />
-            <input name="confidence" type="number" min="0" max="1" step="0.01" value="0.62" required />
-            <input name="ttl_minutes" type="number" min="1" max="1440" value="15" required />
+            <div class="field"><label for="symbol">標的</label><input id="symbol" name="symbol" value="GOOGL" required /></div>
+            <div class="field"><label for="side">方向</label><select id="side" name="side"><option value="BUY">買入</option><option value="SELL">賣出</option></select></div>
+            <div class="field"><label for="qty">數量</label><input id="qty" name="qty" type="number" min="1" value="5" required /></div>
+            <div class="field"><label for="limit_price">限價</label><input id="limit_price" name="limit_price" type="number" min="0.01" step="0.01" value="175.70" required /></div>
+            <div class="field"><label for="confidence">信心分數</label><input id="confidence" name="confidence" type="number" min="0" max="1" step="0.01" value="0.62" required /></div>
+            <div class="field"><label for="ttl_minutes">有效分鐘</label><input id="ttl_minutes" name="ttl_minutes" type="number" min="1" max="1440" value="15" required /></div>
           </div>
-          <textarea name="trigger" required>Watchlist pullback with portfolio cash available</textarea>
-          <textarea name="thesis" required>Small paper allocation to validate the approval and risk workflow before any broker integration.</textarea>
-          <button class="primary" type="submit">Create</button>
+          <div class="field"><label for="trigger">觸發條件</label><textarea id="trigger" name="trigger" required>Watchlist 回調，且組合現金足夠</textarea></div>
+          <div class="field"><label for="thesis">投資論點</label><textarea id="thesis" name="thesis" required>小額紙上交易，用來驗證審批、風控與 audit 流程。</textarea></div>
+          <button class="primary" type="submit">建立提案</button>
         </form>
         <div class="toast" id="toast"></div>
       </div>
     </section>
-    <section class="grid">
+    <section class="triple-grid">
       <div class="panel">
-        <h2>Positions</h2>
+        <h2>持倉</h2>
         <table>
-          <thead><tr><th>Symbol</th><th>Qty</th><th>Last</th><th>Value</th></tr></thead>
+          <thead><tr><th>標的</th><th>數量</th><th>最新價</th><th>市值 / 來源</th></tr></thead>
           <tbody id="position-rows"></tbody>
         </table>
       </div>
       <div class="panel">
-        <h2>News Digest</h2>
-        <div class="news-list" id="news"></div>
+        <h2>市場摘要</h2>
+        <div class="stack-list" id="news"></div>
+      </div>
+      <div class="panel">
+        <h2>操作紀錄</h2>
+        <div class="stack-list" id="audit"></div>
       </div>
     </section>
   </main>
   <script>
-    const money = value => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value || 0);
-    const smallMoney = value => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(value || 0);
+    const money = value => new Intl.NumberFormat("zh-HK", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value || 0);
+    const smallMoney = value => new Intl.NumberFormat("zh-HK", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(value || 0);
+    const htmlEscapeMap = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" };
+    const escapeHtml = value => String(value ?? "").replace(/[&<>"']/g, char => htmlEscapeMap[char]);
+    const formatDate = value => {
+      if (!value) return "未有紀錄";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "時間格式未知";
+      return new Intl.DateTimeFormat("zh-HK", {
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false
+      }).format(date);
+    };
+    const latestTime = items => {
+      const times = items
+        .map(item => Date.parse(item.updated_at || item.published_at || item.created_at))
+        .filter(time => Number.isFinite(time));
+      return times.length ? new Date(Math.max(...times)).toISOString() : null;
+    };
+    const statusLabels = {
+      PENDING: "待審批",
+      APPROVED: "已批准",
+      REJECTED: "已拒絕",
+      EXPIRED: "已過期",
+      RISK_REJECTED: "風控拒絕",
+      EXECUTED: "已執行"
+    };
+    const sideLabels = { BUY: "買入", SELL: "賣出" };
+    const sourceLabels = {
+      demo: "Demo",
+      "futu-opend": "富途 OpenD",
+      local: "本機"
+    };
+    const eventLabels = {
+      demo_seeded: "Demo 資料建立",
+      portfolio_upserted: "投資組合已更新",
+      futu_readonly_refreshed: "富途只讀刷新",
+      proposal_created: "提案已建立",
+      proposal_updated: "提案已更新",
+      proposal_approved: "提案已批准",
+      proposal_rejected: "提案已拒絕",
+      proposal_expired: "提案已過期",
+      paper_execution_recorded: "紙上交易紀錄"
+    };
+    const sourceClass = source => `source-${String(source || "local").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+    const sourceBadge = source => `<span class="source-badge ${sourceClass(source)}">${escapeHtml(sourceLabels[source] || source || "本機")}</span>`;
+    const pill = (status, label) => `<span class="pill ${escapeHtml(status)}">${escapeHtml(label)}</span>`;
     const api = async (path, options = {}) => {
       const response = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
-      if (!response.ok) throw new Error(await response.text());
-      return response.json();
+      if (response.ok) return response.json();
+      let message = await response.text();
+      try {
+        const parsed = JSON.parse(message);
+        message = typeof parsed.detail === "string" ? parsed.detail : JSON.stringify(parsed.detail || parsed);
+      } catch (_) {}
+      throw new Error(message);
+    };
+    const apiOptional = async (path, fallback) => {
+      try {
+        return await api(path);
+      } catch (error) {
+        return fallback(error);
+      }
     };
     const setToast = text => { document.querySelector("#toast").textContent = text; };
+
+    function renderSourceStrip(health, portfolio, quotes, futuStatus) {
+      const quoteSources = quotes.reduce((acc, quote) => {
+        const source = quote.source || "local";
+        acc[source] = (acc[source] || 0) + 1;
+        return acc;
+      }, {});
+      const quoteBadges = Object.entries(quoteSources)
+        .map(([source, count]) => `${sourceBadge(source)} <span class="muted">${count} 筆</span>`)
+        .join(" ");
+      document.querySelector("#source-strip").innerHTML = `
+        <div class="source-cell">
+          <div class="label">投資組合來源</div>
+          <div>${sourceBadge(portfolio.source || "local")}</div>
+          <div class="muted">更新：${formatDate(portfolio.updated_at)}</div>
+        </div>
+        <div class="source-cell">
+          <div class="label">行情來源</div>
+          <div>${quoteBadges || sourceBadge("local")}</div>
+          <div class="muted">最新：${formatDate(latestTime(quotes))}</div>
+        </div>
+        <div class="source-cell">
+          <div class="label">富途 OpenD</div>
+          <div>${futuStatus.connected ? pill("APPROVED", "已連線") : pill("EXPIRED", "未連線")}</div>
+          <div class="muted">${escapeHtml(health.futu_host)}:${escapeHtml(health.futu_monitor_port)} · ${escapeHtml(futuStatus.message || "未檢查")}</div>
+        </div>
+        <div class="source-cell">
+          <div class="label">執行模式</div>
+          <div>${health.paper_only ? pill("APPROVED", "紙上交易") : pill("PENDING", "要求實盤")}</div>
+          <div class="muted">審批後仍只寫入本機紀錄</div>
+        </div>
+      `;
+    }
+
+    function renderPositions(portfolio, quotes) {
+      const quoteBySymbol = new Map(quotes.map(quote => [quote.symbol, quote]));
+      const rows = portfolio.positions.map(pos => {
+        const quote = quoteBySymbol.get(pos.symbol);
+        const source = quote?.source || portfolio.source || "local";
+        const updated = quote?.updated_at || portfolio.updated_at;
+        return `<tr>
+          <td><strong>${escapeHtml(pos.symbol)}</strong></td>
+          <td>${escapeHtml(pos.qty)}</td>
+          <td>${smallMoney(pos.last_price)}</td>
+          <td>${money(pos.market_value)}<br>${sourceBadge(source)} <span class="muted">${formatDate(updated)}</span></td>
+        </tr>`;
+      }).join("");
+      document.querySelector("#position-rows").innerHTML = rows || `<tr><td colspan="4" class="muted">目前沒有持倉資料</td></tr>`;
+    }
+
+    function renderProposals(proposals) {
+      document.querySelector("#proposals").innerHTML = proposals.map(p => {
+        const risk = p.risk_check.passed ? "通過" : (p.risk_check.reasons || []).map(escapeHtml).join("; ");
+        const warnings = (p.risk_check.warnings || []).length ? `<br><span class="muted">提示：${p.risk_check.warnings.map(escapeHtml).join("; ")}</span>` : "";
+        const actions = p.status === "PENDING"
+          ? `<div class="actions"><button class="primary" data-approve="${escapeHtml(p.id)}">批准</button><button class="danger" data-reject="${escapeHtml(p.id)}">拒絕</button></div>`
+          : `<span class="muted">無可用操作</span>`;
+        return `<tr>
+          <td>${pill(p.status, statusLabels[p.status] || p.status)}</td>
+          <td><strong>${escapeHtml(p.symbol)} ${escapeHtml(sideLabels[p.side] || p.side)} ${escapeHtml(p.qty)}</strong><br><span class="muted">${smallMoney(p.limit_price)} · 信心 ${Math.round(p.confidence * 100)}%</span></td>
+          <td>${risk || "未有風控訊息"}${warnings}<br><span class="muted">${escapeHtml(p.trigger)}</span></td>
+          <td>${actions}</td>
+        </tr>`;
+      }).join("") || `<tr><td colspan="4" class="muted">目前沒有交易提案</td></tr>`;
+    }
+
+    function renderNews(news) {
+      document.querySelector("#news").innerHTML = news.map(item => `
+        <div class="stack-item">
+          <div class="item-title">${item.symbol ? `${escapeHtml(item.symbol)} · ` : ""}${escapeHtml(item.title)}</div>
+          <div>${sourceBadge(item.source || "local")} <span class="muted">${formatDate(item.published_at)}</span></div>
+          <div class="muted">${escapeHtml(item.summary || "")}</div>
+        </div>
+      `).join("") || `<div class="empty">目前沒有市場摘要</div>`;
+    }
+
+    function renderAudit(auditEvents) {
+      document.querySelector("#audit").innerHTML = auditEvents.map(event => `
+        <div class="stack-item">
+          <div class="item-title">${escapeHtml(eventLabels[event.event_type] || event.event_type)}</div>
+          <div class="muted">${escapeHtml(event.entity_type)} · ${escapeHtml(event.entity_id)}</div>
+          <div class="muted">${formatDate(event.created_at)}</div>
+        </div>
+      `).join("") || `<div class="empty">目前沒有操作紀錄</div>`;
+    }
+
     async function loadAll() {
-      const [health, portfolio, proposals, news] = await Promise.all([
+      const [health, portfolio, quotes, proposals, news, auditEvents, futuStatus] = await Promise.all([
         api("/health"),
         api("/api/portfolio"),
+        api("/api/quotes"),
         api("/api/proposals"),
-        api("/api/news?limit=8")
+        api("/api/news?limit=8"),
+        api("/api/audit?limit=6"),
+        apiOptional("/api/futu/status", error => ({ connected: false, message: error.message }))
       ]);
-      document.querySelector("#mode").textContent = health.paper_only ? "Paper mode" : "Live mode requested";
+      document.querySelector("#mode").textContent = health.paper_only ? "紙上交易模式" : "已要求實盤模式";
       const futuButton = document.querySelector("#futu-refresh");
       futuButton.disabled = !health.futu_read_enabled;
-      futuButton.textContent = health.futu_read_enabled ? `Refresh Futu :${health.futu_monitor_port}` : "Futu disabled";
+      futuButton.textContent = health.futu_read_enabled ? `刷新富途 OpenD :${health.futu_monitor_port}` : "富途讀取未啟用";
       document.querySelector("#total").textContent = money(portfolio.total_value_usd);
       document.querySelector("#cash").textContent = money(portfolio.cash_usd);
       document.querySelector("#positions").textContent = portfolio.positions.length;
       document.querySelector("#pending").textContent = proposals.filter(p => p.status === "PENDING").length;
-      document.querySelector("#position-rows").innerHTML = portfolio.positions.map(pos => `
-        <tr><td>${pos.symbol}</td><td>${pos.qty}</td><td>${smallMoney(pos.last_price)}</td><td>${money(pos.market_value)}</td></tr>
-      `).join("");
-      document.querySelector("#proposals").innerHTML = proposals.map(p => {
-        const risk = p.risk_check.passed ? "Passed" : p.risk_check.reasons.join("; ");
-        const actions = p.status === "PENDING"
-          ? `<div class="actions"><button class="primary" data-approve="${p.id}">Approve</button><button class="danger" data-reject="${p.id}">Reject</button></div>`
-          : `<span class="muted">No action</span>`;
-        return `<tr>
-          <td><span class="pill ${p.status}">${p.status}</span></td>
-          <td><strong>${p.symbol} ${p.side} ${p.qty}</strong><br><span class="muted">${smallMoney(p.limit_price)} · conf ${Math.round(p.confidence * 100)}%</span></td>
-          <td>${risk}<br><span class="muted">${p.trigger}</span></td>
-          <td>${actions}</td>
-        </tr>`;
-      }).join("");
-      document.querySelector("#news").innerHTML = news.map(item => `
-        <div class="news-item">
-          <div class="news-title">${item.symbol ? item.symbol + " · " : ""}${item.title}</div>
-          <div class="muted">${item.source} · ${new Date(item.published_at).toLocaleString()}</div>
-        </div>
-      `).join("");
+      renderSourceStrip(health, portfolio, quotes, futuStatus);
+      renderPositions(portfolio, quotes);
+      renderProposals(proposals);
+      renderNews(news);
+      renderAudit(auditEvents);
     }
+
     document.addEventListener("click", async event => {
       const approveId = event.target.dataset.approve;
       const rejectId = event.target.dataset.reject;
       try {
         if (approveId) {
           await api(`/api/proposals/${approveId}/approve`, { method: "POST" });
-          setToast(`Approved ${approveId}`);
+          setToast(`已批准 ${approveId}`);
           await loadAll();
         }
         if (rejectId) {
-          await api(`/api/proposals/${rejectId}/reject`, { method: "POST", body: JSON.stringify({ reason: "Rejected in dashboard" }) });
-          setToast(`Rejected ${rejectId}`);
+          await api(`/api/proposals/${rejectId}/reject`, { method: "POST", body: JSON.stringify({ reason: "在中文 Dashboard 拒絕" }) });
+          setToast(`已拒絕 ${rejectId}`);
           await loadAll();
         }
       } catch (error) {
@@ -460,10 +664,10 @@ DASHBOARD_HTML = """
     });
     document.querySelector("#futu-refresh").addEventListener("click", async event => {
       event.target.disabled = true;
-      setToast("Refreshing Futu OpenD read-only snapshot...");
+      setToast("正在刷新富途 OpenD 只讀快照...");
       try {
         const result = await api("/api/futu/refresh", { method: "POST" });
-        setToast(`Futu refreshed: ${result.position_count} positions, ${result.quote_count} quotes`);
+        setToast(`富途已刷新：${result.position_count} 個持倉，${result.quote_count} 筆行情`);
         await loadAll();
       } catch (error) {
         setToast(error.message);
@@ -483,12 +687,12 @@ DASHBOARD_HTML = """
         ttl_minutes: Number(form.get("ttl_minutes")),
         trigger: form.get("trigger"),
         thesis: form.get("thesis"),
-        evidence: ["dashboard"],
+        evidence: ["zh-Hant-dashboard"],
         counter_evidence: []
       };
       try {
         const created = await api("/api/proposals", { method: "POST", body: JSON.stringify(body) });
-        setToast(`Created ${created.id} as ${created.status}`);
+        setToast(`已建立 ${created.id}，狀態：${statusLabels[created.status] || created.status}`);
         await loadAll();
       } catch (error) {
         setToast(error.message);
