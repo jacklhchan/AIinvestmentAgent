@@ -12,6 +12,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
 
 - FastAPI control plane on `127.0.0.1:8788`.
 - AI Advisor Brief first-screen workflow that automatically summarizes portfolio, proposal, thesis, catalyst, earnings, behavior, shadow, and research-goal state into research-only advice.
+- Market Context Lens with broad-market symbols for index, volatility, rates, gold, and oil context; it informs advice but does not create proposal candidates.
 - SQLite-backed local store for portfolio snapshot, quotes, news, proposals, executions, and audit events.
 - Demo portfolio, quotes, and news seed data.
 - Watchlist resolver that merges configured symbols, held positions, and locally cached quotes.
@@ -36,6 +37,8 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - `get_watchlist_quotes`
   - `get_watchlist_symbols`
   - `get_advisor_brief`
+  - `get_market_context`
+  - `refresh_market_context_news`
   - `get_news_digest`
   - `refresh_market_news`
   - `refresh_primary_source_filings`
@@ -91,8 +94,20 @@ The dashboard now has an advisor-first entry point so daily use no longer requir
 - `POST /api/advisor/brief` can run light analysis, currently by creating the latest behavior report when trade fills exist.
 - Hermes MCP exposes `get_advisor_brief` so the conversational agent can answer from the same advisor-first summary instead of asking the user to select internal IDs.
 - The brief ranks advice as `blocked`, `action`, `watch`, or `info`.
-- Inputs include pending proposals, catalyst windows, completed catalysts missing review, earnings review thesis deltas, behavior diagnostics, latest shadow events, thesis coverage, and insufficient research goals.
+- Inputs include broad-market context, pending proposals, catalyst windows, completed catalysts missing review, earnings review thesis deltas, behavior diagnostics, latest shadow events, thesis coverage, and insufficient research goals.
 - The workflow is research-only. It does not create trade proposals, approve proposals, unlock Futu OpenD, or place live broker orders.
+
+## Market Context Lens
+
+The app now separates broad-market context from trade proposal watchlists.
+
+- Default symbols: `SPY,QQQ,IWM,DIA,VIXY,TLT,GLD,USO`.
+- `GET /api/market-context` returns quote/news coverage and risk notes for market context symbols.
+- `POST /api/market-context/refresh` refreshes broad-market news without creating proposals.
+- Safe autonomy refreshes market-context news alongside watchlist news.
+- Dashboard has a `市場全景` panel and `刷新市場全景` action.
+- Hermes MCP exposes `get_market_context` and `refresh_market_context_news`.
+- These symbols inform Advisor Brief but are not fed into proposal drafting unless explicitly added to `INVEST_AGENT_WATCHLIST`.
 
 ## Local Hermes/Codex Setup
 
@@ -107,7 +122,7 @@ The global Hermes config at `/Users/apple/.hermes/config.yaml` has been updated 
 
 `hermes auth status openai-codex` shows logged in.
 
-`/Users/apple/.hermes/hermes-agent/venv/bin/hermes mcp list` shows `invest_agent` enabled with 47 selected tools after adding the advisor brief tool.
+`/Users/apple/.hermes/hermes-agent/venv/bin/hermes mcp list` shows `invest_agent` enabled with 49 selected tools after adding the market context tools.
 
 ## Futu Setup
 

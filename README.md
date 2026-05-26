@@ -6,6 +6,7 @@
 
 - FastAPI 本機控制平面：`http://127.0.0.1:8788`
 - AI Advisor Brief：首頁一鍵自動整理 portfolio、proposal、research goals、theses、catalysts、earnings reviews、behavior / shadow reports，直接輸出 research-only 建議
+- Market Context Lens：獨立追蹤 SPY/QQQ/IWM/DIA/VIXY/TLT/GLD/USO 等 broad-market symbols，只作市場背景與風險提醒，不直接產生 proposal
 - SQLite 狀態儲存：proposal、approval、paper executions、portfolio、quotes、news、fundamentals、research goals、evidence rows、theses、thesis updates、catalysts、catalyst reviews、earnings reviews、research run cards、trade journal、behavior reports、shadow account、audit events
 - 風控/審批狀態機：TTL、重複單、notional、confidence、price drift revalidation
 - Hermes stdio MCP server：讓 Hermes 讀 portfolio/news/proposals 並建立/批准/拒絕 proposal
@@ -51,6 +52,7 @@ Dashboard 第一屏的 `AI Advisor Brief` 是日常使用入口。按 `讓 Agent
 - 最新 shadow report 的 thesis mismatch、ignored catalyst、early exit。
 - 持倉是否缺少 human-confirmed active thesis。
 - research goal 是否證據不足。
+- broader market context 是否已有 quote/news 覆蓋。
 
 這個 brief 可以自動建立輕量 behavior report，但仍是 research-only：不會建立交易 proposal、不會 approve proposal、不會 unlock Futu，也不會下實盤單。底下的 thesis / catalyst / earnings / journal / shadow 表單保留給人工覆核、修正與審計追溯。
 
@@ -64,6 +66,27 @@ curl -X POST http://127.0.0.1:8788/api/advisor/brief \
   -H "Content-Type: application/json" \
   -d '{"run_light_analysis":true,"max_items":8}'
 ```
+
+## Market Context Lens
+
+Market Context Lens 是 broad-market 背景層，和交易 watchlist 分開。它預設追蹤：
+
+```bash
+INVEST_AGENT_MARKET_CONTEXT_SYMBOLS=SPY,QQQ,IWM,DIA,VIXY,TLT,GLD,USO
+```
+
+這些 symbols 用來理解大盤、科技成長股、小型股、波動率、利率、黃金與油價環境。它們會進入 Advisor Brief 的背景檢查，但不會自動成為 proposal draft 候選。
+
+REST API：
+
+```bash
+curl http://127.0.0.1:8788/api/market-context
+curl -X POST http://127.0.0.1:8788/api/market-context/refresh \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+Hermes MCP exposes `get_market_context` and `refresh_market_context_news`，所以 conversational agent 可以先看市場全景，再解釋個別 proposal。
 
 ## Futu OpenD Read-Only
 

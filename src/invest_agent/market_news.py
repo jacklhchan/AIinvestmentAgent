@@ -48,6 +48,17 @@ def resolve_watchlist_symbols(settings: Settings, store: Store, symbols: list[st
     return list(by_ticker.values())
 
 
+def resolve_market_context_symbols(settings: Settings, store: Store | None = None) -> list[str]:
+    symbols = _split_symbols(settings.market_context_symbols)
+    if not store:
+        return symbols
+    quotes_by_ticker = {external_ticker(quote.symbol): quote.symbol for quote in store.list_quotes()}
+    resolved: list[str] = []
+    for symbol in symbols:
+        resolved.append(quotes_by_ticker.get(external_ticker(symbol), symbol))
+    return resolved
+
+
 class MarketNewsIngestor:
     def __init__(self, settings: Settings, store: Store, client: httpx.Client | None = None):
         self.settings = settings

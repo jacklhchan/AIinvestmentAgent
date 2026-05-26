@@ -24,6 +24,7 @@ class Settings(BaseModel):
     min_confidence: float = 0.35
     allow_live_trading: bool = False
     watchlist_symbols: str = "AAPL,MSFT,NVDA,GOOGL"
+    market_context_symbols: str = "SPY,QQQ,IWM,DIA,VIXY,TLT,GLD,USO"
     draft_notional_usd: float = 1000.0
     draft_max_candidates: int = 3
     news_lookback_days: int = 3
@@ -109,6 +110,7 @@ def get_settings() -> Settings:
         min_confidence=_float_env("INVEST_AGENT_MIN_CONFIDENCE", 0.35),
         allow_live_trading=_bool_env("INVEST_AGENT_ALLOW_LIVE_TRADING", False),
         watchlist_symbols=os.getenv("INVEST_AGENT_WATCHLIST", "AAPL,MSFT,NVDA,GOOGL"),
+        market_context_symbols=os.getenv("INVEST_AGENT_MARKET_CONTEXT_SYMBOLS", "SPY,QQQ,IWM,DIA,VIXY,TLT,GLD,USO"),
         draft_notional_usd=_float_env("INVEST_AGENT_DRAFT_NOTIONAL_USD", 1000.0),
         draft_max_candidates=_int_env("INVEST_AGENT_DRAFT_MAX_CANDIDATES", 3),
         news_lookback_days=_int_env("INVEST_AGENT_NEWS_LOOKBACK_DAYS", 3),

@@ -15,6 +15,7 @@ from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event
 from .futu_adapter import FutuIntegrationError, get_futu_status, refresh_futu_readonly
 from .ir_feeds import IrFeedIngestor
 from .market_news import MarketNewsIngestor, external_ticker, resolve_watchlist_symbols
+from .market_context import MarketContextService
 from .models import (
     AdvisorBriefRequest,
     CatalystCompleteRequest,
@@ -159,6 +160,24 @@ def run_advisor_brief(request: AdvisorBriefRequest | None = None):
 @app.get("/api/watchlist")
 def watchlist():
     return {"symbols": resolve_watchlist_symbols(get_settings(), get_store())}
+
+
+@app.get("/api/market-context")
+def market_context():
+    return MarketContextService(get_settings(), get_store()).build_context()
+
+
+@app.post("/api/market-context/refresh")
+def refresh_market_context(request: NewsRefreshRequest | None = None):
+    request = request or NewsRefreshRequest()
+    service = MarketContextService(get_settings(), get_store())
+    result = service.refresh_news(
+        days=request.days,
+        max_per_symbol=request.max_per_symbol,
+        include_google_news=request.include_google_news,
+        include_finnhub=request.include_finnhub,
+    )
+    return {"refresh": result, "context": service.build_context()}
 
 
 @app.get("/api/news")
@@ -973,6 +992,7 @@ DASHBOARD_HTML = """
       </div>
       <div class="bar-actions">
         <button class="secondary" id="news-refresh" type="button">刷新市場新聞</button>
+        <button class="secondary" id="market-context-refresh" type="button">刷新市場全景</button>
         <button class="secondary" id="primary-refresh" type="button">刷新 SEC/IR</button>
         <button class="secondary" id="fundamentals-refresh" type="button">刷新 SEC Fundamentals</button>
         <button class="secondary" id="autonomy-run" type="button">執行自治循環</button>
@@ -1002,6 +1022,13 @@ DASHBOARD_HTML = """
         <div class="advisor-list"></div>
       </div>
       <div class="toast" id="advisor-toast"></div>
+    </section>
+    <section class="panel">
+      <h2>市場全景</h2>
+      <table>
+        <thead><tr><th>角色</th><th>Symbol</th><th>Quote</th><th>最近新聞 / 覆蓋</th></tr></thead>
+        <tbody id="market-context"></tbody>
+      </table>
     </section>
     <section class="panel">
       <h2>資料來源與刷新狀態</h2>
@@ -1382,7 +1409,20 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       behavior: "交易行為",
       shadow: "影子帳戶",
       thesis: "投資論點",
-      research: "研究證據"
+      research: "研究證據",
+      market: "市場全景"
+    };
+    const marketRoleLabels = {
+      "US broad equity": "美股大盤",
+      "US growth / mega-cap tech": "成長 / 科技",
+      "US small caps": "小型股",
+      "US blue chips": "藍籌",
+      volatility: "波動率",
+      "volatility proxy": "波動率",
+      rates: "利率",
+      gold: "黃金",
+      oil: "油價",
+      "market context": "市場背景"
     };
     const verificationLabels = {
       unverified: "未驗證",
@@ -1574,6 +1614,23 @@ proposal 需要靠 manual override 才能成立</textarea></div>
           <div class="muted">不 unlock Futu，不下實盤單</div>
         </div>
       `;
+    }
+
+    function renderMarketContext(context) {
+      document.querySelector("#market-context").innerHTML = (context.items || []).map(item => {
+        const quote = item.has_quote
+          ? `${smallMoney(item.last_price)}<br>${sourceBadge(item.quote_source || "local")} <span class="muted">${formatDate(item.quote_updated_at)}</span>`
+          : '<span class="muted">未有 quote</span>';
+        const news = item.news_count
+          ? `<strong>${escapeHtml(item.news_count)} 篇</strong><br><span class="muted">${escapeHtml(item.latest_news_title || "")}</span><br><span class="muted">${escapeHtml(item.latest_news_source || "")} · ${formatDate(item.latest_news_at)}</span>`
+          : '<span class="muted">未有市場背景新聞</span>';
+        return `<tr>
+          <td>${pill("info", marketRoleLabels[item.role] || item.role)}<br><span class="muted">${escapeHtml(item.label)}</span></td>
+          <td><strong>${escapeHtml(item.symbol)}</strong></td>
+          <td>${quote}</td>
+          <td>${news}</td>
+        </tr>`;
+      }).join("") || `<tr><td colspan="4" class="muted">未設定 market context symbols。</td></tr>`;
     }
 
     function renderPositions(portfolio, quotes) {
@@ -1807,8 +1864,9 @@ proposal 需要靠 manual override 才能成立</textarea></div>
     }
 
     async function loadAll() {
-      const [advisorBrief, health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, researchGoals, theses, catalysts, earningsReviews, runCards, behaviorReports, tradeImports, tradeRoundtrips, shadowStrategies, shadowReports, shadowEvents] = await Promise.all([
+      const [advisorBrief, marketContext, health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, researchGoals, theses, catalysts, earningsReviews, runCards, behaviorReports, tradeImports, tradeRoundtrips, shadowStrategies, shadowReports, shadowEvents] = await Promise.all([
         api("/api/advisor/brief"),
+        api("/api/market-context"),
         api("/health"),
         api("/api/portfolio"),
         api("/api/quotes"),
@@ -1839,6 +1897,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       document.querySelector("#positions").textContent = portfolio.positions.length;
       document.querySelector("#pending").textContent = proposals.filter(p => p.status === "PENDING").length;
       renderAdvisorBrief(advisorBrief);
+      renderMarketContext(marketContext);
       renderSourceStrip(health, portfolio, quotes, futuStatus);
       renderAutonomy(autonomy);
       renderResearchGoals(researchGoals);
@@ -1923,6 +1982,20 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         const result = await api("/api/news/refresh", { method: "POST", body: JSON.stringify({}) });
         const errorNote = result.errors?.length ? `；${result.errors.length} 個來源有錯誤` : "";
         setToast(`市場新聞已入庫：${result.stored_count} 筆，watchlist ${result.symbols.length} 個標的${errorNote}`);
+        await loadAll();
+      } catch (error) {
+        setToast(error.message);
+      } finally {
+        event.target.disabled = false;
+      }
+    });
+    document.querySelector("#market-context-refresh").addEventListener("click", async event => {
+      event.target.disabled = true;
+      setToast("正在刷新 broader market context...");
+      try {
+        const result = await api("/api/market-context/refresh", { method: "POST", body: JSON.stringify({}) });
+        const errorNote = result.refresh.errors?.length ? `；${result.refresh.errors.length} 個來源有錯誤` : "";
+        setToast(`市場全景已更新：${result.refresh.stored_count} 筆，symbols ${result.refresh.symbols.length} 個${errorNote}`);
         await loadAll();
       } catch (error) {
         setToast(error.message);

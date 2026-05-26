@@ -13,6 +13,7 @@ from .earnings_review import EarningsReviewService
 from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event_file as replay_events_from_file
 from .futu_adapter import get_futu_status, refresh_futu_readonly
 from .ir_feeds import IrFeedIngestor
+from .market_context import MarketContextService
 from .market_news import MarketNewsIngestor, external_ticker, resolve_watchlist_symbols
 from .models import (
     AdvisorBriefRequest,
@@ -89,6 +90,20 @@ def get_advisor_brief(run_light_analysis: bool = False, max_items: int = 8) -> d
             AdvisorBriefRequest(run_light_analysis=run_light_analysis, max_items=max_items)
         )
     )
+
+
+@mcp.tool()
+def get_market_context() -> dict:
+    """Return broad-market context symbols, quote/news coverage, and risk notes. Research-only."""
+    return _json(MarketContextService(get_settings(), get_store()).build_context())
+
+
+@mcp.tool()
+def refresh_market_context_news(days: int | None = None, max_per_symbol: int | None = None) -> dict:
+    """Refresh broad-market context news without creating proposals or approvals."""
+    service = MarketContextService(get_settings(), get_store())
+    result = service.refresh_news(days=days, max_per_symbol=max_per_symbol)
+    return {"refresh": _json(result), "context": _json(service.build_context())}
 
 
 @mcp.tool()

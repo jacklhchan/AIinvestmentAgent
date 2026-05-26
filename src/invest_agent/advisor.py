@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import timedelta, timezone
 
+from .config import Settings, get_settings
+from .market_context import MarketContextService
 from .models import (
     AdvisorBrief,
     AdvisorBriefItem,
@@ -24,8 +26,9 @@ from .trade_journal import TradeJournalService
 
 
 class AdvisorService:
-    def __init__(self, store: Store, *, paper_only: bool = True):
+    def __init__(self, store: Store, *, settings: Settings | None = None, paper_only: bool = True):
         self.store = store
+        self.settings = settings or get_settings()
         self.paper_only = paper_only
 
     def build_brief(self, request: AdvisorBriefRequest | None = None) -> AdvisorBrief:
@@ -50,8 +53,10 @@ class AdvisorService:
         positions = self.store.get_portfolio().positions
         active_theses = self.store.list_theses(status=ThesisStatus.ACTIVE, limit=100)
         active_thesis_symbols = {thesis.symbol for thesis in active_theses if thesis.human_confirmed}
+        market_context = MarketContextService(self.settings, self.store).build_context()
 
         advice: list[AdvisorBriefItem] = []
+        advice.extend(_market_context_advice(market_context))
         advice.extend(_pending_proposal_advice(pending))
         advice.extend(_catalyst_advice(catalysts))
         advice.extend(_earnings_advice(earnings_reviews))
@@ -77,6 +82,7 @@ class AdvisorService:
             f"{len(active_theses)} 個 active thesis",
             f"{len(catalysts)} 個 catalyst 記錄",
             f"{len(shadow_reports)} 份 shadow report",
+            f"市場全景：{market_context.coverage_summary.get('with_news', 0)}/{market_context.coverage_summary.get('symbol_count', 0)} 有新聞覆蓋",
         ]
         if behavior_report:
             summary.append(f"最新 behavior report：{behavior_report.total_roundtrips} 個 roundtrip")
@@ -95,6 +101,7 @@ class AdvisorService:
                 "behavior_report_id": behavior_report.id if behavior_report else None,
                 "shadow_report_id": shadow_reports[0].id if shadow_reports else None,
                 "active_thesis_symbols": sorted(active_thesis_symbols),
+                "market_context": market_context.model_dump(mode="json"),
                 "paper_only": self.paper_only,
             },
         )
@@ -131,6 +138,25 @@ def _pending_proposal_advice(pending) -> list[AdvisorBriefItem]:
             if risky
             else []
         ),
+    ]
+
+
+def _market_context_advice(context) -> list[AdvisorBriefItem]:
+    notes = context.risk_notes
+    if not notes:
+        return []
+    has_news = bool(context.coverage_summary.get("with_news", 0))
+    severity = AdvisorSeverity.WATCH if has_news else AdvisorSeverity.ACTION
+    title = "Broad-market context 需要先刷新" if not has_news else "Broad-market context 需要納入審批背景"
+    return [
+        AdvisorBriefItem(
+            severity=severity,
+            category="market",
+            title=title,
+            rationale="; ".join(notes[:2]),
+            next_action="把大盤、波動率、利率、黃金與油價背景當成審批 proposal 前的檢查項，不要把它當成直接交易訊號。",
+            related_ids=[item.symbol for item in context.items if not item.has_quote and not item.news_count][:5],
+        )
     ]
 
 

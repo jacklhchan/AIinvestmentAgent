@@ -13,6 +13,8 @@ def test_dashboard_is_traditional_chinese_with_data_provenance() -> None:
     assert "投資代理控制台" in response.text
     assert "AI Advisor Brief" in response.text
     assert "讓 Agent 自動分析" in response.text
+    assert "市場全景" in response.text
+    assert "刷新市場全景" in response.text
     assert "資料來源與刷新狀態" in response.text
     assert "刷新富途 OpenD" in response.text
     assert "刷新 SEC/IR" in response.text

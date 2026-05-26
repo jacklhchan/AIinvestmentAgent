@@ -19,9 +19,11 @@
 因此目前 dashboard 的第一入口改成 `AI Advisor Brief`：
 
 - Agent 自動讀取 portfolio、pending proposals、research goals、theses、catalysts、earnings reviews、behavior reports、shadow reports 與 shadow events。
+- Agent 亦讀取獨立 Market Context Lens，預設追蹤 SPY/QQQ/IWM/DIA/VIXY/TLT/GLD/USO 作為大盤、成長股、小型股、波動率、利率、黃金與油價背景。
 - Brief 會把結果排序成 `blocked`、`action`、`watch`、`info`，並給出下一步建議。
 - 按 `讓 Agent 自動分析` 時，可以自動建立最新輕量 behavior report，讓交易行為診斷更新到 brief。
 - Hermes 透過 MCP `get_advisor_brief` 讀同一份 brief，讓對話入口可以直接給建議，而不是要求使用者手動選 report / thesis / catalyst ID。
+- Market Context Lens 和 proposal watchlist 分開；market symbols 只影響風險背景與 advisor warning，不自動成為交易 proposal 候選。
 - 這仍然是 research-only workflow：不自動建立 proposal、不自動 approve、不 unlock Futu、不送 live order。
 - 原本的手動表單保留為「控制平面 / 審計工作台」，而不是日常主入口。
 

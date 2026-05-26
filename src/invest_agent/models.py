@@ -333,6 +333,28 @@ class NewsItem(BaseModel):
     summary: str = ""
 
 
+class MarketContextItem(BaseModel):
+    symbol: str
+    role: str
+    label: str
+    has_quote: bool = False
+    last_price: float | None = None
+    quote_source: str | None = None
+    quote_updated_at: datetime | None = None
+    news_count: int = 0
+    latest_news_title: str | None = None
+    latest_news_source: str | None = None
+    latest_news_at: datetime | None = None
+
+
+class MarketContextSnapshot(BaseModel):
+    generated_at: datetime = Field(default_factory=utc_now)
+    symbols: list[str] = Field(default_factory=list)
+    items: list[MarketContextItem] = Field(default_factory=list)
+    coverage_summary: dict[str, Any] = Field(default_factory=dict)
+    risk_notes: list[str] = Field(default_factory=list)
+
+
 class RiskCheck(BaseModel):
     passed: bool
     reasons: list[str] = Field(default_factory=list)

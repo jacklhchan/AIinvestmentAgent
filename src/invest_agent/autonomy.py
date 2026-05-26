@@ -12,6 +12,7 @@ from .catalysts import CatalystCalendarService
 from .config import Settings
 from .futu_adapter import FutuIntegrationError, refresh_futu_readonly
 from .ir_feeds import IrFeedIngestor
+from .market_context import MarketContextService
 from .market_news import MarketNewsIngestor, external_ticker
 from .models import AutomationRunResult, AutomationStepResult, Proposal, ProposalDraft, utc_now
 from .primary_sources import refresh_primary_sources
@@ -137,14 +138,17 @@ class SafeAutonomyRunner:
         if not self.settings.autonomy_refresh_news:
             return {"status": "skipped", "message": "disabled by settings"}
         result = MarketNewsIngestor(self.settings, self.store).refresh_news()
+        market_result = MarketContextService(self.settings, self.store).refresh_news()
+        errors = [*result.errors, *market_result.errors]
         return {
-            "stored_count": result.stored_count,
-            "total_count": result.total_count,
+            "stored_count": result.stored_count + market_result.stored_count,
+            "total_count": result.total_count + market_result.total_count,
             "symbols": result.symbols,
-            "sources": result.sources,
-            "errors": result.errors,
-            "status": "error" if result.errors and result.stored_count == 0 else "ok",
-            "message": "; ".join(result.errors[:3]),
+            "market_context_symbols": market_result.symbols,
+            "sources": _merge_counts(result.sources, market_result.sources),
+            "errors": errors,
+            "status": "error" if errors and result.stored_count + market_result.stored_count == 0 else "ok",
+            "message": "; ".join(errors[:3]),
         }
 
     def _refresh_primary_sources(self) -> dict[str, Any]:
@@ -285,6 +289,14 @@ def _automation_payload(result: AutomationRunResult) -> dict[str, Any]:
     payload["created_count"] = len(result.created_proposals)
     payload["created_proposal_ids"] = [proposal.id for proposal in result.created_proposals]
     return payload
+
+
+def _merge_counts(*sources: dict[str, int]) -> dict[str, int]:
+    merged: dict[str, int] = {}
+    for source in sources:
+        for key, value in source.items():
+            merged[key] = merged.get(key, 0) + value
+    return merged
 
 
 def _decode_audit_payload(event: dict[str, Any]) -> dict[str, Any]:
