@@ -42,62 +42,13 @@ This version is intentionally paper-only. It can create trade proposals, run pol
 - Risk checks for max notional, cash availability, portfolio percentage, confidence floor, duplicate pending proposals, and approval-time price drift.
 - Traditional Chinese browser dashboard for portfolio, pending proposals, create proposal, approve/reject, positions, news digest, source provenance, refresh timestamps, and recent audit events.
 - Futu OpenD read-only refresh for account funds, positions, and position quote snapshots.
-- Hermes stdio MCP server exposing:
-  - `get_portfolio_snapshot`
-  - `get_watchlist_quotes`
-  - `get_watchlist_symbols`
-  - `get_advisor_brief`
+- Hermes daily stdio MCP surface exposing only high-level Advisor tools:
   - `ask_advisor`
   - `run_hourly_advisor_pulse`
   - `run_pre_market_advisor_brief`
   - `run_post_close_advisor_brief`
   - `get_latest_advisor_brief`
-  - `get_market_context`
-  - `get_market_regime`
-  - `refresh_market_context_news`
-  - `get_news_digest`
-  - `refresh_market_news`
-  - `refresh_primary_source_filings`
-  - `refresh_sec_company_facts`
-  - `get_fundamental_snapshot`
-  - `list_research_goals`
-  - `create_research_goal`
-  - `add_research_evidence`
-  - `get_research_goal_snapshot`
-  - `create_thesis`
-  - `list_theses`
-  - `get_thesis_snapshot`
-  - `add_thesis_update_from_research_goal`
-  - `list_catalysts`
-  - `create_catalyst`
-  - `get_catalyst_snapshot`
-  - `complete_catalyst_with_research_goal`
-  - `run_earnings_review`
-  - `list_earnings_reviews`
-  - `get_earnings_review`
-  - `apply_earnings_review_to_thesis`
-  - `list_run_cards`
-  - `get_run_card`
-  - `get_run_card_artifact`
-  - `list_behavior_reports`
-  - `get_behavior_report`
-  - `list_trade_roundtrips`
-  - `list_shadow_strategies`
-  - `get_shadow_strategy`
-  - `list_shadow_reports`
-  - `get_shadow_report`
-  - `list_shadow_events`
-  - `get_safe_autonomy_status`
-  - `run_safe_autonomy_cycle`
-  - `export_event_replay_file`
-  - `replay_event_file`
-  - `draft_trade_proposals_from_watchlist`
-  - `get_futu_connection_status`
-  - `refresh_futu_readonly_snapshot`
-  - `list_pending_proposals`
-  - `create_trade_proposal`
-  - `approve_trade_proposal`
-  - `reject_trade_proposal`
+  - low-level research / proposal / approval tools remain in the local control plane but are hidden from daily Hermes gateway usage.
 - Hermes config snippet at `deploy/hermes/config.snippet.yaml`.
 - launchd example plists at `deploy/launchd/com.local.invest-agent-api.plist` and `deploy/launchd/com.local.invest-agent-scheduler.plist`.
 - Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, non-pending state handling, Futu adapter mapping, dashboard localization, news parsing, watchlist resolution, market context/regime guardrails, SEC/IR parsing, event replay, proposal draft creation, research evidence gates, thesis tracker behavior, catalyst calendar invariants, earnings review/preview behavior, research run card artifacts, trade journal behavior analytics, quote-history-backed shadow diagnostics, hypothesis/portfolio/backtest/data-bridge/daily-brief/sector/options/dividend/idea/committee/skill-validator/data-quality layers, and AI Advisor Brief behavior.
@@ -108,7 +59,7 @@ The dashboard now has an advisor-first entry point so daily use no longer requir
 
 - `GET /api/advisor/brief` returns a no-side-effect research brief.
 - `POST /api/advisor/brief` can run light analysis, currently by creating the latest behavior report when trade fills exist.
-- Hermes MCP exposes `get_advisor_brief` so the conversational agent can answer from the same advisor-first summary instead of asking the user to select internal IDs.
+- The legacy `get_advisor_brief` research summary remains local-control-plane functionality; daily Hermes mode now uses `ask_advisor` / full Advisor briefs instead of exposing this lower-level tool directly.
 - The brief ranks advice as `blocked`, `action`, `watch`, or `info`.
 - Inputs include broad-market context, pending proposals, catalyst windows, completed catalysts missing review, earnings review thesis deltas, behavior diagnostics, latest shadow events, thesis coverage, and insufficient research goals.
 - The workflow is research-only. It does not create trade proposals, approve proposals, unlock Futu OpenD, or place live broker orders.
@@ -118,6 +69,7 @@ The dashboard now has an advisor-first entry point so daily use no longer requir
 Hermes now has a higher-level Advisor Mode over the existing research control plane.
 
 - `POST /api/advisor/ask` returns a concise decision card with conclusion, `action/watch/blocked/info`, confidence, top reasons, top risks, suggested user action, and linked artifacts.
+- `ask_advisor` stores `original_symbol`, `resolved_symbol`, and `symbol_resolution_status` so audit history can distinguish resolved tickers from unknown tokens, private-company / IPO questions, portfolio-scope questions, and no-symbol questions.
 - `POST /api/advisor/pulse/hourly` runs local urgent checks for market regime, catalysts, big quote moves, portfolio risk, and data quality. It stores silent/info/watch/urgent pulses and only marks `should_notify=true` for watch outside SGT quiet hours or urgent at any time.
 - `POST /api/advisor/briefs/pre-market` and `/post-close` create persisted full advisor briefs with run cards, market-session schedule context, and recommendations grouped by `ACTION / WATCH / BLOCKED / INFO`.
 - `GET /api/advisor/briefs/latest` and `GET /api/advisor/recommendations` expose the stored Advisor Mode state to dashboard/Hermes.
@@ -160,7 +112,7 @@ The global Hermes config at `/Users/apple/.hermes/config.yaml` has been updated 
 
 `hermes auth status openai-codex` shows logged in.
 
-`/Users/apple/.hermes/hermes-agent/venv/bin/hermes mcp list` should now show `invest_agent` with 85 local MCP tools after adding the next-phase research cockpit tools. Re-run the Hermes list command after syncing config to verify the live selection.
+`/Users/apple/.hermes/hermes-agent/venv/bin/hermes mcp list` for the daily gateway should show `invest_agent` with the 5 high-level Advisor tools only. Low-level research/admin tools remain local control-plane capabilities and should not be exposed to daily Telegram mode.
 
 ## Futu Setup
 

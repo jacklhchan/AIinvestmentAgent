@@ -17,6 +17,7 @@ from invest_agent.models import (
     Quote,
     RunCardActor,
     RunCardType,
+    SymbolResolutionStatus,
     TradeJournalImportRequest,
     TradeJournalSource,
 )
@@ -102,6 +103,112 @@ def test_ask_advisor_returns_concise_card_without_proposal_side_effect(tmp_path)
     assert len(store.list_advisor_questions(limit=10)) == 1
     assert store.list_advisor_recommendations(limit=10)
     assert len(store.list_proposals(limit=100)) == proposal_count
+
+
+def test_ask_advisor_ignores_bad_symbol_for_portfolio_strategy(tmp_path) -> None:
+    store = make_store(tmp_path)
+    proposal_count = len(store.list_proposals(limit=100))
+
+    answer = AdvisorOrchestrator(store, settings=Settings(db_path=tmp_path / "test.db")).answer_user_question(
+        AdvisorQuestionRequest(
+            question="What is the recommended strategy for tonight for my current portfolio?",
+            symbol="WHAT",
+        )
+    )
+    question = store.list_advisor_questions(limit=1)[0]
+
+    assert question.symbol is None
+    assert question.original_symbol == "WHAT"
+    assert question.resolved_symbol is None
+    assert question.symbol_resolution_status == SymbolResolutionStatus.PORTFOLIO_SCOPE
+    assert answer.symbol_resolution_status == SymbolResolutionStatus.PORTFOLIO_SCOPE
+    assert answer.recommendation_type in {AdvisorSeverity.WATCH, AdvisorSeverity.ACTION, AdvisorSeverity.BLOCKED}
+    assert "WHAT" not in answer.conclusion
+    assert "Portfolio" in answer.conclusion
+    assert len(answer.reasons) <= 3
+    assert len(answer.risks) <= 3
+    assert len(store.list_proposals(limit=100)) == proposal_count
+
+
+def test_ask_advisor_blocks_private_ipo_instead_of_treating_ipo_as_symbol(tmp_path) -> None:
+    store = make_store(tmp_path)
+    proposal_count = len(store.list_proposals(limit=100))
+
+    answer = AdvisorOrchestrator(store, settings=Settings(db_path=tmp_path / "test.db")).answer_user_question(
+        AdvisorQuestionRequest(
+            question="what about the spacex ipo, should i invest? and for how much?",
+            symbol="IPO",
+        )
+    )
+    question = store.list_advisor_questions(limit=1)[0]
+
+    assert question.symbol is None
+    assert question.original_symbol == "IPO"
+    assert question.resolved_symbol is None
+    assert question.symbol_resolution_status == SymbolResolutionStatus.PRIVATE_COMPANY
+    assert answer.symbol_resolution_status == SymbolResolutionStatus.PRIVATE_COMPANY
+    assert answer.recommendation_type == AdvisorSeverity.BLOCKED
+    assert "SpaceX IPO" in answer.conclusion
+    assert "proposal" in answer.summary.lower()
+    assert len(answer.reasons) <= 3
+    assert len(answer.risks) <= 3
+    assert len(store.list_proposals(limit=100)) == proposal_count
+
+
+def test_ask_advisor_common_uppercase_words_are_not_symbols(tmp_path) -> None:
+    store = make_store(tmp_path)
+    orchestrator = AdvisorOrchestrator(store, settings=Settings(db_path=tmp_path / "test.db"))
+
+    for token in ["AI", "US"]:
+        answer = orchestrator.answer_user_question(
+            AdvisorQuestionRequest(question=f"Should I use {token} as part of my strategy?", symbol=token)
+        )
+
+        assert answer.resolved_symbol is None
+        assert answer.symbol_resolution_status in {
+            SymbolResolutionStatus.NO_SYMBOL,
+            SymbolResolutionStatus.PORTFOLIO_SCOPE,
+        }
+        assert all(item.get("id") != token for item in answer.linked_artifacts_json)
+
+
+def test_ask_advisor_unknown_symbol_blocks_without_proposal(tmp_path) -> None:
+    store = make_store(tmp_path)
+    proposal_count = len(store.list_proposals(limit=100))
+
+    answer = AdvisorOrchestrator(store, settings=Settings(db_path=tmp_path / "test.db")).answer_user_question(
+        AdvisorQuestionRequest(question="Should I buy ZZZZZ now?", symbol="ZZZZZ")
+    )
+    question = store.list_advisor_questions(limit=1)[0]
+
+    assert question.original_symbol == "ZZZZZ"
+    assert question.resolved_symbol is None
+    assert question.symbol_resolution_status == SymbolResolutionStatus.UNKNOWN
+    assert question.symbol is None
+    assert answer.recommendation_type == AdvisorSeverity.BLOCKED
+    assert "ZZZZZ" in answer.conclusion
+    assert len(store.list_proposals(limit=100)) == proposal_count
+
+
+def test_advisor_answer_default_text_hides_internal_artifact_ids(tmp_path) -> None:
+    store = make_store(tmp_path)
+
+    answer = AdvisorOrchestrator(store, settings=Settings(db_path=tmp_path / "test.db")).answer_user_question(
+        AdvisorQuestionRequest(question="Hermes，我而家應唔應該買 AAPL？", symbol="AAPL")
+    )
+    visible_text = "\n".join(
+        [
+            answer.conclusion,
+            answer.summary,
+            answer.suggested_user_action,
+            *answer.reasons,
+            *answer.risks,
+        ]
+    )
+
+    assert not any(prefix in visible_text for prefix in ["run_", "goal_", "thesis_", "evidence_", "committee_"])
+    assert answer.details_available is True
+    assert answer.linked_artifacts_json
 
 
 def test_hourly_pulse_respects_quiet_hours_except_urgent(tmp_path) -> None:

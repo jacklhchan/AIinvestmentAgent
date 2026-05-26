@@ -9,7 +9,7 @@
 - Market Context Lens：獨立追蹤 SPY/QQQ/IWM/DIA/VIXY/TLT/GLD/USO 等 broad-market symbols，只作市場背景與風險提醒，不直接產生 proposal
 - SQLite 狀態儲存：proposal、approval、paper executions、portfolio、quotes、news、fundamentals、research goals、evidence rows、theses、thesis updates、catalysts、catalyst reviews、earnings reviews、research run cards、trade journal、behavior reports、shadow account、audit events
 - 風控/審批狀態機：TTL、重複單、notional、confidence、price drift revalidation
-- Hermes stdio MCP server：讓 Hermes 讀 portfolio/news/proposals 並建立/批准/拒絕 proposal
+- Hermes daily MCP surface：日常 Telegram 只暴露 5 個 high-level Advisor tools；底層 portfolio/news/proposal context 由 Advisor Orchestrator 背後讀取
 - Futu OpenD read-only refresh：讀取資金、持倉與持倉 quote snapshot，不 unlock trade
 - Market/news ingestion：從 watchlist 抓取 GDELT，並在有 `FINNHUB_API_KEY` 時補 Finnhub company news
 - SEC/IR primary-source ingestion：SEC EDGAR filings 預設可用；公司 IR RSS 可透過 `.env` 設定
@@ -86,7 +86,9 @@ python -m invest_agent.cli advisor-scheduler-once
 python -m invest_agent.cli advisor-scheduler-loop
 ```
 
-Hermes MCP 新增 high-level tools：`ask_advisor`、`run_hourly_advisor_pulse`、`run_pre_market_advisor_brief`、`run_post_close_advisor_brief`、`get_latest_advisor_brief`。
+Hermes daily MCP 只暴露 high-level tools：`ask_advisor`、`run_hourly_advisor_pulse`、`run_pre_market_advisor_brief`、`run_post_close_advisor_brief`、`get_latest_advisor_brief`。Advisor Orchestrator 會在本機背後讀取 portfolio、news、market regime、proposal context 與 research artifacts；Hermes 日常不直接看到底層 tools。
+
+`ask_advisor` 會保存 symbol resolution audit trail：`original_symbol`、`resolved_symbol` 與 `symbol_resolution_status`。`WHAT` / `IPO` / `AI` / `US` 這類 common uppercase token 不會被當成 ticker；SpaceX IPO / 未上市問題會回 research-only `blocked` decision card，不會進 proposal pipeline。
 
 安全邊界不變：Advisor output 只會寫 advisor question / pulse / brief / recommendation / run card，不會建立 `PENDING` proposal、不會 approve、不會 unlock Futu，也不會送 live order。若你仍想買賣，仍要走 `InvestmentService`、evidence gate、thesis/catalyst invariants、policy engine 與人工確認。
 
@@ -532,91 +534,11 @@ mcp_servers:
     supports_parallel_tool_calls: false
     tools:
       include:
-        - get_portfolio_snapshot
-        - get_watchlist_quotes
-        - get_watchlist_symbols
-        - get_advisor_brief
-        - get_market_context
-        - get_market_regime
-        - refresh_market_context_news
-        - get_news_digest
-        - refresh_market_news
-        - refresh_primary_source_filings
-        - refresh_sec_company_facts
-        - get_fundamental_snapshot
-        - list_research_goals
-        - create_research_goal
-        - add_research_evidence
-        - get_research_goal_snapshot
-        - list_hypotheses
-        - get_hypothesis
-        - create_hypothesis_draft
-        - link_run_card_to_hypothesis
-        - invalidate_hypothesis
-        - get_portfolio_risk_snapshot
-        - list_rebalance_reviews
-        - get_rebalance_review
-        - create_thesis
-        - list_theses
-        - get_thesis_snapshot
-        - add_thesis_update_from_research_goal
-        - list_catalysts
-        - create_catalyst
-        - get_catalyst_snapshot
-        - complete_catalyst_with_research_goal
-        - run_earnings_preview
-        - list_earnings_previews
-        - get_earnings_preview
-        - run_earnings_review
-        - list_earnings_reviews
-        - get_earnings_review
-        - apply_earnings_review_to_thesis
-        - list_run_cards
-        - get_run_card
-        - get_run_card_artifact
-        - list_quote_history
-        - get_quote_history_summary
-        - list_backtest_imports
-        - get_backtest_import
-        - list_data_imports
-        - get_data_import_summary
-        - get_latest_daily_brief
-        - list_daily_briefs
-        - list_peer_groups
-        - get_correlation_snapshot
-        - get_sector_snapshot
-        - list_options_snapshots
-        - get_options_snapshot
-        - run_dividend_review
-        - list_dividend_reviews
-        - get_dividend_review
-        - list_idea_candidates
-        - get_idea_candidate
-        - create_idea_candidate_draft
-        - run_committee_review
-        - list_committee_reviews
-        - get_committee_review
-        - list_data_quality_reports
-        - get_data_quality_report
-        - list_behavior_reports
-        - get_behavior_report
-        - list_trade_roundtrips
-        - list_shadow_strategies
-        - get_shadow_strategy
-        - list_shadow_reports
-        - get_shadow_report
-        - list_shadow_events
-        - get_safe_autonomy_status
-        - run_safe_autonomy_cycle
-        - export_event_replay_file
-        - replay_event_file
-        - draft_trade_proposals_from_watchlist
-        - get_futu_connection_status
-        - refresh_futu_readonly_snapshot
-        - list_pending_proposals
-        - create_trade_proposal
-        - approve_trade_proposal
-        - reject_trade_proposal
+        - ask_advisor
+        - run_hourly_advisor_pulse
+        - run_pre_market_advisor_brief
+        - run_post_close_advisor_brief
+        - get_latest_advisor_brief
       resources: false
       prompts: false
 ```
@@ -626,20 +548,16 @@ mcp_servers:
 在 Hermes 裡可以問：
 
 ```text
-請用 invest_agent 工具列出 pending proposals，並解釋每個提案的風險檢查。
-請刷新 AAPL 的 SEC companyfacts，然後說明收入、淨收入和 operating cash flow 是否支持最新 draft。
-請列出 AAPL 的 active thesis，並說明最近 research goal 對 thesis 是 strengthen 還是 weaken。
-請列出未來 14 天 high-impact catalysts，並指出哪些 symbol 不應該建立新 proposal。
-請用本機 SEC companyfacts 對 AAPL 跑 earnings review，說明 thesis_delta 與 evidence_hash，但不要建立或批准 proposal。
-請列出最近的 run cards，並讀取最新 earnings review run card 的 markdown artifact。
-請列出最近的 behavior reports，指出是否有追高、過度交易或處分效應，但不要建立 proposal。
-請列出最新 shadow reports，說明是否有 thesis mismatch 或 ignored catalyst，但不要建立 proposal。
-請查看 safe autonomy 狀態，如有需要執行一次自治循環，但不要批准任何 proposal。
+Hermes，我而家應唔應該買 AAPL？
+Hermes，今晚 portfolio strategy 應該保守啲嗎？
+Hermes，跑一次 hourly pulse，有 urgent 先提醒我。
+Hermes，幫我出 pre-market advisor brief。
+Hermes，SpaceX IPO 應唔應該投資？
 ```
 
 ## 安全邊界
 
-第一版只做紙上交易紀錄。即使透過 Hermes 呼叫 `approve_trade_proposal`，也只會建立本機 `paper_execution`，不會 unlock Futu OpenD 或下實盤單。實盤接通前應先補上：
+第一版只做紙上交易紀錄。Daily Hermes mode 不暴露 proposal approval / execution tools；即使本機控制平面有 paper approval path，也不會 unlock Futu OpenD 或下實盤單。實盤接通前應先補上：
 
 - macOS Keychain secret loading
 - Futu 雙 OpenD 實例

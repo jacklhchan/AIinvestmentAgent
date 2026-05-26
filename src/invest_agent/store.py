@@ -505,6 +505,9 @@ class Store:
                     id TEXT PRIMARY KEY,
                     user_question TEXT NOT NULL,
                     symbol TEXT,
+                    original_symbol TEXT,
+                    resolved_symbol TEXT,
+                    symbol_resolution_status TEXT,
                     answer_summary TEXT NOT NULL,
                     recommendation_type TEXT NOT NULL,
                     created_at TEXT NOT NULL,
@@ -539,6 +542,9 @@ class Store:
                 """
             )
             self._ensure_column(conn, "shadow_rules", "created_at", "TEXT")
+            self._ensure_column(conn, "advisor_questions", "original_symbol", "TEXT")
+            self._ensure_column(conn, "advisor_questions", "resolved_symbol", "TEXT")
+            self._ensure_column(conn, "advisor_questions", "symbol_resolution_status", "TEXT")
 
     @staticmethod
     def _dump(model: Any) -> str:
@@ -1353,11 +1359,24 @@ class Store:
     def create_advisor_question(self, item: AdvisorQuestion) -> AdvisorQuestion:
         self._insert_payload(
             "advisor_questions",
-            ["id", "user_question", "symbol", "answer_summary", "recommendation_type", "created_at"],
+            [
+                "id",
+                "user_question",
+                "symbol",
+                "original_symbol",
+                "resolved_symbol",
+                "symbol_resolution_status",
+                "answer_summary",
+                "recommendation_type",
+                "created_at",
+            ],
             [
                 item.id,
                 item.user_question,
                 item.symbol,
+                item.original_symbol,
+                item.resolved_symbol,
+                item.symbol_resolution_status.value,
                 item.answer_summary,
                 item.recommendation_type.value,
                 item.created_at.isoformat(),
@@ -1368,6 +1387,9 @@ class Store:
             entity_id=item.id,
             audit_payload={
                 "symbol": item.symbol,
+                "original_symbol": item.original_symbol,
+                "resolved_symbol": item.resolved_symbol,
+                "symbol_resolution_status": item.symbol_resolution_status.value,
                 "recommendation_type": item.recommendation_type.value,
                 "run_card_id": item.run_card_id,
             },

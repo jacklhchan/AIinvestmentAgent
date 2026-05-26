@@ -31,6 +31,7 @@ from .models import (
     RunCardActor,
     RunCardTriggerSource,
     RunCardType,
+    SymbolResolutionStatus,
     ThesisStatus,
     new_id,
     utc_now,
@@ -42,6 +43,65 @@ from .store import Store
 ADVISOR_RULE_VERSION = "hermes_advisor_mode_v1"
 NY_TZ = ZoneInfo("America/New_York")
 SGT_TZ = ZoneInfo("Asia/Singapore")
+SYMBOL_STOP_WORDS = {
+    "A",
+    "AI",
+    "AN",
+    "AND",
+    "ASK",
+    "BUY",
+    "DO",
+    "ETF",
+    "FOR",
+    "HOLD",
+    "HOW",
+    "I",
+    "INFO",
+    "IPO",
+    "IR",
+    "ME",
+    "MORE",
+    "MY",
+    "NEED",
+    "NO",
+    "NOW",
+    "OR",
+    "SEC",
+    "SELL",
+    "SGT",
+    "THE",
+    "TO",
+    "USD",
+    "US",
+    "WATCH",
+    "WHAT",
+    "WHEN",
+    "WHERE",
+    "WHY",
+    "YES",
+}
+PORTFOLIO_STRATEGY_TERMS = [
+    "allocation",
+    "portfolio",
+    "strategy",
+    "tonight",
+    "risk budget",
+    "配置",
+    "組合",
+    "策略",
+    "今晚",
+    "今日策略",
+]
+PRIVATE_OFFERING_TERMS = [
+    "ipo",
+    "pre-ipo",
+    "private",
+    "spacex",
+    "未上市",
+    "上市前",
+    "私募",
+    "配售",
+]
 
 
 @dataclass(frozen=True)
@@ -68,6 +128,13 @@ class AdvisorScheduleContext:
         }
 
 
+@dataclass(frozen=True)
+class SymbolResolution:
+    original_symbol: str | None
+    resolved_symbol: str | None
+    status: SymbolResolutionStatus
+
+
 class AdvisorOrchestrator:
     def __init__(self, store: Store, *, settings: Settings | None = None, paper_only: bool | None = None):
         self.store = store
@@ -80,7 +147,18 @@ class AdvisorOrchestrator:
         *,
         actor: RunCardActor | str = RunCardActor.API,
     ) -> AdvisorAnswer:
-        symbol = request.symbol or self._extract_symbol(request.question)
+        intent = _question_intent(request.question)
+        resolution = self._resolve_question_symbol(request.question, request.symbol, intent=intent)
+        symbol = resolution.resolved_symbol
+        inputs = request.model_dump(mode="json")
+        inputs.update(
+            {
+                "original_symbol": resolution.original_symbol,
+                "resolved_symbol": resolution.resolved_symbol,
+                "symbol_resolution_status": resolution.status.value,
+                "question_intent": intent,
+            }
+        )
         question_id = new_id("advq")
         run_card = RunCardService(self.store).start_run(
             RunCardType.ADVISOR_QUESTION,
@@ -89,7 +167,7 @@ class AdvisorOrchestrator:
             actor=actor,
             trigger_source=RunCardTriggerSource.MANUAL,
             rule_version=ADVISOR_RULE_VERSION,
-            inputs=request.model_dump(mode="json"),
+            inputs=inputs,
             assumptions={
                 "advisor_output_is_research_only": True,
                 "cannot_create_pending_proposals": True,
@@ -99,11 +177,14 @@ class AdvisorOrchestrator:
         brief = AdvisorService(self.store, settings=self.settings, paper_only=self.paper_only).build_brief(
             AdvisorBriefRequest(max_items=12)
         )
-        decision = self._build_answer(question_id, request.question, symbol, brief, run_card.id)
+        decision = self._build_answer(question_id, request.question, resolution, brief, run_card.id)
         question = AdvisorQuestion(
             id=question_id,
             user_question=request.question,
             symbol=symbol,
+            original_symbol=resolution.original_symbol,
+            resolved_symbol=resolution.resolved_symbol,
+            symbol_resolution_status=resolution.status,
             answer_summary=decision.summary,
             recommendation_type=decision.recommendation_type,
             confidence=decision.confidence,
@@ -275,16 +356,18 @@ class AdvisorOrchestrator:
         self,
         question_id: str,
         question: str,
-        symbol: str | None,
+        resolution: SymbolResolution,
         brief,
         run_card_id: str,
     ) -> AdvisorAnswer:
+        symbol = resolution.resolved_symbol
         intent = _question_intent(question)
         regime = brief.data_status.get("market_regime", {})
         proposal_bias = regime.get("proposal_bias", ProposalBias.CAUTION.value)
         risk_appetite = regime.get("risk_appetite", RiskAppetite.NEUTRAL.value)
-        relevant_items = self._relevant_brief_items(symbol, brief.advice)
-        top_item = max(relevant_items or brief.advice, key=_advisor_item_rank, default=None)
+        relevant_items = [] if not symbol and intent != "portfolio" else self._relevant_brief_items(symbol, brief.advice)
+        top_candidates = relevant_items or (brief.advice if symbol or intent == "portfolio" else [])
+        top_item = max(top_candidates, key=_advisor_item_rank, default=None)
         quote = self.store.get_quote(symbol) if symbol else None
         position = self._position(symbol)
         active_theses = self.store.list_theses(status=ThesisStatus.ACTIVE, symbol=symbol, limit=5) if symbol else []
@@ -293,13 +376,70 @@ class AdvisorOrchestrator:
             item.status == CatalystStatus.UPCOMING and item.expected_impact == CatalystExpectedImpact.HIGH
             for item in catalysts
         )
-        completed_without_review = any(item.status == CatalystStatus.COMPLETED and not item.linked_research_goal_id for item in catalysts)
-        hard_block = bool(top_item and top_item.severity == AdvisorSeverity.BLOCKED) or high_catalyst_block or completed_without_review
-        caution = proposal_bias in {ProposalBias.CAUTION.value, ProposalBias.DEFENSIVE_ONLY.value} or risk_appetite == RiskAppetite.RISK_OFF.value
+        completed_without_review = any(
+            item.status == CatalystStatus.COMPLETED and not item.linked_research_goal_id for item in catalysts
+        )
+        hard_block = (
+            bool(top_item and top_item.severity == AdvisorSeverity.BLOCKED)
+            or high_catalyst_block
+            or completed_without_review
+        )
+        caution = (
+            proposal_bias in {ProposalBias.CAUTION.value, ProposalBias.DEFENSIVE_ONLY.value}
+            or risk_appetite == RiskAppetite.RISK_OFF.value
+        )
         lacks_thesis = bool(symbol and position and not active_theses)
         artifacts = _linked_artifacts(symbol, relevant_items, run_card_id, quote, active_theses, catalysts)
 
-        if not symbol:
+        extra_reasons: list[str] = []
+        extra_risks: list[str] = []
+
+        if not symbol and resolution.status == SymbolResolutionStatus.PRIVATE_COMPANY:
+            recommendation = AdvisorSeverity.BLOCKED
+            subject = _private_subject(question)
+            conclusion = f"{subject}：未有公開可交易資料前，不建議投資。"
+            summary = "這類 IPO / 未上市機會不應由 Hermes 直接給入場金額或建立買入 proposal。"
+            action = "先做研究任務；等 S-1 / prospectus、定價、估值、lock-up、流動性與可交易渠道清楚後再評估。"
+            confidence = AdvisorConfidence.MEDIUM
+            extra_reasons = [
+                "目前沒有本機可驗證 ticker / primary-source package 支持直接行動。",
+                "未上市或 IPO 配售不屬於現有 paper-only proposal 的直接交易範圍。",
+            ]
+            extra_risks = [
+                "估值、配售條款、lock-up、流動性與資訊不對稱風險可能很高。",
+            ]
+        elif not symbol and resolution.status == SymbolResolutionStatus.PORTFOLIO_SCOPE:
+            if top_item and top_item.severity in {AdvisorSeverity.ACTION, AdvisorSeverity.BLOCKED}:
+                recommendation = top_item.severity
+            else:
+                recommendation = AdvisorSeverity.WATCH
+            if recommendation == AdvisorSeverity.ACTION:
+                conclusion = "Portfolio：有 item 需要你處理，但不要追高。"
+            elif recommendation == AdvisorSeverity.BLOCKED:
+                conclusion = "Portfolio：有風險阻擋，暫停新增風險。"
+            else:
+                conclusion = "Portfolio：今晚偏保守，先 Hold / Watch。"
+            summary = "這是 portfolio strategy 問題；Advisor 會用 regime、持倉風險與最新 brief 給你前台建議。"
+            action = (
+                top_item.next_action
+                if top_item and recommendation == AdvisorSeverity.ACTION
+                else "暫時不要追高或主動加大風險；若你仍想買賣，先建立手動 proposal 並走 evidence / policy / human confirmation。"
+            )
+            confidence = AdvisorConfidence.MEDIUM
+            extra_reasons = ["問題屬於 portfolio-level strategy，不應被抽成單一假 ticker。"]
+        elif not symbol and resolution.status == SymbolResolutionStatus.UNKNOWN:
+            subject = resolution.original_symbol or "未知代號"
+            recommendation = AdvisorSeverity.BLOCKED
+            conclusion = f"{subject}：未在本機 universe 內，先不要買賣。"
+            summary = "Advisor 找不到 holdings / watchlist / quote / thesis / catalyst context，不能把它當成可行交易建議。"
+            action = "先加入觀察或建立研究任務；等 evidence、可交易市場與 policy gate 清楚後再評估。"
+            confidence = AdvisorConfidence.LOW
+            extra_reasons = [
+                f"{subject} 未通過本機 known universe / holdings / watchlist / quote cache 解析。",
+                "未知 symbol 不應直接進入 proposal pipeline。",
+            ]
+            extra_risks = ["如果這其實是有效 ticker，仍需要先補齊資料來源與交易範圍。"]
+        elif not symbol:
             recommendation = AdvisorSeverity.WATCH
             conclusion = "需要更多資料：請指定股票代號。"
             summary = "我可以先看 portfolio / regime，但要回答買賣問題需要明確 symbol。"
@@ -350,12 +490,17 @@ class AdvisorOrchestrator:
             action = top_item.next_action if top_item else "保持觀察；需要交易時仍要走 proposal gate。"
             confidence = AdvisorConfidence.MEDIUM if top_item else AdvisorConfidence.LOW
 
-        reasons = _top_reasons(symbol, relevant_items, quote, active_theses, regime, recommendation)
-        risks = _top_risks(intent, recommendation, caution)
+        reasons = _clean_list(
+            [*extra_reasons, *_top_reasons(symbol, relevant_items, quote, active_theses, regime, recommendation)]
+        )
+        risks = _clean_list([*extra_risks, *_top_risks(intent, recommendation, caution)])
         return AdvisorAnswer(
             question_id=question_id,
             recommendation=recommendation,
             recommendation_type=recommendation,
+            original_symbol=resolution.original_symbol,
+            resolved_symbol=resolution.resolved_symbol,
+            symbol_resolution_status=resolution.status,
             conclusion=conclusion,
             summary=summary,
             confidence=confidence,
@@ -494,14 +639,61 @@ class AdvisorOrchestrator:
             )
         return recommendations[:12]
 
+    def _resolve_question_symbol(
+        self,
+        question: str,
+        requested_symbol: str | None = None,
+        *,
+        intent: str | None = None,
+    ) -> SymbolResolution:
+        intent = intent or _question_intent(question)
+        requested = _normalize_symbol_candidate(requested_symbol)
+        if intent == "private":
+            return SymbolResolution(
+                original_symbol=requested or _private_original_symbol(question),
+                resolved_symbol=None,
+                status=SymbolResolutionStatus.PRIVATE_COMPANY,
+            )
+
+        candidates = self._symbol_candidates()
+        if requested:
+            resolved = _resolve_symbol_candidate(requested, candidates)
+            if resolved:
+                return SymbolResolution(requested, resolved, SymbolResolutionStatus.RESOLVED)
+            if _is_plausible_unknown_symbol(requested):
+                return SymbolResolution(requested, None, SymbolResolutionStatus.UNKNOWN)
+
+        for token in _uppercase_symbol_tokens(question):
+            resolved = _resolve_symbol_candidate(token, candidates)
+            if resolved:
+                return SymbolResolution(token, resolved, SymbolResolutionStatus.RESOLVED)
+        for token in _uppercase_symbol_tokens(question):
+            if _is_plausible_unknown_symbol(token):
+                return SymbolResolution(token, None, SymbolResolutionStatus.UNKNOWN)
+        if intent == "portfolio":
+            return SymbolResolution(requested, None, SymbolResolutionStatus.PORTFOLIO_SCOPE)
+        return SymbolResolution(requested, None, SymbolResolutionStatus.NO_SYMBOL)
+
     def _extract_symbol(self, question: str) -> str | None:
-        candidates = {external_ticker(symbol): symbol for symbol in resolve_watchlist_symbols(self.settings, self.store)}
-        candidates.update({external_ticker(position.symbol): position.symbol for position in self.store.get_portfolio().positions})
-        for token in re.findall(r"\b[A-Z]{1,5}\b", question.upper()):
-            if token in candidates:
-                return candidates[token]
-        match = re.search(r"\b[A-Z]{1,5}\b", question.upper())
-        return match.group(0) if match else None
+        return self._resolve_question_symbol(question).resolved_symbol
+
+    def _symbol_candidates(self) -> dict[str, str]:
+        symbols: list[str] = []
+        symbols.extend(resolve_watchlist_symbols(self.settings, self.store))
+        symbols.extend(position.symbol for position in self.store.get_portfolio().positions)
+        symbols.extend(quote.symbol for quote in self.store.list_quotes())
+        symbols.extend(snapshot.symbol for snapshot in self.store.list_fundamentals())
+        symbols.extend(thesis.symbol for thesis in self.store.list_theses(limit=200) if thesis.symbol)
+        symbols.extend(catalyst.symbol for catalyst in self.store.list_catalysts(limit=200) if catalyst.symbol)
+
+        candidates: dict[str, str] = {}
+        for raw in symbols:
+            symbol = _normalize_symbol_candidate(raw)
+            if not symbol:
+                continue
+            candidates[symbol] = symbol
+            candidates[external_ticker(symbol)] = symbol
+        return candidates
 
     def _position(self, symbol: str | None):
         if not symbol:
@@ -707,11 +899,58 @@ def _recommendation_from_brief_item(
 
 def _question_intent(question: str) -> str:
     text = question.lower()
-    if any(token in text for token in ["buy", "買", "加倉", "追買", "入"]):
+    if any(token in text for token in PRIVATE_OFFERING_TERMS):
+        return "private"
+    if any(token in text for token in ["buy", "invest", "買", "加倉", "追買", "入", "投資"]):
         return "buy"
     if any(token in text for token in ["sell", "賣", "減倉", "trim", "exit", "沽"]):
         return "sell"
+    if any(token in text for token in PORTFOLIO_STRATEGY_TERMS):
+        return "portfolio"
     return "review"
+
+
+def _normalize_symbol_candidate(symbol: str | None) -> str | None:
+    if not symbol:
+        return None
+    value = symbol.strip().upper()
+    return value or None
+
+
+def _resolve_symbol_candidate(symbol: str, candidates: dict[str, str]) -> str | None:
+    ticker = external_ticker(symbol)
+    return candidates.get(symbol) or candidates.get(ticker)
+
+
+def _uppercase_symbol_tokens(question: str) -> list[str]:
+    return re.findall(r"\b[A-Z][A-Z0-9.]{0,5}\b", question)
+
+
+def _is_plausible_unknown_symbol(symbol: str) -> bool:
+    ticker = external_ticker(symbol)
+    if ticker in SYMBOL_STOP_WORDS or symbol in SYMBOL_STOP_WORDS:
+        return False
+    if not re.fullmatch(r"[A-Z][A-Z0-9.]{0,5}", symbol):
+        return False
+    return any(char.isalpha() for char in symbol)
+
+
+def _private_subject(question: str) -> str:
+    lowered = question.lower()
+    if "spacex" in lowered:
+        return "SpaceX IPO"
+    if "ipo" in lowered:
+        return "IPO / 未上市機會"
+    return "未上市 / 私募機會"
+
+
+def _private_original_symbol(question: str) -> str | None:
+    lowered = question.lower()
+    if "spacex" in lowered:
+        return "SPACEX"
+    if "ipo" in lowered:
+        return "IPO"
+    return None
 
 
 def _top_reasons(
@@ -740,6 +979,10 @@ def _top_reasons(
 
 def _top_risks(intent: str, recommendation: AdvisorSeverity, caution: bool) -> list[str]:
     risks: list[str] = []
+    if intent == "private":
+        risks.append("未上市 / IPO 機會可能有高估值、低流動性與條款不透明風險。")
+    if intent == "portfolio":
+        risks.append("Portfolio-level 建議可能未覆蓋每一隻股票的最新單一催化事件。")
     if intent == "buy" and recommendation in {AdvisorSeverity.WATCH, AdvisorSeverity.BLOCKED}:
         risks.append("如果市場重新 risk-on，可能錯過短線上升。")
     if intent == "buy" and recommendation == AdvisorSeverity.ACTION:

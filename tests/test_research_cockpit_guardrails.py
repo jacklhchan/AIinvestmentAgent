@@ -77,6 +77,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MCP_SERVER_PATH = REPO_ROOT / "src" / "invest_agent" / "mcp_server.py"
 PERMISSIONS_DOC = REPO_ROOT / "docs" / "permissions.md"
 HERMES_CONFIG = REPO_ROOT / "deploy" / "hermes" / "config.snippet.yaml"
+HERMES_DAILY_ADVISOR_TOOLS = {
+    "ask_advisor",
+    "run_hourly_advisor_pulse",
+    "run_pre_market_advisor_brief",
+    "run_post_close_advisor_brief",
+    "get_latest_advisor_brief",
+}
 
 
 def make_stack(tmp_path: Path) -> tuple[Settings, Store]:
@@ -164,12 +171,16 @@ def hermes_included_tools() -> set[str]:
 
 def test_mcp_permission_matrix_covers_code_docs_and_hermes_config() -> None:
     decorated_tools = decorated_mcp_tool_names()
+    hermes_tools = hermes_included_tools()
 
     assert set(MCP_TOOL_PERMISSIONS) == decorated_tools
     assert docs_permission_rows() == MCP_TOOL_PERMISSIONS
-    assert hermes_included_tools() == decorated_tools
+    assert hermes_tools <= decorated_tools
+    assert hermes_tools == HERMES_DAILY_ADVISOR_TOOLS
+    assert "approve_trade_proposal" not in hermes_tools
+    assert "create_trade_proposal" not in hermes_tools
     assert not (decorated_tools & FORBIDDEN_LIVE_EXECUTION_TOOL_NAMES)
-    assert not (hermes_included_tools() & FORBIDDEN_LIVE_EXECUTION_TOOL_NAMES)
+    assert not (hermes_tools & FORBIDDEN_LIVE_EXECUTION_TOOL_NAMES)
     assert all(MCP_TOOL_PERMISSIONS[tool] in {"read_only", "research_write"} for tool in NEXT_PHASE_MCP_TOOLS)
 
 

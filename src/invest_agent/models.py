@@ -332,6 +332,14 @@ class AdvisorSourceType(StrEnum):
     BRIEF = "brief"
 
 
+class SymbolResolutionStatus(StrEnum):
+    RESOLVED = "resolved"
+    UNKNOWN = "unknown"
+    PRIVATE_COMPANY = "private_company"
+    PORTFOLIO_SCOPE = "portfolio_scope"
+    NO_SYMBOL = "no_symbol"
+
+
 class AdvisorFullBriefType(StrEnum):
     PRE_MARKET = "pre_market"
     POST_CLOSE = "post_close"
@@ -1897,13 +1905,16 @@ class AdvisorQuestion(BaseModel):
     id: str = Field(default_factory=lambda: new_id("advq"))
     user_question: str
     symbol: str | None = None
+    original_symbol: str | None = None
+    resolved_symbol: str | None = None
+    symbol_resolution_status: SymbolResolutionStatus = SymbolResolutionStatus.NO_SYMBOL
     answer_summary: str
     recommendation_type: AdvisorSeverity = AdvisorSeverity.INFO
     confidence: AdvisorConfidence = AdvisorConfidence.MEDIUM
     run_card_id: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
 
-    @field_validator("symbol")
+    @field_validator("symbol", "original_symbol", "resolved_symbol")
     @classmethod
     def normalize_advisor_question_record_symbol(cls, value: str | None) -> str | None:
         return value.strip().upper() if value and value.strip() else None
@@ -1913,6 +1924,9 @@ class AdvisorAnswer(BaseModel):
     question_id: str
     recommendation: AdvisorSeverity = AdvisorSeverity.INFO
     recommendation_type: AdvisorSeverity = AdvisorSeverity.INFO
+    original_symbol: str | None = None
+    resolved_symbol: str | None = None
+    symbol_resolution_status: SymbolResolutionStatus = SymbolResolutionStatus.NO_SYMBOL
     conclusion: str
     summary: str
     confidence: AdvisorConfidence = AdvisorConfidence.MEDIUM
@@ -1925,6 +1939,11 @@ class AdvisorAnswer(BaseModel):
     run_card_id: str | None = None
     paper_only: bool = True
     created_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("original_symbol", "resolved_symbol")
+    @classmethod
+    def normalize_advisor_answer_symbol(cls, value: str | None) -> str | None:
+        return value.strip().upper() if value and value.strip() else None
 
 
 class AdvisorPulse(BaseModel):
