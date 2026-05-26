@@ -180,7 +180,23 @@ def _load_futu():
         import futu as ft
     except ModuleNotFoundError as exc:
         raise FutuSdkMissing("futu-api is not installed. Run: python -m pip install -e '.[futu]'") from exc
+    _disable_futu_console_logging(ft)
     return ft
+
+
+def _disable_futu_console_logging(ft: Any) -> None:
+    """Keep Futu SDK logs away from MCP stdio stdout."""
+    logger = None
+    common = getattr(ft, "common", None)
+    ft_logger = getattr(common, "ft_logger", None) if common is not None else None
+    if ft_logger is not None:
+        logger = getattr(ft_logger, "logger", None)
+    if logger is None:
+        return
+    try:
+        logger.enable_console_log(False)
+    except Exception:
+        return
 
 
 def _enum_value(enum_cls: Any, value: str, default: Any) -> Any:

@@ -5,6 +5,7 @@ import pytest
 from invest_agent.config import Settings
 from invest_agent.futu_adapter import (
     FutuReadDisabled,
+    _disable_futu_console_logging,
     _portfolio_from_records,
     _positions_from_records,
     _quotes_from_records,
@@ -19,6 +20,28 @@ def test_futu_read_disabled_refuses_to_connect(tmp_path) -> None:
 
     with pytest.raises(FutuReadDisabled):
         refresh_futu_readonly(settings, store)
+
+
+def test_futu_console_logging_is_disabled_for_mcp_stdio() -> None:
+    class Logger:
+        disabled = False
+
+        @classmethod
+        def enable_console_log(cls, enabled: bool) -> None:
+            cls.disabled = not enabled
+
+    class FtLogger:
+        logger = Logger
+
+    class Common:
+        ft_logger = FtLogger
+
+    class FutuModule:
+        common = Common
+
+    _disable_futu_console_logging(FutuModule)
+
+    assert Logger.disabled is True
 
 
 def test_position_and_portfolio_record_mapping() -> None:

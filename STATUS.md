@@ -12,6 +12,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
 
 - FastAPI control plane on `127.0.0.1:8788`.
 - AI Advisor Brief first-screen workflow that automatically summarizes portfolio, proposal, thesis, catalyst, earnings, behavior, shadow, and research-goal state into research-only advice.
+- Hermes Advisor Mode with concise Ask Hermes decision cards, hourly urgent pulses, pre-market / post-close full advisor briefs, stored advisor recommendations, REST / CLI / MCP entry points, and quiet-hours notification policy.
 - Market Context Lens with broad-market symbols for index, volatility, rates, gold, and oil context; it informs advice but does not create proposal candidates.
 - Market Regime / Risk Budget Lens that deterministically turns broad-market quote/news context into risk appetite, growth/rates/volatility/inflation pressure, and proposal-bias background.
 - Hypothesis Registry / Research Autopilot spine with hypothesis lifecycle, run-card/research/thesis/catalyst links, and MCP-created drafts kept unconfirmed.
@@ -46,6 +47,11 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - `get_watchlist_quotes`
   - `get_watchlist_symbols`
   - `get_advisor_brief`
+  - `ask_advisor`
+  - `run_hourly_advisor_pulse`
+  - `run_pre_market_advisor_brief`
+  - `run_post_close_advisor_brief`
+  - `get_latest_advisor_brief`
   - `get_market_context`
   - `get_market_regime`
   - `refresh_market_context_news`
@@ -106,6 +112,21 @@ The dashboard now has an advisor-first entry point so daily use no longer requir
 - The brief ranks advice as `blocked`, `action`, `watch`, or `info`.
 - Inputs include broad-market context, pending proposals, catalyst windows, completed catalysts missing review, earnings review thesis deltas, behavior diagnostics, latest shadow events, thesis coverage, and insufficient research goals.
 - The workflow is research-only. It does not create trade proposals, approve proposals, unlock Futu OpenD, or place live broker orders.
+
+## Hermes Advisor Mode
+
+Hermes now has a higher-level Advisor Mode over the existing research control plane.
+
+- `POST /api/advisor/ask` returns a concise decision card with conclusion, `action/watch/blocked/info`, confidence, top reasons, top risks, suggested user action, and linked artifacts.
+- `POST /api/advisor/pulse/hourly` runs local urgent checks for market regime, catalysts, big quote moves, portfolio risk, and data quality. It stores silent/info/watch/urgent pulses and only marks `should_notify=true` for watch outside SGT quiet hours or urgent at any time.
+- `POST /api/advisor/briefs/pre-market` and `/post-close` create persisted full advisor briefs with run cards, market-session schedule context, and recommendations grouped by `ACTION / WATCH / BLOCKED / INFO`.
+- `GET /api/advisor/briefs/latest` and `GET /api/advisor/recommendations` expose the stored Advisor Mode state to dashboard/Hermes.
+- CLI commands: `ask-advisor`, `advisor-pulse`, `pre-market-brief`, `post-close-brief`.
+- Scheduler commands: `advisor-scheduler-once` and `advisor-scheduler-loop`, with launchd sample `deploy/launchd/com.local.invest-agent-advisor-scheduler.plist`.
+- Hermes MCP high-level tools: `ask_advisor`, `run_hourly_advisor_pulse`, `run_pre_market_advisor_brief`, `run_post_close_advisor_brief`, `get_latest_advisor_brief`.
+- Dashboard now has a `Hermes Advisor Mode` panel with Ask Hermes, Hourly Pulse, full brief actions, and recommendation groups.
+- The schedule context derives NYSE/Nasdaq regular session from America/New_York time and converts to Asia/Singapore with DST handled by timezone conversion; it also applies rule-based US market holiday / early-close handling.
+- Safety boundary remains unchanged: Advisor Mode writes advisor/run-card artifacts only. It cannot create pending proposals, approve proposals, unlock Futu, or place/modify orders.
 
 ## Market Context Lens
 

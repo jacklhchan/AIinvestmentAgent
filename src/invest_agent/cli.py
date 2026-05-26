@@ -4,6 +4,8 @@ import argparse
 import json
 from datetime import datetime, timezone
 
+from .advisor_orchestrator import AdvisorOrchestrator
+from .advisor_scheduler import AdvisorSchedulerRunner
 from .backtest_imports import BacktestImportService
 from .autonomy import SafeAutonomyRunner, autonomy_status
 from .catalysts import CatalystCalendarService
@@ -25,6 +27,8 @@ from .ir_feeds import IrFeedIngestor
 from .market_regime import MarketRegimeService
 from .market_news import MarketNewsIngestor
 from .models import (
+    AdvisorFullBriefType,
+    AdvisorQuestionRequest,
     BacktestImportRequest,
     EarningsReviewRunRequest,
     BehaviorReportRunRequest,
@@ -324,6 +328,44 @@ def daily_brief_main(brief_type: str = "morning") -> None:
     print(json.dumps(_json(result), indent=2, ensure_ascii=False))
 
 
+def ask_advisor_main(question: str, symbol: str | None = None) -> None:
+    result = AdvisorOrchestrator(get_store(), settings=get_settings()).answer_user_question(
+        AdvisorQuestionRequest(question=question, symbol=symbol),
+        actor=RunCardActor.CLI,
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def advisor_pulse_main() -> None:
+    result = AdvisorOrchestrator(get_store(), settings=get_settings()).run_hourly_pulse(actor=RunCardActor.CLI)
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def pre_market_brief_main() -> None:
+    result = AdvisorOrchestrator(get_store(), settings=get_settings()).run_full_advisor_brief(
+        AdvisorFullBriefType.PRE_MARKET,
+        actor=RunCardActor.CLI,
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def post_close_brief_main() -> None:
+    result = AdvisorOrchestrator(get_store(), settings=get_settings()).run_full_advisor_brief(
+        AdvisorFullBriefType.POST_CLOSE,
+        actor=RunCardActor.CLI,
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def advisor_scheduler_once_main() -> None:
+    result = AdvisorSchedulerRunner(get_settings(), get_store()).run_once()
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def advisor_scheduler_loop_main() -> None:
+    AdvisorSchedulerRunner(get_settings(), get_store()).run_forever()
+
+
 def correlation_run_main(symbols: str | None = None) -> None:
     result = SectorLensService(get_store()).run_correlation(
         CorrelationRunRequest(symbols=_parse_symbols(symbols) or []),
@@ -568,6 +610,12 @@ def main() -> None:
             "show-backtest-import",
             "data-import",
             "list-data-imports",
+            "ask-advisor",
+            "advisor-pulse",
+            "pre-market-brief",
+            "post-close-brief",
+            "advisor-scheduler-once",
+            "advisor-scheduler-loop",
             "morning-brief",
             "close-brief",
             "weekly-brief",
@@ -598,6 +646,7 @@ def main() -> None:
             "show-shadow-report",
         ],
     )
+    parser.add_argument("question", nargs="?")
     parser.add_argument("--path", default=None)
     parser.add_argument("--days", type=int, default=None)
     parser.add_argument("--symbol", default=None)
@@ -727,6 +776,20 @@ def main() -> None:
         data_import_main(args.schema, args.path, args.source_name)
     if args.command == "list-data-imports":
         list_data_imports_main()
+    if args.command == "ask-advisor":
+        if not args.question:
+            parser.error("question is required for ask-advisor")
+        ask_advisor_main(args.question, args.symbol)
+    if args.command == "advisor-pulse":
+        advisor_pulse_main()
+    if args.command == "pre-market-brief":
+        pre_market_brief_main()
+    if args.command == "post-close-brief":
+        post_close_brief_main()
+    if args.command == "advisor-scheduler-once":
+        advisor_scheduler_once_main()
+    if args.command == "advisor-scheduler-loop":
+        advisor_scheduler_loop_main()
     if args.command == "morning-brief":
         daily_brief_main("morning")
     if args.command == "close-brief":

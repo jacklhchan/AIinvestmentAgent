@@ -67,6 +67,31 @@ curl -X POST http://127.0.0.1:8788/api/advisor/brief \
   -d '{"run_light_analysis":true,"max_items":8}'
 ```
 
+## Hermes Advisor Mode
+
+`Hermes Advisor Mode` 把底層 research goal、thesis、catalyst、committee、run card 與 policy 狀態包成三個高階入口：
+
+- `POST /api/advisor/ask`：回答「而家應唔應該買 / 賣 AAPL？」這類自然語言問題，輸出 concise decision card。
+- `POST /api/advisor/pulse/hourly`：每小時 urgent detector，只在 `watch` / `urgent` 時建議通知；SGT 00:00-07:00 quiet hours 內只有 urgent 會提示。
+- `POST /api/advisor/briefs/pre-market` / `POST /api/advisor/briefs/post-close`：建立開市前 / 收市後 full advisor brief，並按 `ACTION / WATCH / BLOCKED / INFO` 分組 recommendations。
+
+CLI：
+
+```bash
+python -m invest_agent.cli ask-advisor "Should I buy AAPL now?" --symbol AAPL
+python -m invest_agent.cli advisor-pulse
+python -m invest_agent.cli pre-market-brief
+python -m invest_agent.cli post-close-brief
+python -m invest_agent.cli advisor-scheduler-once
+python -m invest_agent.cli advisor-scheduler-loop
+```
+
+Hermes MCP 新增 high-level tools：`ask_advisor`、`run_hourly_advisor_pulse`、`run_pre_market_advisor_brief`、`run_post_close_advisor_brief`、`get_latest_advisor_brief`。
+
+安全邊界不變：Advisor output 只會寫 advisor question / pulse / brief / recommendation / run card，不會建立 `PENDING` proposal、不會 approve、不會 unlock Futu，也不會送 live order。若你仍想買賣，仍要走 `InvestmentService`、evidence gate、thesis/catalyst invariants、policy engine 與人工確認。
+
+macOS launchd 範例在 `deploy/launchd/com.local.invest-agent-advisor-scheduler.plist`。它會常駐 `advisor-scheduler-loop`，每分鐘檢查是否要跑 hourly pulse、pre-market brief 或 post-close brief；同一個 market session 不會重複建立 full brief。
+
 ## Market Context Lens
 
 Market Context Lens 是 broad-market 背景層，和交易 watchlist 分開。它預設追蹤：

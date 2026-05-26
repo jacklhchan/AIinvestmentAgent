@@ -16,6 +16,7 @@ Permission classes:
 | `add_thesis_update_from_research_goal` | `research_write` | `execution_forbidden` |
 | `apply_earnings_review_to_thesis` | `research_write` | `execution_forbidden` |
 | `approve_trade_proposal` | `approval_write` | `execution_forbidden` |
+| `ask_advisor` | `research_write` | `execution_forbidden` |
 | `complete_catalyst_with_research_goal` | `research_write` | `execution_forbidden` |
 | `create_catalyst` | `research_write` | `execution_forbidden` |
 | `create_hypothesis_draft` | `research_write` | `execution_forbidden` |
@@ -40,6 +41,7 @@ Permission classes:
 | `get_futu_connection_status` | `read_only` | `execution_forbidden` |
 | `get_hypothesis` | `read_only` | `execution_forbidden` |
 | `get_idea_candidate` | `read_only` | `execution_forbidden` |
+| `get_latest_advisor_brief` | `read_only` | `execution_forbidden` |
 | `get_latest_daily_brief` | `read_only` | `execution_forbidden` |
 | `get_market_context` | `read_only` | `execution_forbidden` |
 | `get_market_regime` | `read_only` | `execution_forbidden` |
@@ -96,6 +98,9 @@ Permission classes:
 | `run_dividend_review` | `research_write` | `execution_forbidden` |
 | `run_earnings_preview` | `research_write` | `execution_forbidden` |
 | `run_earnings_review` | `research_write` | `execution_forbidden` |
+| `run_hourly_advisor_pulse` | `research_write` | `execution_forbidden` |
+| `run_post_close_advisor_brief` | `research_write` | `execution_forbidden` |
+| `run_pre_market_advisor_brief` | `research_write` | `execution_forbidden` |
 | `run_safe_autonomy_cycle` | `proposal_write` | `execution_forbidden` |
 
 Next-phase research cockpit tools are intentionally limited to `read_only` or `research_write`. Promotion paths such as idea-to-research-goal and rebalance-candidate-to-research-goal create research goals only; they do not create `PENDING` proposals. Severe thesis changes from earnings review remain blocked without human confirmation.

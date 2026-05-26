@@ -18,6 +18,11 @@ mcp_servers:
         - get_watchlist_quotes
         - get_watchlist_symbols
         - get_advisor_brief
+        - ask_advisor
+        - run_hourly_advisor_pulse
+        - run_pre_market_advisor_brief
+        - run_post_close_advisor_brief
+        - get_latest_advisor_brief
         - get_market_context
         - get_market_regime
         - refresh_market_context_news

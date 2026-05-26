@@ -39,6 +39,11 @@ invest-agent-autonomy-once = "invest_agent.cli:autonomy_once_main"
 invest-agent-autonomy-loop = "invest_agent.cli:autonomy_loop_main"
 invest-agent-autonomy-status = "invest_agent.cli:autonomy_status_main"
 invest-agent-schema-check = "invest_agent.cli:schema_check_main"
+invest-agent-advisor-pulse = "invest_agent.cli:advisor_pulse_main"
+invest-agent-pre-market-brief = "invest_agent.cli:pre_market_brief_main"
+invest-agent-post-close-brief = "invest_agent.cli:post_close_brief_main"
+invest-agent-advisor-scheduler-once = "invest_agent.cli:advisor_scheduler_once_main"
+invest-agent-advisor-scheduler-loop = "invest_agent.cli:advisor_scheduler_loop_main"
 
 [build-system]
 requires = ["setuptools>=70.0.0", "wheel"]

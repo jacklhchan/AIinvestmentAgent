@@ -7,6 +7,12 @@ from typing import Any
 
 from .models import (
     AuditEvent,
+    AdvisorFullBrief,
+    AdvisorPulse,
+    AdvisorPulseSeverity,
+    AdvisorQuestion,
+    AdvisorRecommendation,
+    AdvisorSeverity,
     BacktestImportRequest,
     BehaviorReport,
     Catalyst,
@@ -493,6 +499,42 @@ class Store:
                     created_at TEXT NOT NULL,
                     payload TEXT NOT NULL,
                     FOREIGN KEY (shadow_report_id) REFERENCES shadow_reports(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS advisor_questions (
+                    id TEXT PRIMARY KEY,
+                    user_question TEXT NOT NULL,
+                    symbol TEXT,
+                    answer_summary TEXT NOT NULL,
+                    recommendation_type TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS advisor_pulses (
+                    id TEXT PRIMARY KEY,
+                    pulse_type TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS advisor_briefs (
+                    id TEXT PRIMARY KEY,
+                    brief_type TEXT NOT NULL,
+                    market_session_date TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS advisor_recommendations (
+                    id TEXT PRIMARY KEY,
+                    source_type TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    symbol TEXT,
+                    recommendation_type TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
                 );
                 """
             )
@@ -1307,6 +1349,163 @@ class Store:
 
     def list_daily_briefs(self, limit: int = 50) -> list[DailyBrief]:
         return self._list_payloads("daily_briefs", DailyBrief, order_by="created_at DESC", limit=limit)
+
+    def create_advisor_question(self, item: AdvisorQuestion) -> AdvisorQuestion:
+        self._insert_payload(
+            "advisor_questions",
+            ["id", "user_question", "symbol", "answer_summary", "recommendation_type", "created_at"],
+            [
+                item.id,
+                item.user_question,
+                item.symbol,
+                item.answer_summary,
+                item.recommendation_type.value,
+                item.created_at.isoformat(),
+            ],
+            item,
+            audit_event="advisor_question_answered",
+            entity_type="advisor_question",
+            entity_id=item.id,
+            audit_payload={
+                "symbol": item.symbol,
+                "recommendation_type": item.recommendation_type.value,
+                "run_card_id": item.run_card_id,
+            },
+        )
+        return item
+
+    def list_advisor_questions(self, *, symbol: str | None = None, limit: int = 50) -> list[AdvisorQuestion]:
+        where = "symbol = ?" if symbol else ""
+        args: tuple[Any, ...] = (symbol.upper(),) if symbol else ()
+        return self._list_payloads(
+            "advisor_questions",
+            AdvisorQuestion,
+            where=where,
+            args=args,
+            order_by="created_at DESC",
+            limit=limit,
+        )
+
+    def create_advisor_recommendation(self, item: AdvisorRecommendation) -> AdvisorRecommendation:
+        self._insert_payload(
+            "advisor_recommendations",
+            ["id", "source_type", "source_id", "symbol", "recommendation_type", "created_at"],
+            [
+                item.id,
+                item.source_type.value,
+                item.source_id,
+                item.symbol,
+                item.recommendation_type.value,
+                item.created_at.isoformat(),
+            ],
+            item,
+            audit_event="advisor_recommendation_created",
+            entity_type="advisor_recommendation",
+            entity_id=item.id,
+            audit_payload={
+                "source_type": item.source_type.value,
+                "source_id": item.source_id,
+                "symbol": item.symbol,
+                "recommendation_type": item.recommendation_type.value,
+            },
+        )
+        return item
+
+    def list_advisor_recommendations(
+        self,
+        *,
+        recommendation_type: AdvisorSeverity | None = None,
+        symbol: str | None = None,
+        limit: int = 50,
+    ) -> list[AdvisorRecommendation]:
+        clauses: list[str] = []
+        args: list[Any] = []
+        if recommendation_type:
+            clauses.append("recommendation_type = ?")
+            args.append(recommendation_type.value)
+        if symbol:
+            clauses.append("symbol = ?")
+            args.append(symbol.upper())
+        return self._list_payloads(
+            "advisor_recommendations",
+            AdvisorRecommendation,
+            where=" AND ".join(clauses),
+            args=tuple(args),
+            order_by="created_at DESC",
+            limit=limit,
+        )
+
+    def create_advisor_pulse(self, item: AdvisorPulse) -> AdvisorPulse:
+        self._insert_payload(
+            "advisor_pulses",
+            ["id", "pulse_type", "severity", "created_at"],
+            [item.id, item.pulse_type, item.severity.value, item.created_at.isoformat()],
+            item,
+            audit_event="advisor_pulse_created",
+            entity_type="advisor_pulse",
+            entity_id=item.id,
+            audit_payload={
+                "pulse_type": item.pulse_type,
+                "severity": item.severity.value,
+                "should_notify": item.should_notify,
+                "run_card_id": item.run_card_id,
+            },
+        )
+        for recommendation in item.recommendations:
+            self.create_advisor_recommendation(recommendation)
+        return item
+
+    def list_advisor_pulses(
+        self,
+        *,
+        severity: AdvisorPulseSeverity | None = None,
+        limit: int = 50,
+    ) -> list[AdvisorPulse]:
+        where = "severity = ?" if severity else ""
+        args: tuple[Any, ...] = (severity.value,) if severity else ()
+        return self._list_payloads(
+            "advisor_pulses",
+            AdvisorPulse,
+            where=where,
+            args=args,
+            order_by="created_at DESC",
+            limit=limit,
+        )
+
+    def create_advisor_brief(self, item: AdvisorFullBrief) -> AdvisorFullBrief:
+        self._insert_payload(
+            "advisor_briefs",
+            ["id", "brief_type", "market_session_date", "created_at"],
+            [item.id, item.brief_type.value, item.market_session_date, item.created_at.isoformat()],
+            item,
+            audit_event="advisor_brief_created",
+            entity_type="advisor_brief",
+            entity_id=item.id,
+            audit_payload={
+                "brief_type": item.brief_type.value,
+                "market_session_date": item.market_session_date,
+                "run_card_id": item.run_card_id,
+            },
+        )
+        for recommendation in item.recommendations:
+            self.create_advisor_recommendation(recommendation)
+        return item
+
+    def list_advisor_briefs(self, *, brief_type: str | None = None, limit: int = 50) -> list[AdvisorFullBrief]:
+        where = "brief_type = ?" if brief_type else ""
+        args: tuple[Any, ...] = (brief_type,) if brief_type else ()
+        return self._list_payloads(
+            "advisor_briefs",
+            AdvisorFullBrief,
+            where=where,
+            args=args,
+            order_by="created_at DESC",
+            limit=limit,
+        )
+
+    def get_latest_advisor_brief(self, *, brief_type: str | None = None) -> AdvisorFullBrief | None:
+        briefs = self.list_advisor_briefs(brief_type=brief_type, limit=1)
+        return briefs[0] if briefs else None
 
     def create_peer_group(self, item: PeerGroup) -> PeerGroup:
         self._insert_payload(

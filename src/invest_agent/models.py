@@ -226,6 +226,9 @@ class RunCardType(StrEnum):
     SHADOW_REPORT = "shadow_report"
     SAFE_AUTONOMY_CYCLE = "safe_autonomy_cycle"
     PROPOSAL_DRAFT = "proposal_draft"
+    ADVISOR_QUESTION = "advisor_question"
+    ADVISOR_PULSE = "advisor_pulse"
+    ADVISOR_BRIEF = "advisor_brief"
     FUTURE_BACKTEST_IMPORT = "future_backtest_import"
     FUTURE_BEHAVIOR_REPORT = "future_behavior_report"
 
@@ -308,6 +311,30 @@ class AdvisorSeverity(StrEnum):
     WATCH = "watch"
     ACTION = "action"
     BLOCKED = "blocked"
+
+
+class AdvisorConfidence(StrEnum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class AdvisorPulseSeverity(StrEnum):
+    SILENT = "silent"
+    INFO = "info"
+    WATCH = "watch"
+    URGENT = "urgent"
+
+
+class AdvisorSourceType(StrEnum):
+    QUESTION = "question"
+    PULSE = "pulse"
+    BRIEF = "brief"
+
+
+class AdvisorFullBriefType(StrEnum):
+    PRE_MARKET = "pre_market"
+    POST_CLOSE = "post_close"
 
 
 class RiskAppetite(StrEnum):
@@ -1827,6 +1854,103 @@ class AdvisorBrief(BaseModel):
     advice: list[AdvisorBriefItem] = Field(default_factory=list)
     automated_actions: list[str] = Field(default_factory=list)
     data_status: dict[str, Any] = Field(default_factory=dict)
+
+
+class AdvisorQuestionRequest(BaseModel):
+    question: str = Field(min_length=3)
+    symbol: str | None = None
+    style: str = "concise"
+
+    @field_validator("question")
+    @classmethod
+    def normalize_advisor_question(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_advisor_question_symbol(cls, value: str | None) -> str | None:
+        return value.strip().upper() if value and value.strip() else None
+
+
+class AdvisorRecommendation(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("adrec"))
+    source_type: AdvisorSourceType
+    source_id: str
+    symbol: str | None = None
+    recommendation_type: AdvisorSeverity = AdvisorSeverity.INFO
+    title: str
+    summary: str
+    suggested_user_action: str
+    confidence: AdvisorConfidence = AdvisorConfidence.MEDIUM
+    reasons: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    linked_artifacts: list[dict[str, Any]] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_advisor_recommendation_symbol(cls, value: str | None) -> str | None:
+        return value.strip().upper() if value and value.strip() else None
+
+
+class AdvisorQuestion(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("advq"))
+    user_question: str
+    symbol: str | None = None
+    answer_summary: str
+    recommendation_type: AdvisorSeverity = AdvisorSeverity.INFO
+    confidence: AdvisorConfidence = AdvisorConfidence.MEDIUM
+    run_card_id: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_advisor_question_record_symbol(cls, value: str | None) -> str | None:
+        return value.strip().upper() if value and value.strip() else None
+
+
+class AdvisorAnswer(BaseModel):
+    question_id: str
+    recommendation: AdvisorSeverity = AdvisorSeverity.INFO
+    recommendation_type: AdvisorSeverity = AdvisorSeverity.INFO
+    conclusion: str
+    summary: str
+    confidence: AdvisorConfidence = AdvisorConfidence.MEDIUM
+    suggested_user_action: str
+    reasons: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    decision_required: bool = False
+    details_available: bool = False
+    linked_artifacts_json: list[dict[str, Any]] = Field(default_factory=list)
+    run_card_id: str | None = None
+    paper_only: bool = True
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class AdvisorPulse(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("advpulse"))
+    pulse_type: str = "hourly"
+    severity: AdvisorPulseSeverity = AdvisorPulseSeverity.SILENT
+    summary: str
+    recommendations: list[AdvisorRecommendation] = Field(default_factory=list)
+    should_notify: bool = False
+    sent_to_user: bool = False
+    run_card_id: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class AdvisorFullBrief(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("advbrief"))
+    brief_type: AdvisorFullBriefType = AdvisorFullBriefType.PRE_MARKET
+    market_session_date: str
+    summary: str
+    market_regime_snapshot_id: str | None = None
+    recommendations: list[AdvisorRecommendation] = Field(default_factory=list)
+    committee_review_ids_json: list[str] = Field(default_factory=list)
+    run_card_id: str | None = None
+    sent_to_user: bool = False
+    schedule_context: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class FundamentalsRefreshResult(BaseModel):

@@ -5,6 +5,7 @@ from typing import Literal
 from mcp.server.fastmcp import FastMCP
 
 from .advisor import AdvisorService
+from .advisor_orchestrator import AdvisorOrchestrator
 from .autonomy import SafeAutonomyRunner, autonomy_status
 from .committee_reviews import CommitteeReviewService
 from .daily_briefs import DailyBriefService
@@ -29,6 +30,8 @@ from .quote_history import QuoteHistoryService
 from .sector_lens import SectorLensService
 from .models import (
     AdvisorBriefRequest,
+    AdvisorFullBriefType,
+    AdvisorQuestionRequest,
     CommitteeReviewRunRequest,
     CorrelationRunRequest,
     DailyBriefRunRequest,
@@ -112,12 +115,58 @@ def get_watchlist_symbols() -> list[str]:
 
 @mcp.tool()
 def get_advisor_brief(run_light_analysis: bool = False, max_items: int = 8) -> dict:
-    """Return an advisor-first research brief. It may update behavior analytics, but never approves or executes trades."""
+    """Return the legacy advisor research brief. For front-door user advice, prefer ask_advisor or full advisor brief tools."""
     return _json(
         AdvisorService(get_store(), paper_only=get_settings().is_paper).build_brief(
             AdvisorBriefRequest(run_light_analysis=run_light_analysis, max_items=max_items)
         )
     )
+
+
+@mcp.tool()
+def ask_advisor(question: str, symbol: str | None = None, style: str = "concise") -> dict:
+    """Preferred first tool for buy/sell/hold/watch questions. Returns a concise research-only decision card."""
+    return _json(
+        AdvisorOrchestrator(get_store(), settings=get_settings()).answer_user_question(
+            AdvisorQuestionRequest(question=question, symbol=symbol, style=style),
+            actor=RunCardActor.MCP,
+        )
+    )
+
+
+@mcp.tool()
+def run_hourly_advisor_pulse() -> dict:
+    """Run the hourly urgent detector. Stores pulse results and never creates proposals, approvals, or trades."""
+    return _json(AdvisorOrchestrator(get_store(), settings=get_settings()).run_hourly_pulse(actor=RunCardActor.MCP))
+
+
+@mcp.tool()
+def run_pre_market_advisor_brief() -> dict:
+    """Preferred tool for market-open or pre-market advice. Returns grouped ACTION/WATCH/BLOCKED/INFO recommendations."""
+    return _json(
+        AdvisorOrchestrator(get_store(), settings=get_settings()).run_full_advisor_brief(
+            AdvisorFullBriefType.PRE_MARKET,
+            actor=RunCardActor.MCP,
+        )
+    )
+
+
+@mcp.tool()
+def run_post_close_advisor_brief() -> dict:
+    """Preferred tool for post-close review. Returns grouped ACTION/WATCH/BLOCKED/INFO recommendations."""
+    return _json(
+        AdvisorOrchestrator(get_store(), settings=get_settings()).run_full_advisor_brief(
+            AdvisorFullBriefType.POST_CLOSE,
+            actor=RunCardActor.MCP,
+        )
+    )
+
+
+@mcp.tool()
+def get_latest_advisor_brief(brief_type: Literal["pre_market", "post_close"] | None = None) -> dict:
+    """Return the latest stored Hermes Advisor Mode brief; use before reconstructing advice from low-level tools."""
+    item = get_store().get_latest_advisor_brief(brief_type=brief_type)
+    return _json(item) if item else {"brief": None}
 
 
 @mcp.tool()
@@ -605,6 +654,9 @@ def list_run_cards(
         "shadow_report",
         "safe_autonomy_cycle",
         "proposal_draft",
+        "advisor_question",
+        "advisor_pulse",
+        "advisor_brief",
         "future_backtest_import",
         "future_behavior_report",
     ]
@@ -984,13 +1036,13 @@ def get_futu_connection_status() -> dict:
 
 @mcp.tool()
 def refresh_futu_readonly_snapshot(refresh_cache: bool = False) -> dict:
-    """Refresh local portfolio and quotes from Futu OpenD without unlocking trading."""
+    """Low-level read-only Futu data refresh; not a user-facing advice path and never unlocks trading."""
     return refresh_futu_readonly(get_settings(), get_store(), refresh_cache=refresh_cache).as_dict()
 
 
 @mcp.tool()
 def list_pending_proposals(limit: int = 20) -> list[dict]:
-    """List pending trade proposals awaiting human approval."""
+    """Low-level audit list of pending proposals; do not use as the first path for general user-facing advice."""
     proposals = get_store().list_proposals(status=ProposalStatus.PENDING, limit=limit)
     return _json(proposals)
 

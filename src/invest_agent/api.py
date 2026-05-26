@@ -6,6 +6,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pydantic import BaseModel
 
 from .advisor import AdvisorService
+from .advisor_orchestrator import AdvisorOrchestrator
 from .autonomy import SafeAutonomyRunner, autonomy_status
 from .backtest_imports import BacktestImportService
 from .catalysts import CatalystCalendarService
@@ -33,6 +34,9 @@ from .sector_lens import SectorLensService
 from .skill_validator import SkillValidatorService
 from .models import (
     AdvisorBriefRequest,
+    AdvisorFullBriefType,
+    AdvisorQuestionRequest,
+    AdvisorSeverity,
     BacktestImportRequest,
     CatalystCompleteRequest,
     CatalystCreate,
@@ -188,6 +192,50 @@ def advisor_brief():
 def run_advisor_brief(request: AdvisorBriefRequest | None = None):
     request = request or AdvisorBriefRequest(run_light_analysis=True)
     return AdvisorService(get_store(), paper_only=get_settings().is_paper).build_brief(request)
+
+
+@app.post("/api/advisor/ask")
+def ask_advisor(request: AdvisorQuestionRequest):
+    return AdvisorOrchestrator(get_store(), settings=get_settings()).answer_user_question(request, actor=RunCardActor.API)
+
+
+@app.post("/api/advisor/pulse/hourly")
+def hourly_advisor_pulse():
+    return AdvisorOrchestrator(get_store(), settings=get_settings()).run_hourly_pulse(actor=RunCardActor.API)
+
+
+@app.post("/api/advisor/briefs/pre-market")
+def pre_market_advisor_brief():
+    return AdvisorOrchestrator(get_store(), settings=get_settings()).run_full_advisor_brief(
+        AdvisorFullBriefType.PRE_MARKET,
+        actor=RunCardActor.API,
+    )
+
+
+@app.post("/api/advisor/briefs/post-close")
+def post_close_advisor_brief():
+    return AdvisorOrchestrator(get_store(), settings=get_settings()).run_full_advisor_brief(
+        AdvisorFullBriefType.POST_CLOSE,
+        actor=RunCardActor.API,
+    )
+
+
+@app.get("/api/advisor/briefs/latest")
+def latest_advisor_full_brief(brief_type: AdvisorFullBriefType | None = None):
+    return {"brief": get_store().get_latest_advisor_brief(brief_type=brief_type.value if brief_type else None)}
+
+
+@app.get("/api/advisor/recommendations")
+def advisor_recommendations(
+    recommendation_type: AdvisorSeverity | None = None,
+    symbol: str | None = None,
+    limit: int = 50,
+):
+    return get_store().list_advisor_recommendations(
+        recommendation_type=recommendation_type,
+        symbol=symbol,
+        limit=limit,
+    )
 
 
 @app.get("/api/watchlist")
@@ -1152,6 +1200,48 @@ DASHBOARD_HTML = """
       align-items: center;
       flex-wrap: wrap;
     }
+    .advisor-mode-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+      gap: 0;
+      border-top: 1px solid var(--line);
+    }
+    .advisor-mode-pane {
+      padding: 16px;
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+    .advisor-mode-pane + .advisor-mode-pane { border-left: 1px solid var(--line); }
+    .advisor-question-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 110px auto;
+      gap: 8px;
+      align-items: end;
+    }
+    .decision-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      display: grid;
+      gap: 9px;
+      background: #fffdf8;
+    }
+    .recommendation-groups {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0;
+      border-top: 1px solid var(--line);
+    }
+    .recommendation-group {
+      padding: 14px 16px;
+      border-right: 1px solid var(--line);
+      display: grid;
+      gap: 8px;
+      align-content: start;
+      min-height: 120px;
+    }
+    .recommendation-group:last-child { border-right: 0; }
     .source-strip {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1308,6 +1398,10 @@ DASHBOARD_HTML = """
       .triple-grid { grid-template-columns: 1fr; }
       .advisor-shell { grid-template-columns: 1fr; }
       .advisor-summary { border-right: 0; border-bottom: 1px solid var(--line); }
+      .advisor-mode-grid, .recommendation-groups { grid-template-columns: 1fr; }
+      .advisor-mode-pane + .advisor-mode-pane { border-left: 0; border-top: 1px solid var(--line); }
+      .recommendation-group { border-right: 0; border-bottom: 1px solid var(--line); }
+      .recommendation-group:last-child { border-bottom: 0; }
       .source-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .source-cell:nth-child(2) { border-right: 0; }
       .source-cell:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
@@ -1320,6 +1414,7 @@ DASHBOARD_HTML = """
       .value { font-size: 25px; }
       main { padding: 18px 14px 32px; }
       th, td { padding: 10px; }
+      .advisor-question-row { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -1363,6 +1458,36 @@ DASHBOARD_HTML = """
         <div class="advisor-list"></div>
       </div>
       <div class="toast" id="advisor-toast"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-title-row">
+        <h2>Hermes Advisor Mode</h2>
+        <div class="advisor-actions">
+          <button class="secondary" id="advisor-pulse-run" type="button">Hourly Pulse</button>
+          <button class="secondary" id="advisor-pre-run" type="button">開市前 Brief</button>
+          <button class="secondary" id="advisor-post-run" type="button">收市後 Brief</button>
+        </div>
+      </div>
+      <div class="advisor-mode-grid">
+        <div class="advisor-mode-pane">
+          <div class="label">Ask Hermes</div>
+          <div class="advisor-question-row">
+            <input id="advisor-question" placeholder="Hermes，我而家應唔應該買 AAPL？" />
+            <input id="advisor-symbol" placeholder="AAPL" />
+            <button class="primary" id="advisor-ask" type="button">問 Hermes</button>
+          </div>
+          <div id="advisor-answer" class="decision-card">
+            <div class="muted">問一句股票問題，Hermes 會先給 decision card，不會直接建立 proposal。</div>
+          </div>
+        </div>
+        <div class="advisor-mode-pane">
+          <div class="label">Latest Full Advisor Brief</div>
+          <div id="advisor-full-brief" class="decision-card">
+            <div class="muted">未有 full advisor brief。</div>
+          </div>
+        </div>
+      </div>
+      <div class="recommendation-groups" id="advisor-recommendations"></div>
     </section>
     <section class="panel">
       <h2>市場狀態 / 風險預算</h2>
@@ -1804,8 +1929,20 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       action: "需要處理",
       blocked: "暫停行動"
     };
+    const advisorPulseSeverityLabels = {
+      silent: "靜默",
+      info: "資訊",
+      watch: "觀察",
+      urgent: "緊急"
+    };
     const advisorCategoryLabels = {
       system: "系統",
+      question: "問答",
+      pulse: "巡邏",
+      brief: "簡報",
+      price: "價格",
+      portfolio: "組合",
+      data_quality: "資料品質",
       proposal: "提案",
       catalyst: "催化事件",
       earnings: "財報",
@@ -1962,6 +2099,74 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         </div>
         <div class="advisor-list">${advice}</div>
       `;
+    }
+
+    function renderAdvisorAnswer(answer) {
+      const shell = document.querySelector("#advisor-answer");
+      if (!answer) {
+        shell.innerHTML = `<div class="muted">問一句股票問題，Hermes 會先給 decision card，不會直接建立 proposal。</div>`;
+        return;
+      }
+      const reasons = (answer.reasons || []).slice(0, 3).map(item => `<li>${escapeHtml(item)}</li>`).join("");
+      const risks = (answer.risks || []).slice(0, 3).map(item => `<li>${escapeHtml(item)}</li>`).join("");
+      shell.innerHTML = `
+        <div class="advisor-meta">
+          ${pill(answer.recommendation_type, advisorSeverityLabels[answer.recommendation_type] || answer.recommendation_type)}
+          ${pill(answer.confidence, `信心 ${answer.confidence}`)}
+          ${answer.paper_only ? pill("APPROVED", "paper-only") : pill("PENDING", "live requested")}
+        </div>
+        <div class="advisor-headline">${escapeHtml(answer.conclusion)}</div>
+        <div>${escapeHtml(answer.summary)}</div>
+        <div><div class="label">主要原因</div><ol>${reasons || "<li>暫時沒有足夠資料。</li>"}</ol></div>
+        <div><div class="label">主要風險</div><ol>${risks || "<li>Advice 不等於交易。</li>"}</ol></div>
+        <div class="muted">你可以：${escapeHtml(answer.suggested_user_action)}</div>
+      `;
+    }
+
+    function renderAdvisorFullBrief(payload) {
+      const brief = payload && Object.prototype.hasOwnProperty.call(payload, "brief") ? payload.brief : payload;
+      const shell = document.querySelector("#advisor-full-brief");
+      if (!brief) {
+        shell.innerHTML = `<div class="muted">未有 full advisor brief。</div>`;
+        return;
+      }
+      const groups = groupRecommendations(brief.recommendations || []);
+      shell.innerHTML = `
+        <div class="advisor-meta">
+          ${pill(brief.brief_type, brief.brief_type === "pre_market" ? "開市前" : "收市後")}
+          ${pill("PENDING", escapeHtml(brief.market_session_date))}
+        </div>
+        <div class="advisor-headline">${escapeHtml(brief.summary)}</div>
+        <div class="muted">Session open：${formatDate(brief.schedule_context?.market_open_sgt)}</div>
+        <div class="muted">Session close：${formatDate(brief.schedule_context?.market_close_sgt)}</div>
+        <div class="muted">ACTION ${groups.action.length} · WATCH ${groups.watch.length} · BLOCKED ${groups.blocked.length} · INFO ${groups.info.length}</div>
+      `;
+    }
+
+    function renderAdvisorRecommendations(items) {
+      const groups = groupRecommendations(items || []);
+      const shell = document.querySelector("#advisor-recommendations");
+      shell.innerHTML = ["action", "watch", "blocked", "info"].map(group => {
+        const body = groups[group].slice(0, 3).map(item => `
+          <div>
+            <div class="item-title">${escapeHtml(item.symbol ? `${item.symbol}: ${item.title}` : item.title)}</div>
+            <div class="muted">${escapeHtml(item.summary || "")}</div>
+          </div>
+        `).join("") || `<div class="muted">暫時沒有</div>`;
+        return `<div class="recommendation-group">
+          <div>${pill(group, advisorSeverityLabels[group] || group)}</div>
+          ${body}
+        </div>`;
+      }).join("");
+    }
+
+    function groupRecommendations(items) {
+      return {
+        action: items.filter(item => item.recommendation_type === "action"),
+        watch: items.filter(item => item.recommendation_type === "watch"),
+        blocked: items.filter(item => item.recommendation_type === "blocked"),
+        info: items.filter(item => item.recommendation_type === "info")
+      };
     }
 
     function renderSourceStrip(health, portfolio, quotes, futuStatus) {
@@ -2313,8 +2518,10 @@ proposal 需要靠 manual override 才能成立</textarea></div>
     }
 
     async function loadAll() {
-      const [advisorBrief, marketContext, marketRegime, health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, researchGoals, theses, catalysts, earningsReviews, runCards, behaviorReports, tradeImports, tradeRoundtrips, shadowStrategies, shadowReports, shadowEvents] = await Promise.all([
+      const [advisorBrief, advisorFullBrief, advisorRecommendations, marketContext, marketRegime, health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, researchGoals, theses, catalysts, earningsReviews, runCards, behaviorReports, tradeImports, tradeRoundtrips, shadowStrategies, shadowReports, shadowEvents] = await Promise.all([
         api("/api/advisor/brief"),
+        api("/api/advisor/briefs/latest"),
+        api("/api/advisor/recommendations?limit=12"),
         api("/api/market-context"),
         api("/api/market-regime"),
         api("/health"),
@@ -2347,6 +2554,8 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       document.querySelector("#positions").textContent = portfolio.positions.length;
       document.querySelector("#pending").textContent = proposals.filter(p => p.status === "PENDING").length;
       renderAdvisorBrief(advisorBrief);
+      renderAdvisorFullBrief(advisorFullBrief);
+      renderAdvisorRecommendations(advisorRecommendations);
       renderMarketRegime(marketRegime);
       renderMarketContext(marketContext);
       renderSourceStrip(health, portfolio, quotes, futuStatus);
@@ -2407,6 +2616,67 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         setToast(`Advisor brief 已更新${actionNote}`);
         await loadAll();
         renderAdvisorBrief(brief);
+      } catch (error) {
+        setToast(error.message);
+      } finally {
+        event.target.disabled = false;
+      }
+    });
+    document.querySelector("#advisor-ask").addEventListener("click", async event => {
+      event.target.disabled = true;
+      const question = document.querySelector("#advisor-question").value.trim();
+      const symbol = document.querySelector("#advisor-symbol").value.trim();
+      setToast("Hermes Advisor 正在整理 decision card...");
+      try {
+        const answer = await api("/api/advisor/ask", {
+          method: "POST",
+          body: JSON.stringify({ question, symbol: symbol || null, style: "concise" })
+        });
+        renderAdvisorAnswer(answer);
+        setToast("Hermes 已回覆；沒有建立 proposal 或下單。");
+        await loadAll();
+        renderAdvisorAnswer(answer);
+      } catch (error) {
+        setToast(error.message);
+      } finally {
+        event.target.disabled = false;
+      }
+    });
+    document.querySelector("#advisor-pulse-run").addEventListener("click", async event => {
+      event.target.disabled = true;
+      setToast("正在執行 hourly advisor pulse...");
+      try {
+        const pulse = await api("/api/advisor/pulse/hourly", { method: "POST" });
+        setToast(`${advisorPulseSeverityLabels[pulse.severity] || pulse.severity}: ${pulse.summary}`);
+        await loadAll();
+      } catch (error) {
+        setToast(error.message);
+      } finally {
+        event.target.disabled = false;
+      }
+    });
+    document.querySelector("#advisor-pre-run").addEventListener("click", async event => {
+      event.target.disabled = true;
+      setToast("正在建立開市前 full advisor brief...");
+      try {
+        const brief = await api("/api/advisor/briefs/pre-market", { method: "POST" });
+        renderAdvisorFullBrief(brief);
+        setToast("開市前 Advisor Brief 已建立；沒有建立 proposal。");
+        await loadAll();
+      } catch (error) {
+        setToast(error.message);
+      } finally {
+        event.target.disabled = false;
+      }
+    });
+    document.querySelector("#advisor-post-run").addEventListener("click", async event => {
+      event.target.disabled = true;
+      setToast("正在建立收市後 full advisor brief...");
+      try {
+        const brief = await api("/api/advisor/briefs/post-close", { method: "POST" });
+        renderAdvisorFullBrief(brief);
+        setToast("收市後 Advisor Brief 已建立；沒有建立 proposal。");
+        await loadAll();
       } catch (error) {
         setToast(error.message);
       } finally {
