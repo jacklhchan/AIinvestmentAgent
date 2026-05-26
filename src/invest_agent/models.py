@@ -229,6 +229,7 @@ class RunCardType(StrEnum):
     ADVISOR_QUESTION = "advisor_question"
     ADVISOR_PULSE = "advisor_pulse"
     ADVISOR_BRIEF = "advisor_brief"
+    OPPORTUNITY_RADAR = "opportunity_radar"
     FUTURE_BACKTEST_IMPORT = "future_backtest_import"
     FUTURE_BEHAVIOR_REPORT = "future_behavior_report"
 
@@ -352,6 +353,24 @@ class AdvisorProfileUpdateStatus(StrEnum):
     PENDING = "pending"
     CONFIRMED = "confirmed"
     REJECTED = "rejected"
+
+
+class OpportunityRecommendationType(StrEnum):
+    WATCH = "watch"
+    RESEARCH = "research"
+    BLOCKED = "blocked"
+    AVOID = "avoid"
+    ACTION_CANDIDATE = "action_candidate"
+
+
+class OpportunityCategory(StrEnum):
+    CORE_ETF = "core_etf"
+    SECTOR_ROTATION = "sector_rotation"
+    THEME = "theme"
+    SINGLE_STOCK = "single_stock"
+    DEFENSIVE = "defensive"
+    CASH_LIKE = "cash_like"
+    AVOID = "avoid"
 
 
 class AdvisorFullBriefType(StrEnum):
@@ -2004,6 +2023,8 @@ class AdvisorAnswer(BaseModel):
     decision_required: bool = False
     details_available: bool = False
     linked_artifacts_json: list[dict[str, Any]] = Field(default_factory=list)
+    opportunity_radar_run_id: str | None = None
+    opportunity_cards_json: list[dict[str, Any]] = Field(default_factory=list)
     run_card_id: str | None = None
     paper_only: bool = True
     created_at: datetime = Field(default_factory=utc_now)
@@ -2037,6 +2058,55 @@ class AdvisorFullBrief(BaseModel):
     run_card_id: str | None = None
     sent_to_user: bool = False
     schedule_context: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class OpportunityRadarRequest(BaseModel):
+    question: str = "今晚市場有無值得留意的新機會？"
+    run_type: str = "user_question"
+    max_watch: int = Field(default=3, ge=1, le=6)
+    max_blocked: int = Field(default=3, ge=1, le=6)
+
+    @field_validator("question", "run_type")
+    @classmethod
+    def normalize_opportunity_request_text(cls, value: str) -> str:
+        return value.strip()
+
+
+class OpportunityCard(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("oppcard"))
+    run_id: str
+    rank: int = 0
+    title: str
+    category: OpportunityCategory = OpportunityCategory.THEME
+    symbols: list[str] = Field(default_factory=list)
+    recommendation_type: OpportunityRecommendationType = OpportunityRecommendationType.RESEARCH
+    confidence: AdvisorConfidence = AdvisorConfidence.MEDIUM
+    score: int = 0
+    one_line: str
+    reasons: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    evidence_layers: dict[str, list[str]] = Field(default_factory=dict)
+    upgrade_conditions: list[str] = Field(default_factory=list)
+    downgrade_conditions: list[str] = Field(default_factory=list)
+    linked_artifacts: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("symbols")
+    @classmethod
+    def normalize_opportunity_symbols(cls, value: list[str]) -> list[str]:
+        return [item.strip().upper() for item in value if item and item.strip()]
+
+
+class OpportunityRadarRun(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("opprun"))
+    question: str
+    run_type: str = "user_question"
+    market_regime_snapshot_id: str | None = None
+    portfolio_risk_snapshot_id: str | None = None
+    run_card_id: str | None = None
+    summary: str
+    cards: list[OpportunityCard] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)
 
 

@@ -26,6 +26,7 @@ from .idea_inbox import IdeaInboxService
 from .ir_feeds import IrFeedIngestor
 from .market_regime import MarketRegimeService
 from .market_news import MarketNewsIngestor
+from .opportunity_radar import OpportunityRadarService
 from .models import (
     AdvisorFullBriefType,
     AdvisorProfileConfirmationRequest,
@@ -50,6 +51,7 @@ from .models import (
     HypothesisScope,
     IdeaScreenRunRequest,
     OptionsSnapshotCreate,
+    OpportunityRadarRequest,
     PeerGroupCreate,
     ProposalCreate,
     QuoteHistoryRefreshRequest,
@@ -333,6 +335,14 @@ def daily_brief_main(brief_type: str = "morning") -> None:
 def ask_advisor_main(question: str, symbol: str | None = None) -> None:
     result = AdvisorOrchestrator(get_store(), settings=get_settings()).answer_user_question(
         AdvisorQuestionRequest(question=question, symbol=symbol),
+        actor=RunCardActor.CLI,
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def opportunity_radar_main(question: str | None = None) -> None:
+    result = OpportunityRadarService(get_store(), settings=get_settings()).run(
+        OpportunityRadarRequest(question=question or "今晚市場有無值得留意的新機會？"),
         actor=RunCardActor.CLI,
     )
     print(json.dumps(_json(result), indent=2, ensure_ascii=False))
@@ -651,6 +661,7 @@ def main() -> None:
             "data-import",
             "list-data-imports",
             "ask-advisor",
+            "opportunity-radar",
             "advisor-profile",
             "advisor-profile-suggest",
             "advisor-profile-confirm",
@@ -836,6 +847,8 @@ def main() -> None:
         if not args.question:
             parser.error("question is required for ask-advisor")
         ask_advisor_main(args.question, args.symbol)
+    if args.command == "opportunity-radar":
+        opportunity_radar_main(args.question)
     if args.command == "advisor-profile":
         advisor_profile_main()
     if args.command == "advisor-profile-suggest":

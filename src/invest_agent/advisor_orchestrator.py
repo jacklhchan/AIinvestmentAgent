@@ -29,6 +29,8 @@ from .models import (
     AdvisorRecommendation,
     AdvisorSeverity,
     AdvisorSourceType,
+    OpportunityRadarRequest,
+    OpportunityRecommendationType,
     CatalystExpectedImpact,
     CatalystStatus,
     ProposalBias,
@@ -41,6 +43,7 @@ from .models import (
     new_id,
     utc_now,
 )
+from .opportunity_radar import OpportunityRadarService
 from .run_cards import RunCardService, stable_hash
 from .store import Store
 
@@ -104,6 +107,22 @@ PORTFOLIO_STRATEGY_TERMS = [
     "策略",
     "今晚",
     "今日策略",
+]
+OPPORTUNITY_QUERY_TERMS = [
+    "opportunity",
+    "opportunities",
+    "worth buying",
+    "any other stock",
+    "what looks interesting",
+    "where should i look",
+    "market ideas",
+    "機會",
+    "新機會",
+    "值得留意",
+    "有無值得",
+    "有咩值得",
+    "市場有無",
+    "睇咩",
 ]
 PRIVATE_OFFERING_TERMS = [
     "ipo",
@@ -191,7 +210,7 @@ class AdvisorOrchestrator:
             AdvisorBriefRequest(max_items=12)
         )
         profile = self.store.get_advisor_profile()
-        decision = self._build_answer(question_id, request.question, resolution, brief, run_card.id, profile)
+        decision = self._build_answer(question_id, request.question, resolution, brief, run_card.id, profile, actor=actor)
         question = AdvisorQuestion(
             id=question_id,
             user_question=request.question,
@@ -230,6 +249,7 @@ class AdvisorOrchestrator:
                 "reason_count": len(decision.reasons),
                 "risk_count": len(decision.risks),
                 "advisor_profile_version": profile.version if profile else None,
+                "opportunity_radar_run_id": decision.opportunity_radar_run_id,
             },
             warnings=[],
             outputs=decision.model_dump(mode="json"),
@@ -423,6 +443,8 @@ class AdvisorOrchestrator:
         brief,
         run_card_id: str,
         profile: AdvisorProfile | None = None,
+        *,
+        actor: RunCardActor | str = RunCardActor.API,
     ) -> AdvisorAnswer:
         symbol = resolution.resolved_symbol
         intent = _question_intent(question)
@@ -467,6 +489,88 @@ class AdvisorOrchestrator:
         )
         if profile:
             artifacts.append({"type": "advisor_profile", "id": profile.id, "version": profile.version})
+
+        if not symbol and intent == "opportunity":
+            radar = OpportunityRadarService(self.store, settings=self.settings).run(
+                OpportunityRadarRequest(question=question),
+                actor=actor,
+            )
+            positives = [
+                card
+                for card in radar.cards
+                if card.recommendation_type
+                in {
+                    OpportunityRecommendationType.ACTION_CANDIDATE,
+                    OpportunityRecommendationType.WATCH,
+                    OpportunityRecommendationType.RESEARCH,
+                }
+            ]
+            blocked_cards = [
+                card
+                for card in radar.cards
+                if card.recommendation_type
+                in {OpportunityRecommendationType.BLOCKED, OpportunityRecommendationType.AVOID}
+            ]
+            if positives:
+                conclusion = "Opportunity Radar：有方向值得 WATCH，但未有直接 buy signal。"
+            else:
+                conclusion = "Opportunity Radar：今晚未見足夠新機會，先保守觀察。"
+            summary_parts = [radar.summary]
+            if positives:
+                summary_parts.append("WATCH / RESEARCH：" + "；".join(card.title for card in positives[:3]))
+            if blocked_cards:
+                summary_parts.append("BLOCKED / AVOID：" + "；".join(card.title for card in blocked_cards[:3]))
+            reasons = _clean_list(
+                [
+                    *profile_reasons,
+                    *[f"{card.title}：{card.one_line}" for card in positives[:3]],
+                ]
+            )[:3]
+            risks = _clean_list(
+                [
+                    *profile_risks,
+                    *[
+                        f"{card.title}：{(card.risks or card.downgrade_conditions or [card.one_line])[0]}"
+                        for card in blocked_cards[:3]
+                    ],
+                    "Opportunity Radar 只產生 evidence-ranked watchlist，不會建立 proposal 或下單。",
+                ]
+            )[:3]
+            artifacts.extend(
+                [
+                    {"type": "opportunity_radar", "id": radar.id, "run_card_id": radar.run_card_id},
+                    *[
+                        {
+                            "type": "opportunity_card",
+                            "id": card.id,
+                            "recommendation_type": card.recommendation_type.value,
+                            "symbols": card.symbols,
+                        }
+                        for card in radar.cards[:6]
+                    ],
+                ]
+            )
+            return AdvisorAnswer(
+                question_id=question_id,
+                recommendation=AdvisorSeverity.WATCH,
+                recommendation_type=AdvisorSeverity.WATCH,
+                original_symbol=resolution.original_symbol,
+                resolved_symbol=resolution.resolved_symbol,
+                symbol_resolution_status=resolution.status,
+                conclusion=conclusion,
+                summary=" ".join(summary_parts),
+                confidence=AdvisorConfidence.MEDIUM,
+                suggested_user_action="先把 Top WATCH / RESEARCH 加入觀察；若要升級，先補 primary-source evidence、portfolio fit、risk gate 與人工 confirmation。",
+                reasons=reasons or ["今晚先用 broader market radar 找方向，不直接建立 buy proposal。"],
+                risks=risks,
+                decision_required=False,
+                details_available=True,
+                linked_artifacts_json=artifacts,
+                opportunity_radar_run_id=radar.id,
+                opportunity_cards_json=[card.model_dump(mode="json") for card in radar.cards],
+                run_card_id=run_card_id,
+                paper_only=self.paper_only,
+            )
 
         if not symbol and resolution.status == SymbolResolutionStatus.PRIVATE_COMPANY:
             recommendation = AdvisorSeverity.BLOCKED
@@ -799,7 +903,7 @@ class AdvisorOrchestrator:
         for token in _uppercase_symbol_tokens(question):
             if _is_plausible_unknown_symbol(token):
                 return SymbolResolution(token, None, SymbolResolutionStatus.UNKNOWN)
-        if intent == "portfolio":
+        if intent in {"portfolio", "opportunity"}:
             return SymbolResolution(requested, None, SymbolResolutionStatus.PORTFOLIO_SCOPE)
         return SymbolResolution(requested, None, SymbolResolutionStatus.NO_SYMBOL)
 
@@ -1077,6 +1181,8 @@ def _question_intent(question: str) -> str:
     text = question.lower()
     if any(token in text for token in PRIVATE_OFFERING_TERMS):
         return "private"
+    if any(token in text for token in OPPORTUNITY_QUERY_TERMS):
+        return "opportunity"
     if any(token in text for token in ["buy", "invest", "買", "加倉", "追買", "入", "投資"]):
         return "buy"
     if any(token in text for token in ["sell", "賣", "減倉", "trim", "exit", "沽"]):

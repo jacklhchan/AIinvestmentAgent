@@ -44,6 +44,9 @@ from .models import (
     MarketRegimeSnapshot,
     NewsItem,
     OptionsSnapshot,
+    OpportunityCard,
+    OpportunityRadarRun,
+    OpportunityRecommendationType,
     PeerGroup,
     PortfolioSnapshot,
     PortfolioRiskSnapshot,
@@ -555,6 +558,23 @@ class Store:
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS opportunity_radar_runs (
+                    id TEXT PRIMARY KEY,
+                    run_type TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS opportunity_cards (
+                    id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    rank INTEGER NOT NULL,
+                    recommendation_type TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    FOREIGN KEY (run_id) REFERENCES opportunity_radar_runs(id)
                 );
                 """
             )
@@ -1552,6 +1572,82 @@ class Store:
             where=where,
             args=args,
             order_by="created_at DESC",
+            limit=limit,
+        )
+
+    def create_opportunity_radar_run(self, item: OpportunityRadarRun) -> OpportunityRadarRun:
+        self._insert_payload(
+            "opportunity_radar_runs",
+            ["id", "run_type", "created_at"],
+            [item.id, item.run_type, item.created_at.isoformat()],
+            item,
+            audit_event="opportunity_radar_run_created",
+            entity_type="opportunity_radar_run",
+            entity_id=item.id,
+            audit_payload={
+                "run_type": item.run_type,
+                "run_card_id": item.run_card_id,
+                "card_count": len(item.cards),
+            },
+        )
+        for card in item.cards:
+            self.create_opportunity_card(card)
+        return item
+
+    def get_opportunity_radar_run(self, run_id: str) -> OpportunityRadarRun | None:
+        run = self._get_payload("opportunity_radar_runs", OpportunityRadarRun, "id", run_id)
+        if not run:
+            return None
+        return run.model_copy(update={"cards": self.list_opportunity_cards(run_id=run.id, limit=100)})
+
+    def list_opportunity_radar_runs(self, *, limit: int = 20) -> list[OpportunityRadarRun]:
+        runs = self._list_payloads(
+            "opportunity_radar_runs",
+            OpportunityRadarRun,
+            order_by="created_at DESC",
+            limit=limit,
+        )
+        return [run.model_copy(update={"cards": self.list_opportunity_cards(run_id=run.id, limit=100)}) for run in runs]
+
+    def create_opportunity_card(self, item: OpportunityCard) -> OpportunityCard:
+        self._insert_payload(
+            "opportunity_cards",
+            ["id", "run_id", "rank", "recommendation_type", "created_at"],
+            [item.id, item.run_id, item.rank, item.recommendation_type.value, item.created_at.isoformat()],
+            item,
+            audit_event="opportunity_card_created",
+            entity_type="opportunity_card",
+            entity_id=item.id,
+            audit_payload={
+                "run_id": item.run_id,
+                "rank": item.rank,
+                "recommendation_type": item.recommendation_type.value,
+                "symbols": item.symbols,
+            },
+        )
+        return item
+
+    def list_opportunity_cards(
+        self,
+        *,
+        run_id: str | None = None,
+        recommendation_type: OpportunityRecommendationType | None = None,
+        limit: int = 50,
+    ) -> list[OpportunityCard]:
+        clauses: list[str] = []
+        args: list[Any] = []
+        if run_id:
+            clauses.append("run_id = ?")
+            args.append(run_id)
+        if recommendation_type:
+            clauses.append("recommendation_type = ?")
+            args.append(recommendation_type.value)
+        return self._list_payloads(
+            "opportunity_cards",
+            OpportunityCard,
+            where=" AND ".join(clauses),
+            args=tuple(args),
+            order_by="rank ASC, created_at DESC",
             limit=limit,
         )
 

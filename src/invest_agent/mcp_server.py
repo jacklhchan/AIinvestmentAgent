@@ -722,6 +722,7 @@ def list_run_cards(
         "advisor_question",
         "advisor_pulse",
         "advisor_brief",
+        "opportunity_radar",
         "future_backtest_import",
         "future_behavior_report",
     ]

@@ -6,7 +6,8 @@
 
 - FastAPI 本機控制平面：`http://127.0.0.1:8788`
 - AI Advisor Brief：首頁一鍵自動整理 portfolio、proposal、research goals、theses、catalysts、earnings reviews、behavior / shadow reports，直接輸出 research-only 建議
-- Market Context Lens：獨立追蹤 SPY/QQQ/IWM/DIA/VIXY/TLT/GLD/USO 等 broad-market symbols，只作市場背景與風險提醒，不直接產生 proposal
+- Market Context Lens：獨立追蹤 index、sector、theme、volatility、rates、gold、oil 與 cash-like ETF，只作市場背景與風險提醒，不直接產生 proposal
+- Opportunity Radar：回答「今晚市場有無值得留意的新機會？」這類 broad question，輸出 evidence-ranked WATCH / RESEARCH / BLOCKED / AVOID cards，不直接建立 proposal
 - SQLite 狀態儲存：proposal、approval、paper executions、portfolio、quotes、news、fundamentals、research goals、evidence rows、theses、thesis updates、catalysts、catalyst reviews、earnings reviews、research run cards、trade journal、behavior reports、shadow account、audit events
 - 風控/審批狀態機：TTL、重複單、notional、confidence、price drift revalidation
 - Hermes daily MCP surface：日常 Telegram 只暴露 high-level Advisor tools；底層 portfolio/news/proposal context 由 Advisor Orchestrator 背後讀取
@@ -72,6 +73,7 @@ curl -X POST http://127.0.0.1:8788/api/advisor/brief \
 `Hermes Advisor Mode` 把底層 research goal、thesis、catalyst、committee、run card 與 policy 狀態包成三個高階入口：
 
 - `POST /api/advisor/ask`：回答「而家應唔應該買 / 賣 AAPL？」這類自然語言問題，輸出 concise decision card。
+- `ask_advisor` 會把「今晚市場有無值得留意的新機會？」這類 broad opportunity question 轉入內部 Opportunity Radar，輸出 Top WATCH / RESEARCH 與 BLOCKED / AVOID ideas。
 - `POST /api/advisor/pulse/hourly`：每小時 urgent detector，只在 `watch` / `urgent` 時建議通知；SGT 00:00-07:00 quiet hours 內只有 urgent 會提示。
 - `POST /api/advisor/briefs/pre-market` / `POST /api/advisor/briefs/post-close`：建立開市前 / 收市後 full advisor brief，並按 `ACTION / WATCH / BLOCKED / INFO` 分組 recommendations。
 
@@ -79,6 +81,7 @@ CLI：
 
 ```bash
 python -m invest_agent.cli ask-advisor "Should I buy AAPL now?" --symbol AAPL
+python -m invest_agent.cli opportunity-radar "今晚市場有無值得留意的新機會？"
 python -m invest_agent.cli advisor-pulse
 python -m invest_agent.cli pre-market-brief
 python -m invest_agent.cli post-close-brief
@@ -94,6 +97,17 @@ Advisor Profile update 必須先由 Hermes 建立 pending suggestion，再由你
 
 安全邊界不變：Advisor output 只會寫 advisor question / pulse / brief / recommendation / run card，不會建立 `PENDING` proposal、不會 approve、不會 unlock Futu，也不會送 live order。若你仍想買賣，仍要走 `InvestmentService`、evidence gate、thesis/catalyst invariants、policy engine 與人工確認。
 
+Opportunity Radar 是 Advisor Mode 的內部 service。它使用 market regime、sector/theme ETF、symbol-specific quote/news/fundamentals/thesis/catalyst、portfolio fit、risk gate、behavior/shadow evidence 六層資料做 deterministic scoring。輸出可以是 `watch`、`research`、`blocked`、`avoid` 或 `action_candidate`；`action_candidate` 仍只代表「可考慮建立研究 / proposal candidate」，不是買入指令。
+
+REST API：
+
+```bash
+curl -X POST http://127.0.0.1:8788/api/opportunity-radar/run \
+  -H "Content-Type: application/json" \
+  -d '{"question":"今晚市場有無值得留意的新機會？"}'
+curl http://127.0.0.1:8788/api/opportunity-radar/runs
+```
+
 macOS launchd 範例在 `deploy/launchd/com.local.invest-agent-advisor-scheduler.plist`。它會常駐 `advisor-scheduler-loop`，每分鐘檢查是否要跑 hourly pulse、pre-market brief 或 post-close brief；同一個 market session 不會重複建立 full brief。
 
 ## Market Context Lens
@@ -101,10 +115,10 @@ macOS launchd 範例在 `deploy/launchd/com.local.invest-agent-advisor-scheduler
 Market Context Lens 是 broad-market 背景層，和交易 watchlist 分開。它預設追蹤：
 
 ```bash
-INVEST_AGENT_MARKET_CONTEXT_SYMBOLS=SPY,QQQ,IWM,DIA,VIXY,TLT,GLD,USO
+INVEST_AGENT_MARKET_CONTEXT_SYMBOLS=SPY,QQQ,IWM,DIA,VIXY,TLT,GLD,USO,XLK,XLF,XLE,XLV,XLY,XLP,XLI,XLU,XLB,XLRE,SMH,SOXX,IGV,XBI,IBB,ITA,KRE,SCHD,SGOV,BIL
 ```
 
-這些 symbols 用來理解大盤、科技成長股、小型股、波動率、利率、黃金與油價環境。它們會進入 Advisor Brief 的背景檢查，但不會自動成為 proposal draft 候選。
+這些 symbols 用來理解大盤、sector/theme rotation、科技成長股、小型股、波動率、利率、黃金、油價與 cash-like 環境。它們會進入 Advisor Brief / Opportunity Radar 的背景檢查，但不會自動成為 proposal draft 候選。
 
 Dashboard 的 `市場摘要` 會顯示最近 24 條新聞；`市場全景` 則按 broad-market symbol 顯示 quote/news coverage。Futu read-only refresh 會嘗試為 market-context symbols 抓 quote snapshot；若該 symbol 沒有 quote 權限或 OpenD 無法返回，系統仍保留 news-only context。
 

@@ -53,6 +53,8 @@ EXPECTED_SCHEMA: dict[str, set[str]] = {
     "market_regime_snapshots": {"id", "created_at", "risk_appetite", "proposal_bias", "payload"},
     "news": {"id", "symbol", "payload", "published_at"},
     "options_snapshots": {"id", "symbol", "expiry", "created_at", "payload"},
+    "opportunity_cards": {"id", "run_id", "rank", "recommendation_type", "created_at", "payload"},
+    "opportunity_radar_runs": {"id", "run_type", "created_at", "payload"},
     "peer_groups": {"id", "name", "sector", "created_at", "payload"},
     "portfolio": {"id", "payload"},
     "portfolio_risk_snapshots": {"id", "as_of", "payload"},

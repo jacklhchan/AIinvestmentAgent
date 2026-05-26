@@ -28,6 +28,7 @@ from .market_news import MarketNewsIngestor, external_ticker, resolve_watchlist_
 from .market_context import MarketContextService
 from .market_regime import MarketRegimeService
 from .options_lens import OptionsLensService
+from .opportunity_radar import OpportunityRadarService
 from .portfolio_studio import PortfolioStudioService
 from .quote_history import QuoteHistoryService
 from .sector_lens import SectorLensService
@@ -64,6 +65,7 @@ from .models import (
     IdeaCandidateStatus,
     IdeaScreenRunRequest,
     OptionsSnapshotCreate,
+    OpportunityRadarRequest,
     PeerGroupCreate,
     ProposalCreate,
     ProposalStatus,
@@ -265,6 +267,27 @@ def advisor_recommendations(
         symbol=symbol,
         limit=limit,
     )
+
+
+@app.post("/api/opportunity-radar/run")
+def run_opportunity_radar(request: OpportunityRadarRequest | None = None):
+    return OpportunityRadarService(get_store(), settings=get_settings()).run(
+        request or OpportunityRadarRequest(),
+        actor=RunCardActor.API,
+    )
+
+
+@app.get("/api/opportunity-radar/runs")
+def opportunity_radar_runs(limit: int = 20):
+    return get_store().list_opportunity_radar_runs(limit=limit)
+
+
+@app.get("/api/opportunity-radar/runs/{run_id}")
+def opportunity_radar_run(run_id: str):
+    run = get_store().get_opportunity_radar_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail=f"opportunity radar run not found: {run_id}")
+    return run
 
 
 @app.get("/api/watchlist")
@@ -1495,6 +1518,7 @@ DASHBOARD_HTML = """
           <button class="secondary" id="advisor-pulse-run" type="button">Hourly Pulse</button>
           <button class="secondary" id="advisor-pre-run" type="button">開市前 Brief</button>
           <button class="secondary" id="advisor-post-run" type="button">收市後 Brief</button>
+          <button class="secondary" id="opportunity-radar-run" type="button">機會雷達</button>
         </div>
       </div>
       <div class="advisor-mode-grid">
@@ -1515,6 +1539,9 @@ DASHBOARD_HTML = """
             <div class="muted">未有 full advisor brief。</div>
           </div>
         </div>
+      </div>
+      <div id="opportunity-radar" class="decision-card">
+        <div class="muted">機會雷達會顯示 WATCH / RESEARCH / BLOCKED ideas，不會建立 proposal。</div>
       </div>
       <div class="recommendation-groups" id="advisor-recommendations"></div>
     </section>
@@ -1904,6 +1931,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       safe_autonomy_cycle: "自治循環",
       proposal_draft: "提案草稿",
       market_regime: "市場狀態",
+      opportunity_radar: "機會雷達",
       future_backtest_import: "Backtest 匯入",
       future_behavior_report: "交易行為報告"
     };
@@ -2138,6 +2166,14 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       }
       const reasons = (answer.reasons || []).slice(0, 3).map(item => `<li>${escapeHtml(item)}</li>`).join("");
       const risks = (answer.risks || []).slice(0, 3).map(item => `<li>${escapeHtml(item)}</li>`).join("");
+      const opportunityCards = (answer.opportunity_cards_json || []).slice(0, 6).map(card => `
+        <div class="advisor-item">
+          <div class="advisor-meta">${pill(card.recommendation_type, card.recommendation_type)} ${pill(card.confidence, `信心 ${card.confidence}`)}</div>
+          <div class="item-title">${escapeHtml(card.title)}</div>
+          <div>${escapeHtml(card.one_line || "")}</div>
+          <div class="muted">${escapeHtml((card.symbols || []).join(", "))}</div>
+        </div>
+      `).join("");
       shell.innerHTML = `
         <div class="advisor-meta">
           ${pill(answer.recommendation_type, advisorSeverityLabels[answer.recommendation_type] || answer.recommendation_type)}
@@ -2148,6 +2184,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         <div>${escapeHtml(answer.summary)}</div>
         <div><div class="label">主要原因</div><ol>${reasons || "<li>暫時沒有足夠資料。</li>"}</ol></div>
         <div><div class="label">主要風險</div><ol>${risks || "<li>Advice 不等於交易。</li>"}</ol></div>
+        ${opportunityCards ? `<div><div class="label">機會雷達</div>${opportunityCards}</div>` : ""}
         <div class="muted">你可以：${escapeHtml(answer.suggested_user_action)}</div>
       `;
     }
@@ -2187,6 +2224,28 @@ proposal 需要靠 manual override 才能成立</textarea></div>
           ${body}
         </div>`;
       }).join("");
+    }
+
+    function renderOpportunityRadar(payload) {
+      const shell = document.querySelector("#opportunity-radar");
+      const run = Array.isArray(payload) ? payload[0] : payload;
+      if (!run) {
+        shell.innerHTML = `<div class="muted">機會雷達未有 run。</div>`;
+        return;
+      }
+      const cards = (run.cards || []).slice(0, 6).map(card => `
+        <div class="advisor-item">
+          <div class="advisor-meta">${pill(card.recommendation_type, card.recommendation_type)} ${pill(card.category, card.category)} ${pill(card.confidence, `信心 ${card.confidence}`)}</div>
+          <div class="item-title">${escapeHtml(card.title)}</div>
+          <div>${escapeHtml(card.one_line || "")}</div>
+          <div class="muted">${escapeHtml((card.symbols || []).join(", "))}</div>
+        </div>
+      `).join("") || `<div class="advisor-item"><div class="muted">暫時沒有 radar cards。</div></div>`;
+      shell.innerHTML = `
+        <div class="advisor-meta">${pill("watch", "機會雷達")} ${pill("PENDING", "research-only")}</div>
+        <div class="advisor-headline">${escapeHtml(run.summary || "機會雷達已更新")}</div>
+        <div class="advisor-list">${cards}</div>
+      `;
     }
 
     function groupRecommendations(items) {
@@ -2547,10 +2606,11 @@ proposal 需要靠 manual override 才能成立</textarea></div>
     }
 
     async function loadAll() {
-      const [advisorBrief, advisorFullBrief, advisorRecommendations, marketContext, marketRegime, health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, researchGoals, theses, catalysts, earningsReviews, runCards, behaviorReports, tradeImports, tradeRoundtrips, shadowStrategies, shadowReports, shadowEvents] = await Promise.all([
+      const [advisorBrief, advisorFullBrief, advisorRecommendations, opportunityRadarRuns, marketContext, marketRegime, health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, researchGoals, theses, catalysts, earningsReviews, runCards, behaviorReports, tradeImports, tradeRoundtrips, shadowStrategies, shadowReports, shadowEvents] = await Promise.all([
         api("/api/advisor/brief"),
         api("/api/advisor/briefs/latest"),
         api("/api/advisor/recommendations?limit=12"),
+        api("/api/opportunity-radar/runs?limit=1"),
         api("/api/market-context"),
         api("/api/market-regime"),
         api("/health"),
@@ -2585,6 +2645,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       renderAdvisorBrief(advisorBrief);
       renderAdvisorFullBrief(advisorFullBrief);
       renderAdvisorRecommendations(advisorRecommendations);
+      renderOpportunityRadar(opportunityRadarRuns);
       renderMarketRegime(marketRegime);
       renderMarketContext(marketContext);
       renderSourceStrip(health, portfolio, quotes, futuStatus);
@@ -2706,6 +2767,24 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         renderAdvisorFullBrief(brief);
         setToast("收市後 Advisor Brief 已建立；沒有建立 proposal。");
         await loadAll();
+      } catch (error) {
+        setToast(error.message);
+      } finally {
+        event.target.disabled = false;
+      }
+    });
+    document.querySelector("#opportunity-radar-run").addEventListener("click", async event => {
+      event.target.disabled = true;
+      setToast("正在執行機會雷達；只會產生 WATCH / RESEARCH / BLOCKED，不會建立 proposal...");
+      try {
+        const radar = await api("/api/opportunity-radar/run", {
+          method: "POST",
+          body: JSON.stringify({ question: "今晚市場有無值得留意的新機會？", run_type: "dashboard" })
+        });
+        renderOpportunityRadar(radar);
+        setToast("機會雷達已更新；沒有建立 proposal 或下單。");
+        await loadAll();
+        renderOpportunityRadar(radar);
       } catch (error) {
         setToast(error.message);
       } finally {

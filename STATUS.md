@@ -13,7 +13,8 @@ This version is intentionally paper-only. It can create trade proposals, run pol
 - FastAPI control plane on `127.0.0.1:8788`.
 - AI Advisor Brief first-screen workflow that automatically summarizes portfolio, proposal, thesis, catalyst, earnings, behavior, shadow, and research-goal state into research-only advice.
 - Hermes Advisor Mode with concise Ask Hermes decision cards, hourly urgent pulses, pre-market / post-close full advisor briefs, stored advisor recommendations, REST / CLI / MCP entry points, and quiet-hours notification policy.
-- Market Context Lens with broad-market symbols for index, volatility, rates, gold, and oil context; it informs advice but does not create proposal candidates.
+- Opportunity Radar for broad questions like "今晚市場有無值得留意的新機會？"; it creates evidence-ranked WATCH / RESEARCH / BLOCKED / AVOID cards and cannot create proposals.
+- Market Context Lens with broad-market, sector, theme, volatility, rates, gold, oil, and cash-like ETF context; it informs advice but does not create proposal candidates.
 - Market Regime / Risk Budget Lens that deterministically turns broad-market quote/news context into risk appetite, growth/rates/volatility/inflation pressure, and proposal-bias background.
 - Hypothesis Registry / Research Autopilot spine with hypothesis lifecycle, run-card/research/thesis/catalyst links, and MCP-created drafts kept unconfirmed.
 - Portfolio Studio / Risk X-ray with allocation drift, concentration warnings, rebalance reviews, and candidates that can only promote to research goals.
@@ -54,7 +55,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - low-level research / proposal / approval tools remain in the local control plane but are hidden from daily Hermes gateway usage.
 - Hermes config snippet at `deploy/hermes/config.snippet.yaml`.
 - launchd example plists at `deploy/launchd/com.local.invest-agent-api.plist` and `deploy/launchd/com.local.invest-agent-scheduler.plist`.
-- Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, non-pending state handling, Futu adapter mapping, dashboard localization, news parsing, watchlist resolution, market context/regime guardrails, SEC/IR parsing, event replay, proposal draft creation, research evidence gates, thesis tracker behavior, catalyst calendar invariants, earnings review/preview behavior, research run card artifacts, trade journal behavior analytics, quote-history-backed shadow diagnostics, hypothesis/portfolio/backtest/data-bridge/daily-brief/sector/options/dividend/idea/committee/skill-validator/data-quality layers, and AI Advisor Brief behavior.
+- Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, non-pending state handling, Futu adapter mapping, dashboard localization, news parsing, watchlist resolution, market context/regime guardrails, SEC/IR parsing, event replay, proposal draft creation, research evidence gates, thesis tracker behavior, catalyst calendar invariants, earnings review/preview behavior, research run card artifacts, trade journal behavior analytics, quote-history-backed shadow diagnostics, hypothesis/portfolio/backtest/data-bridge/daily-brief/sector/options/dividend/idea/committee/skill-validator/data-quality layers, AI Advisor Brief behavior, and Opportunity Radar guardrails.
 
 ## AI Advisor Brief
 
@@ -77,18 +78,30 @@ Hermes now has a higher-level Advisor Mode over the existing research control pl
 - `POST /api/advisor/pulse/hourly` runs local urgent checks for market regime, catalysts, big quote moves, portfolio risk, and data quality. It stores silent/info/watch/urgent pulses and only marks `should_notify=true` for watch outside SGT quiet hours or urgent at any time.
 - `POST /api/advisor/briefs/pre-market` and `/post-close` create persisted full advisor briefs with run cards, market-session schedule context, and recommendations grouped by `ACTION / WATCH / BLOCKED / INFO`.
 - `GET /api/advisor/briefs/latest` and `GET /api/advisor/recommendations` expose the stored Advisor Mode state to dashboard/Hermes.
-- CLI commands: `ask-advisor`, `advisor-pulse`, `pre-market-brief`, `post-close-brief`.
+- CLI commands: `ask-advisor`, `opportunity-radar`, `advisor-pulse`, `pre-market-brief`, `post-close-brief`.
 - Scheduler commands: `advisor-scheduler-once` and `advisor-scheduler-loop`, with launchd sample `deploy/launchd/com.local.invest-agent-advisor-scheduler.plist`.
 - Hermes MCP high-level tools: `ask_advisor`, `get_advisor_profile`, `suggest_advisor_profile_update`, `confirm_advisor_profile_update`, `run_hourly_advisor_pulse`, `run_pre_market_advisor_brief`, `run_post_close_advisor_brief`, `get_latest_advisor_brief`.
-- Dashboard now has a `Hermes Advisor Mode` panel with Ask Hermes, Hourly Pulse, full brief actions, and recommendation groups.
+- Dashboard now has a `Hermes Advisor Mode` panel with Ask Hermes, Opportunity Radar, Hourly Pulse, full brief actions, and recommendation groups.
 - The schedule context derives NYSE/Nasdaq regular session from America/New_York time and converts to Asia/Singapore with DST handled by timezone conversion; it also applies rule-based US market holiday / early-close handling.
 - Safety boundary remains unchanged: Advisor Mode writes advisor/run-card artifacts only. It cannot create pending proposals, approve proposals, unlock Futu, or place/modify orders.
+
+## Opportunity Radar
+
+Opportunity Radar sits behind `ask_advisor` and can also be run through local REST/CLI for debugging.
+
+- Broad opportunity questions are treated as portfolio-scope research, not as single-symbol buy requests.
+- Evidence layers: market regime, sector/theme rotation, symbol-specific quote/news/fundamentals/thesis/catalyst, portfolio fit, risk gate, and behavior/shadow evidence.
+- Outputs are `watch`, `research`, `blocked`, `avoid`, or `action_candidate`; `action_candidate` is still research/proposal-candidate language, not a buy order.
+- Tables: `opportunity_radar_runs` and `opportunity_cards`.
+- Run cards use type `opportunity_radar` and include scoring version, evidence coverage, warnings, and output hashes.
+- REST: `POST /api/opportunity-radar/run`, `GET /api/opportunity-radar/runs`, `GET /api/opportunity-radar/runs/{id}`.
+- The daily Hermes MCP surface is unchanged; Hermes still calls `ask_advisor`, and Advisor Orchestrator calls Opportunity Radar internally.
 
 ## Market Context Lens
 
 The app now separates broad-market context from trade proposal watchlists.
 
-- Default symbols: `SPY,QQQ,IWM,DIA,VIXY,TLT,GLD,USO`.
+- Default symbols: `SPY,QQQ,IWM,DIA,VIXY,TLT,GLD,USO,XLK,XLF,XLE,XLV,XLY,XLP,XLI,XLU,XLB,XLRE,SMH,SOXX,IGV,XBI,IBB,ITA,KRE,SCHD,SGOV,BIL`.
 - `GET /api/market-context` returns quote/news coverage and risk notes for market context symbols.
 - `POST /api/market-context/refresh` refreshes broad-market news without creating proposals.
 - `GET /api/market-regime` returns the current deterministic market regime without side effects.

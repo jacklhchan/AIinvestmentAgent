@@ -26,6 +26,8 @@
 - Hermes daily mode 只暴露 high-level Advisor tools：`ask_advisor`、Advisor Profile suggestion/confirmation、hourly pulse、pre/post full brief、latest brief；底層 portfolio、news、regime、proposal、research artifacts 由 Advisor Orchestrator 在本機背後讀取。
 - `ask_advisor` 會保存 `original_symbol` / `resolved_symbol` / `symbol_resolution_status`，避免把 `WHAT`、`IPO`、`AI`、`US` 等 uppercase token 或 SpaceX IPO / 未上市問題誤當成 ticker。
 - Advisor Profile 更新必須先建立 pending suggestion，再由使用者明確 confirm，才會寫入版本化 profile 並影響後續 advice；閒聊不會默默改 risk preference。
+- Opportunity Radar 會處理「今晚市場有無值得留意的新機會？」這類 broad opportunity 問題，輸出 evidence-ranked WATCH / RESEARCH / BLOCKED / AVOID / ACTION_CANDIDATE cards；它是 research-only，不建立 proposal、不 approve、不下單。
+- Opportunity Radar evidence layers：market regime、sector/theme rotation、symbol-specific quote/news/fundamentals/thesis/catalyst、portfolio fit、risk gate、behavior/shadow evidence。
 - Market Context Lens 和 proposal watchlist 分開；market symbols 只影響風險背景與 advisor warning，不自動成為交易 proposal 候選。
 - Market-context quote snapshots 亦被 watchlist resolver 排除，除非該 symbol 是持倉或明確加入 `INVEST_AGENT_WATCHLIST`。
 - 這仍然是 research-only workflow：不自動建立 proposal、不自動 approve、不 unlock Futu、不送 live order。
