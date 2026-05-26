@@ -250,7 +250,7 @@ def test_ask_advisor_common_uppercase_words_are_not_symbols(tmp_path) -> None:
     store = make_store(tmp_path)
     orchestrator = AdvisorOrchestrator(store, settings=Settings(db_path=tmp_path / "test.db"))
 
-    for token in ["AI", "US"]:
+    for token in ["ACTION", "AI", "AVOID", "BLOCKED", "RECOMMENDATION", "US"]:
         answer = orchestrator.answer_user_question(
             AdvisorQuestionRequest(question=f"Should I use {token} as part of my strategy?", symbol=token)
         )
