@@ -17,6 +17,11 @@ from .models import (
     AdvisorConfidence,
     AdvisorFullBrief,
     AdvisorFullBriefType,
+    AdvisorProfile,
+    AdvisorProfileConfirmationRequest,
+    AdvisorProfileUpdate,
+    AdvisorProfileUpdateRequest,
+    AdvisorProfileUpdateStatus,
     AdvisorPulse,
     AdvisorPulseSeverity,
     AdvisorQuestion,
@@ -43,6 +48,8 @@ from .store import Store
 ADVISOR_RULE_VERSION = "hermes_advisor_mode_v1"
 NY_TZ = ZoneInfo("America/New_York")
 SGT_TZ = ZoneInfo("Asia/Singapore")
+CORE_ETFS = {"VOO", "SPY", "IVV", "VTI"}
+TECH_SYMBOL_HINTS = {"AAPL", "AMD", "GOOG", "GOOGL", "META", "MSFT", "NVDA", "QQQ", "QQQM", "TSLA"}
 SYMBOL_STOP_WORDS = {
     "A",
     "AI",
@@ -177,7 +184,8 @@ class AdvisorOrchestrator:
         brief = AdvisorService(self.store, settings=self.settings, paper_only=self.paper_only).build_brief(
             AdvisorBriefRequest(max_items=12)
         )
-        decision = self._build_answer(question_id, request.question, resolution, brief, run_card.id)
+        profile = self.store.get_advisor_profile()
+        decision = self._build_answer(question_id, request.question, resolution, brief, run_card.id, profile)
         question = AdvisorQuestion(
             id=question_id,
             user_question=request.question,
@@ -215,6 +223,7 @@ class AdvisorOrchestrator:
                 "confidence": decision.confidence.value,
                 "reason_count": len(decision.reasons),
                 "risk_count": len(decision.risks),
+                "advisor_profile_version": profile.version if profile else None,
             },
             warnings=[],
             outputs=decision.model_dump(mode="json"),
@@ -222,6 +231,54 @@ class AdvisorOrchestrator:
             write_artifacts=False,
         )
         return decision
+
+    def get_advisor_profile(self) -> dict[str, Any]:
+        return {
+            "profile": self.store.get_advisor_profile(),
+            "pending_updates": self.store.list_advisor_profile_updates(
+                status=AdvisorProfileUpdateStatus.PENDING,
+                limit=10,
+            ),
+        }
+
+    def suggest_profile_update(self, request: AdvisorProfileUpdateRequest) -> AdvisorProfileUpdate:
+        changes = _profile_changes_from_request(request)
+        if not changes:
+            raise ValueError("profile update suggestion must include at least one preference")
+        update = AdvisorProfileUpdate(
+            proposed_changes=changes,
+            rationale=request.rationale,
+            source_question_id=request.source_question_id,
+            proposed_by=request.proposed_by,
+        )
+        return self.store.create_advisor_profile_update(update)
+
+    def confirm_profile_update(
+        self,
+        update_id: str,
+        request: AdvisorProfileConfirmationRequest | None = None,
+    ) -> AdvisorProfileUpdate:
+        request = request or AdvisorProfileConfirmationRequest()
+        update = self.store.get_advisor_profile_update(update_id)
+        if not update:
+            raise ValueError(f"advisor profile update not found: {update_id}")
+        if update.status != AdvisorProfileUpdateStatus.PENDING:
+            raise ValueError(f"advisor profile update is already {update.status.value}: {update_id}")
+        if not request.confirmed:
+            update.status = AdvisorProfileUpdateStatus.REJECTED
+            update.confirmed_at = utc_now()
+            update.confirmed_by = request.confirmed_by
+            update.rejection_reason = request.rejection_reason or "Rejected by user"
+            return self.store.update_advisor_profile_update(update)
+
+        current = self.store.get_advisor_profile()
+        profile = _apply_profile_changes(current, update, confirmed_by=request.confirmed_by)
+        stored_profile = self.store.upsert_advisor_profile(profile)
+        update.status = AdvisorProfileUpdateStatus.CONFIRMED
+        update.confirmed_at = stored_profile.updated_at
+        update.confirmed_by = request.confirmed_by
+        update.applied_profile_version = stored_profile.version
+        return self.store.update_advisor_profile_update(update)
 
     def run_hourly_pulse(
         self,
@@ -359,6 +416,7 @@ class AdvisorOrchestrator:
         resolution: SymbolResolution,
         brief,
         run_card_id: str,
+        profile: AdvisorProfile | None = None,
     ) -> AdvisorAnswer:
         symbol = resolution.resolved_symbol
         intent = _question_intent(question)
@@ -393,6 +451,16 @@ class AdvisorOrchestrator:
 
         extra_reasons: list[str] = []
         extra_risks: list[str] = []
+        profile_reasons, profile_risks, profile_blocks = self._profile_context(
+            profile,
+            intent,
+            symbol,
+            quote,
+            position,
+            resolution,
+        )
+        if profile:
+            artifacts.append({"type": "advisor_profile", "id": profile.id, "version": profile.version})
 
         if not symbol and resolution.status == SymbolResolutionStatus.PRIVATE_COMPANY:
             recommendation = AdvisorSeverity.BLOCKED
@@ -446,12 +514,17 @@ class AdvisorOrchestrator:
             action = "用例如「Hermes，我而家應唔應該買 AAPL？」再問一次。"
             confidence = AdvisorConfidence.LOW
         elif intent == "buy":
-            if hard_block or proposal_bias == ProposalBias.DEFENSIVE_ONLY.value or risk_appetite == RiskAppetite.RISK_OFF.value:
+            if (
+                profile_blocks
+                or hard_block
+                or proposal_bias == ProposalBias.DEFENSIVE_ONLY.value
+                or risk_appetite == RiskAppetite.RISK_OFF.value
+            ):
                 recommendation = AdvisorSeverity.BLOCKED
                 conclusion = f"{symbol}：暫時不要買。"
-                summary = "不建議現在建立新 BUY；先等事件 / evidence / regime 重新通過。"
+                summary = "不建議現在建立新 BUY；先等 profile / event / evidence / regime 重新通過。"
                 action = "先 watch；若你仍想買，只能建立手動 proposal，並接受 evidence、thesis、catalyst、policy check。"
-                confidence = AdvisorConfidence.HIGH if hard_block else AdvisorConfidence.MEDIUM
+                confidence = AdvisorConfidence.HIGH if hard_block or profile_blocks else AdvisorConfidence.MEDIUM
             elif caution or lacks_thesis or not active_theses:
                 recommendation = AdvisorSeverity.WATCH
                 conclusion = f"{symbol}：暫時不建議追買，建議觀察。"
@@ -491,9 +564,13 @@ class AdvisorOrchestrator:
             confidence = AdvisorConfidence.MEDIUM if top_item else AdvisorConfidence.LOW
 
         reasons = _clean_list(
-            [*extra_reasons, *_top_reasons(symbol, relevant_items, quote, active_theses, regime, recommendation)]
+            [
+                *profile_reasons,
+                *extra_reasons,
+                *_top_reasons(symbol, relevant_items, quote, active_theses, regime, recommendation),
+            ]
         )
-        risks = _clean_list([*extra_risks, *_top_risks(intent, recommendation, caution)])
+        risks = _clean_list([*profile_risks, *extra_risks, *_top_risks(intent, recommendation, caution)])
         return AdvisorAnswer(
             question_id=question_id,
             recommendation=recommendation,
@@ -513,6 +590,52 @@ class AdvisorOrchestrator:
             run_card_id=run_card_id,
             paper_only=self.paper_only,
         )
+
+    def _profile_context(
+        self,
+        profile: AdvisorProfile | None,
+        intent: str,
+        symbol: str | None,
+        quote,
+        position,
+        resolution: SymbolResolution,
+    ) -> tuple[list[str], list[str], bool]:
+        if not profile:
+            return [], [], False
+        reasons = [f"已套用 Advisor Profile v{profile.version}（{profile.risk_profile.value}）。"]
+        risks: list[str] = []
+        blocks = False
+        if resolution.status == SymbolResolutionStatus.PRIVATE_COMPANY and profile.allow_ipo_or_private is False:
+            reasons.append("你的 profile 不允許 IPO / 未上市私募類投資；只能保留為研究。")
+            blocks = True
+        if intent == "buy" and quote and quote.change_pct is not None and profile.avoid_chasing_after_big_move:
+            if quote.change_pct >= 3:
+                reasons.append(f"你的 profile 設定不追高；{symbol} 本機行情已變動 {quote.change_pct:+.2f}%。")
+                blocks = True
+        if intent == "buy" and symbol and profile.prefer_core_etf and external_ticker(symbol) not in CORE_ETFS:
+            reasons.append("你的 profile 偏好核心 ETF 優先；單股加倉需要更強 evidence。")
+        if intent == "buy" and position and profile.max_single_stock_weight is not None:
+            total = self.store.get_portfolio().total_value_usd or 0
+            if total > 0:
+                weight = position.market_value / total
+                if weight >= profile.max_single_stock_weight:
+                    reasons.append(
+                        f"{symbol} 已佔 portfolio 約 {weight:.1%}，高於你確認的單股上限 {profile.max_single_stock_weight:.1%}。"
+                    )
+                    blocks = True
+        if intent in {"buy", "portfolio"} and profile.max_tech_exposure is not None:
+            tech_weight = _tech_exposure_weight(self.store.get_portfolio())
+            if tech_weight >= profile.max_tech_exposure:
+                reasons.append(
+                    f"科技相關曝險約 {tech_weight:.1%}，高於你確認的上限 {profile.max_tech_exposure:.1%}。"
+                )
+                blocks = True
+        if profile.min_cash_weight is not None:
+            portfolio = self.store.get_portfolio()
+            total = portfolio.total_value_usd or portfolio.cash_usd + sum(item.market_value for item in portfolio.positions)
+            if total > 0 and portfolio.cash_usd / total < profile.min_cash_weight:
+                risks.append(f"現金比例低於你確認的底線 {profile.min_cash_weight:.1%}；新增買入會降低 buffer。")
+        return _clean_list(reasons)[:3], _clean_list(risks)[:3], blocks
 
     def _build_pulse_recommendations(self, pulse_id: str, now: datetime) -> list[AdvisorRecommendation]:
         recommendations: list[AdvisorRecommendation] = []
@@ -895,6 +1018,53 @@ def _recommendation_from_brief_item(
         linked_artifacts=[{"type": item.category, "id": related_id} for related_id in item.related_ids[:5]],
         created_at=created_at,
     )
+
+
+def _profile_changes_from_request(request: AdvisorProfileUpdateRequest) -> dict[str, Any]:
+    raw = request.model_dump(
+        mode="json",
+        exclude_none=True,
+        exclude={"rationale", "source_question_id", "proposed_by"},
+    )
+    return {key: value for key, value in raw.items() if value != []}
+
+
+def _apply_profile_changes(
+    current: AdvisorProfile | None,
+    update: AdvisorProfileUpdate,
+    *,
+    confirmed_by: str,
+) -> AdvisorProfile:
+    next_version = (current.version + 1) if current else 1
+    base = current.model_dump(mode="json") if current else AdvisorProfile(version=1).model_dump(mode="json")
+    notes = list(base.get("notes") or [])
+    changes = dict(update.proposed_changes)
+    if "notes" in changes:
+        notes = _clean_list([*notes, *changes.pop("notes")])
+    base.update(changes)
+    base.update(
+        {
+            "id": "default",
+            "version": next_version,
+            "notes": notes,
+            "confirmed_by": confirmed_by,
+            "source_update_id": update.id,
+            "updated_at": utc_now().isoformat(),
+        }
+    )
+    return AdvisorProfile.model_validate(base)
+
+
+def _tech_exposure_weight(portfolio) -> float:
+    total = portfolio.total_value_usd or portfolio.cash_usd + sum(position.market_value for position in portfolio.positions)
+    if total <= 0:
+        return 0.0
+    tech_value = sum(
+        position.market_value
+        for position in portfolio.positions
+        if external_ticker(position.symbol) in TECH_SYMBOL_HINTS
+    )
+    return tech_value / total
 
 
 def _question_intent(question: str) -> str:

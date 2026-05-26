@@ -35,6 +35,9 @@ from .skill_validator import SkillValidatorService
 from .models import (
     AdvisorBriefRequest,
     AdvisorFullBriefType,
+    AdvisorProfileConfirmationRequest,
+    AdvisorProfileUpdateRequest,
+    AdvisorProfileUpdateStatus,
     AdvisorQuestionRequest,
     AdvisorSeverity,
     BacktestImportRequest,
@@ -197,6 +200,32 @@ def run_advisor_brief(request: AdvisorBriefRequest | None = None):
 @app.post("/api/advisor/ask")
 def ask_advisor(request: AdvisorQuestionRequest):
     return AdvisorOrchestrator(get_store(), settings=get_settings()).answer_user_question(request, actor=RunCardActor.API)
+
+
+@app.get("/api/advisor/profile")
+def advisor_profile():
+    return AdvisorOrchestrator(get_store(), settings=get_settings()).get_advisor_profile()
+
+
+@app.post("/api/advisor/profile/updates")
+def suggest_advisor_profile_update(request: AdvisorProfileUpdateRequest):
+    try:
+        return AdvisorOrchestrator(get_store(), settings=get_settings()).suggest_profile_update(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/advisor/profile/updates/{update_id}/confirm")
+def confirm_advisor_profile_update(update_id: str, request: AdvisorProfileConfirmationRequest | None = None):
+    try:
+        return AdvisorOrchestrator(get_store(), settings=get_settings()).confirm_profile_update(update_id, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/advisor/profile/updates")
+def advisor_profile_updates(status: AdvisorProfileUpdateStatus | None = None, limit: int = 20):
+    return get_store().list_advisor_profile_updates(status=status, limit=limit)
 
 
 @app.post("/api/advisor/pulse/hourly")

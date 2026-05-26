@@ -12,6 +12,9 @@ from invest_agent.demo_data import seed_demo_data
 from invest_agent.models import (
     AdvisorBriefRequest,
     AdvisorFullBriefType,
+    AdvisorProfileConfirmationRequest,
+    AdvisorProfileUpdateRequest,
+    AdvisorProfileUpdateStatus,
     AdvisorQuestionRequest,
     AdvisorSeverity,
     Quote,
@@ -80,6 +83,9 @@ def test_mcp_exposes_advisor_brief() -> None:
     assert hasattr(mcp_server, "run_pre_market_advisor_brief")
     assert hasattr(mcp_server, "run_post_close_advisor_brief")
     assert hasattr(mcp_server, "get_latest_advisor_brief")
+    assert hasattr(mcp_server, "get_advisor_profile")
+    assert hasattr(mcp_server, "suggest_advisor_profile_update")
+    assert hasattr(mcp_server, "confirm_advisor_profile_update")
 
 
 def test_ask_advisor_returns_concise_card_without_proposal_side_effect(tmp_path) -> None:
@@ -102,6 +108,91 @@ def test_ask_advisor_returns_concise_card_without_proposal_side_effect(tmp_path)
     assert answer.details_available is True
     assert len(store.list_advisor_questions(limit=10)) == 1
     assert store.list_advisor_recommendations(limit=10)
+    assert len(store.list_proposals(limit=100)) == proposal_count
+
+
+def test_profile_update_requires_confirmation_before_applying(tmp_path) -> None:
+    store = make_store(tmp_path)
+    orchestrator = AdvisorOrchestrator(store, settings=Settings(db_path=tmp_path / "test.db"))
+
+    update = orchestrator.suggest_profile_update(
+        AdvisorProfileUpdateRequest(
+            risk_profile="moderate_conservative",
+            max_single_stock_weight=0.2,
+            prefer_core_etf=True,
+            avoid_chasing_after_big_move=True,
+            rationale="User repeatedly said they prefer ETF-first and do not want to chase.",
+            source_question_id="advq_test",
+        )
+    )
+
+    assert update.status == AdvisorProfileUpdateStatus.PENDING
+    assert store.get_advisor_profile() is None
+    assert store.list_advisor_profile_updates(status=AdvisorProfileUpdateStatus.PENDING, limit=10)
+
+    confirmed = orchestrator.confirm_profile_update(
+        update.id,
+        AdvisorProfileConfirmationRequest(confirmed=True, confirmed_by="test-user"),
+    )
+    profile = store.get_advisor_profile()
+
+    assert confirmed.status == AdvisorProfileUpdateStatus.CONFIRMED
+    assert confirmed.applied_profile_version == 1
+    assert profile is not None
+    assert profile.version == 1
+    assert profile.risk_profile.value == "moderate_conservative"
+    assert profile.max_single_stock_weight == 0.2
+    assert profile.prefer_core_etf is True
+    assert profile.avoid_chasing_after_big_move is True
+
+
+def test_rejected_profile_update_does_not_apply(tmp_path) -> None:
+    store = make_store(tmp_path)
+    orchestrator = AdvisorOrchestrator(store, settings=Settings(db_path=tmp_path / "test.db"))
+    update = orchestrator.suggest_profile_update(
+        AdvisorProfileUpdateRequest(
+            allow_options=True,
+            rationale="User mentioned maybe using options, but did not confirm.",
+        )
+    )
+
+    rejected = orchestrator.confirm_profile_update(
+        update.id,
+        AdvisorProfileConfirmationRequest(confirmed=False, confirmed_by="test-user", rejection_reason="Not now"),
+    )
+
+    assert rejected.status == AdvisorProfileUpdateStatus.REJECTED
+    assert rejected.rejection_reason == "Not now"
+    assert store.get_advisor_profile() is None
+
+
+def test_ask_advisor_uses_confirmed_profile_without_proposal_side_effect(tmp_path) -> None:
+    store = make_store(tmp_path)
+    proposal_count = len(store.list_proposals(limit=100))
+    orchestrator = AdvisorOrchestrator(store, settings=Settings(db_path=tmp_path / "test.db"))
+    update = orchestrator.suggest_profile_update(
+        AdvisorProfileUpdateRequest(
+            risk_profile="moderate_conservative",
+            avoid_chasing_after_big_move=True,
+            rationale="User confirmed they do not want to chase after large moves.",
+        )
+    )
+    orchestrator.confirm_profile_update(update.id, AdvisorProfileConfirmationRequest(confirmed_by="test-user"))
+    store.upsert_quote(
+        Quote(
+            symbol="AAPL",
+            last_price=220,
+            previous_close=205,
+            change_pct=7.32,
+            updated_at=datetime(2026, 5, 27, 14, 0, tzinfo=timezone.utc),
+            source="test",
+        )
+    )
+
+    answer = orchestrator.answer_user_question(AdvisorQuestionRequest(question="Should I buy AAPL now?", symbol="AAPL"))
+
+    assert answer.recommendation_type == AdvisorSeverity.BLOCKED
+    assert any("profile" in reason.lower() or "不追高" in reason for reason in answer.reasons)
     assert len(store.list_proposals(limit=100)) == proposal_count
 
 

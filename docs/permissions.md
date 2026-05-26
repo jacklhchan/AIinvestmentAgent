@@ -17,6 +17,7 @@ Permission classes:
 | `apply_earnings_review_to_thesis` | `research_write` | `execution_forbidden` |
 | `approve_trade_proposal` | `approval_write` | `execution_forbidden` |
 | `ask_advisor` | `research_write` | `execution_forbidden` |
+| `confirm_advisor_profile_update` | `research_write` | `execution_forbidden` |
 | `complete_catalyst_with_research_goal` | `research_write` | `execution_forbidden` |
 | `create_catalyst` | `research_write` | `execution_forbidden` |
 | `create_hypothesis_draft` | `research_write` | `execution_forbidden` |
@@ -27,6 +28,7 @@ Permission classes:
 | `draft_trade_proposals_from_watchlist` | `proposal_write` | `execution_forbidden` |
 | `export_event_replay_file` | `research_write` | `execution_forbidden` |
 | `get_advisor_brief` | `research_write` | `execution_forbidden` |
+| `get_advisor_profile` | `read_only` | `execution_forbidden` |
 | `get_backtest_import` | `read_only` | `execution_forbidden` |
 | `get_behavior_report` | `read_only` | `execution_forbidden` |
 | `get_catalyst_snapshot` | `read_only` | `execution_forbidden` |
@@ -102,5 +104,6 @@ Permission classes:
 | `run_post_close_advisor_brief` | `research_write` | `execution_forbidden` |
 | `run_pre_market_advisor_brief` | `research_write` | `execution_forbidden` |
 | `run_safe_autonomy_cycle` | `proposal_write` | `execution_forbidden` |
+| `suggest_advisor_profile_update` | `research_write` | `execution_forbidden` |
 
 Next-phase research cockpit tools are intentionally limited to `read_only` or `research_write`. Promotion paths such as idea-to-research-goal and rebalance-candidate-to-research-goal create research goals only; they do not create `PENDING` proposals. Severe thesis changes from earnings review remain blocked without human confirmation.

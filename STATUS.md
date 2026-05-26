@@ -44,6 +44,9 @@ This version is intentionally paper-only. It can create trade proposals, run pol
 - Futu OpenD read-only refresh for account funds, positions, and position quote snapshots.
 - Hermes daily stdio MCP surface exposing only high-level Advisor tools:
   - `ask_advisor`
+  - `get_advisor_profile`
+  - `suggest_advisor_profile_update`
+  - `confirm_advisor_profile_update`
   - `run_hourly_advisor_pulse`
   - `run_pre_market_advisor_brief`
   - `run_post_close_advisor_brief`
@@ -70,12 +73,13 @@ Hermes now has a higher-level Advisor Mode over the existing research control pl
 
 - `POST /api/advisor/ask` returns a concise decision card with conclusion, `action/watch/blocked/info`, confidence, top reasons, top risks, suggested user action, and linked artifacts.
 - `ask_advisor` stores `original_symbol`, `resolved_symbol`, and `symbol_resolution_status` so audit history can distinguish resolved tickers from unknown tokens, private-company / IPO questions, portfolio-scope questions, and no-symbol questions.
+- Advisor Profile supports explicit pending suggestions and user confirmation before applying risk preferences. Confirmed profile fields include risk profile, single-stock / tech / sector exposure caps, cash floor, core-ETF preference, chasing guardrail, options preference, and IPO/private-company preference.
 - `POST /api/advisor/pulse/hourly` runs local urgent checks for market regime, catalysts, big quote moves, portfolio risk, and data quality. It stores silent/info/watch/urgent pulses and only marks `should_notify=true` for watch outside SGT quiet hours or urgent at any time.
 - `POST /api/advisor/briefs/pre-market` and `/post-close` create persisted full advisor briefs with run cards, market-session schedule context, and recommendations grouped by `ACTION / WATCH / BLOCKED / INFO`.
 - `GET /api/advisor/briefs/latest` and `GET /api/advisor/recommendations` expose the stored Advisor Mode state to dashboard/Hermes.
 - CLI commands: `ask-advisor`, `advisor-pulse`, `pre-market-brief`, `post-close-brief`.
 - Scheduler commands: `advisor-scheduler-once` and `advisor-scheduler-loop`, with launchd sample `deploy/launchd/com.local.invest-agent-advisor-scheduler.plist`.
-- Hermes MCP high-level tools: `ask_advisor`, `run_hourly_advisor_pulse`, `run_pre_market_advisor_brief`, `run_post_close_advisor_brief`, `get_latest_advisor_brief`.
+- Hermes MCP high-level tools: `ask_advisor`, `get_advisor_profile`, `suggest_advisor_profile_update`, `confirm_advisor_profile_update`, `run_hourly_advisor_pulse`, `run_pre_market_advisor_brief`, `run_post_close_advisor_brief`, `get_latest_advisor_brief`.
 - Dashboard now has a `Hermes Advisor Mode` panel with Ask Hermes, Hourly Pulse, full brief actions, and recommendation groups.
 - The schedule context derives NYSE/Nasdaq regular session from America/New_York time and converts to Asia/Singapore with DST handled by timezone conversion; it also applies rule-based US market holiday / early-close handling.
 - Safety boundary remains unchanged: Advisor Mode writes advisor/run-card artifacts only. It cannot create pending proposals, approve proposals, unlock Futu, or place/modify orders.
@@ -112,7 +116,7 @@ The global Hermes config at `/Users/apple/.hermes/config.yaml` has been updated 
 
 `hermes auth status openai-codex` shows logged in.
 
-`/Users/apple/.hermes/hermes-agent/venv/bin/hermes mcp list` for the daily gateway should show `invest_agent` with the 5 high-level Advisor tools only. Low-level research/admin tools remain local control-plane capabilities and should not be exposed to daily Telegram mode.
+`/Users/apple/.hermes/hermes-agent/venv/bin/hermes mcp list` for the daily gateway should show `invest_agent` with high-level Advisor tools only. Low-level research/admin tools remain local control-plane capabilities and should not be exposed to daily Telegram mode.
 
 ## Futu Setup
 

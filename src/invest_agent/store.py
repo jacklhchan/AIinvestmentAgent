@@ -8,6 +8,9 @@ from typing import Any
 from .models import (
     AuditEvent,
     AdvisorFullBrief,
+    AdvisorProfile,
+    AdvisorProfileUpdate,
+    AdvisorProfileUpdateStatus,
     AdvisorPulse,
     AdvisorPulseSeverity,
     AdvisorQuestion,
@@ -536,6 +539,20 @@ class Store:
                     source_id TEXT NOT NULL,
                     symbol TEXT,
                     recommendation_type TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS advisor_profiles (
+                    id TEXT PRIMARY KEY,
+                    version INTEGER NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS advisor_profile_updates (
+                    id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     payload TEXT NOT NULL
                 );
@@ -1453,6 +1470,87 @@ class Store:
             AdvisorRecommendation,
             where=" AND ".join(clauses),
             args=tuple(args),
+            order_by="created_at DESC",
+            limit=limit,
+        )
+
+    def get_advisor_profile(self, profile_id: str = "default") -> AdvisorProfile | None:
+        return self._get_payload("advisor_profiles", AdvisorProfile, "id", profile_id)
+
+    def upsert_advisor_profile(self, item: AdvisorProfile) -> AdvisorProfile:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO advisor_profiles(id, version, updated_at, payload) VALUES(?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    version=excluded.version,
+                    updated_at=excluded.updated_at,
+                    payload=excluded.payload
+                """,
+                (item.id, item.version, item.updated_at.isoformat(), self._dump(item)),
+            )
+        self.audit(
+            "advisor_profile_upserted",
+            "advisor_profile",
+            item.id,
+            {"version": item.version, "source_update_id": item.source_update_id},
+        )
+        return item
+
+    def create_advisor_profile_update(self, item: AdvisorProfileUpdate) -> AdvisorProfileUpdate:
+        self._insert_payload(
+            "advisor_profile_updates",
+            ["id", "status", "created_at"],
+            [item.id, item.status.value, item.created_at.isoformat()],
+            item,
+            audit_event="advisor_profile_update_suggested",
+            entity_type="advisor_profile_update",
+            entity_id=item.id,
+            audit_payload={
+                "status": item.status.value,
+                "proposed_by": item.proposed_by,
+                "source_question_id": item.source_question_id,
+            },
+        )
+        return item
+
+    def get_advisor_profile_update(self, update_id: str) -> AdvisorProfileUpdate | None:
+        return self._get_payload("advisor_profile_updates", AdvisorProfileUpdate, "id", update_id)
+
+    def update_advisor_profile_update(self, item: AdvisorProfileUpdate) -> AdvisorProfileUpdate:
+        self._update_payload(
+            "advisor_profile_updates",
+            "id",
+            item.id,
+            ["status"],
+            [item.status.value],
+            item,
+        )
+        self.audit(
+            "advisor_profile_update_changed",
+            "advisor_profile_update",
+            item.id,
+            {
+                "status": item.status.value,
+                "confirmed_by": item.confirmed_by,
+                "applied_profile_version": item.applied_profile_version,
+            },
+        )
+        return item
+
+    def list_advisor_profile_updates(
+        self,
+        *,
+        status: AdvisorProfileUpdateStatus | None = None,
+        limit: int = 20,
+    ) -> list[AdvisorProfileUpdate]:
+        where = "status = ?" if status else ""
+        args: tuple[Any, ...] = (status.value,) if status else ()
+        return self._list_payloads(
+            "advisor_profile_updates",
+            AdvisorProfileUpdate,
+            where=where,
+            args=args,
             order_by="created_at DESC",
             limit=limit,
         )

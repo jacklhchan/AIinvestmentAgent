@@ -28,6 +28,8 @@ from .market_regime import MarketRegimeService
 from .market_news import MarketNewsIngestor
 from .models import (
     AdvisorFullBriefType,
+    AdvisorProfileConfirmationRequest,
+    AdvisorProfileUpdateRequest,
     AdvisorQuestionRequest,
     BacktestImportRequest,
     EarningsReviewRunRequest,
@@ -336,6 +338,44 @@ def ask_advisor_main(question: str, symbol: str | None = None) -> None:
     print(json.dumps(_json(result), indent=2, ensure_ascii=False))
 
 
+def advisor_profile_main() -> None:
+    result = AdvisorOrchestrator(get_store(), settings=get_settings()).get_advisor_profile()
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def advisor_profile_suggest_main(args) -> None:
+    result = AdvisorOrchestrator(get_store(), settings=get_settings()).suggest_profile_update(
+        AdvisorProfileUpdateRequest(
+            risk_profile=args.risk_profile,
+            max_single_stock_weight=args.max_single_stock_weight,
+            max_tech_exposure=args.max_tech_exposure,
+            max_sector_exposure=args.max_sector_exposure,
+            min_cash_weight=args.min_cash_weight,
+            prefer_core_etf=True if args.prefer_core_etf else None,
+            avoid_chasing_after_big_move=True if args.avoid_chasing_after_big_move else None,
+            allow_options=True if args.allow_options else None,
+            allow_ipo_or_private=True if args.allow_ipo_or_private else None,
+            notes=[args.note] if args.note else [],
+            rationale=args.rationale or args.note or "Advisor profile update suggested from CLI.",
+            source_question_id=args.question_id,
+            proposed_by="cli",
+        )
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def advisor_profile_confirm_main(update_id: str, confirmed_by: str | None, reject: bool, reason: str | None) -> None:
+    result = AdvisorOrchestrator(get_store(), settings=get_settings()).confirm_profile_update(
+        update_id,
+        AdvisorProfileConfirmationRequest(
+            confirmed=not reject,
+            confirmed_by=confirmed_by or "local-user",
+            rejection_reason=reason,
+        ),
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
 def advisor_pulse_main() -> None:
     result = AdvisorOrchestrator(get_store(), settings=get_settings()).run_hourly_pulse(actor=RunCardActor.CLI)
     print(json.dumps(_json(result), indent=2, ensure_ascii=False))
@@ -611,6 +651,9 @@ def main() -> None:
             "data-import",
             "list-data-imports",
             "ask-advisor",
+            "advisor-profile",
+            "advisor-profile-suggest",
+            "advisor-profile-confirm",
             "advisor-pulse",
             "pre-market-brief",
             "post-close-brief",
@@ -672,6 +715,14 @@ def main() -> None:
     parser.add_argument("--linked-id", default=None)
     parser.add_argument("--linked-type", default="run_card")
     parser.add_argument("--note", default=None)
+    parser.add_argument("--rationale", default=None)
+    parser.add_argument("--question-id", default=None)
+    parser.add_argument("--profile-update-id", default=None)
+    parser.add_argument("--risk-profile", default=None)
+    parser.add_argument("--max-single-stock-weight", type=float, default=None)
+    parser.add_argument("--max-tech-exposure", type=float, default=None)
+    parser.add_argument("--max-sector-exposure", type=float, default=None)
+    parser.add_argument("--min-cash-weight", type=float, default=None)
     parser.add_argument("--schema", default=None)
     parser.add_argument("--source-name", default="local")
     parser.add_argument("--import-id", default=None)
@@ -685,6 +736,11 @@ def main() -> None:
     parser.add_argument("--target-type", default="all")
     parser.add_argument("--refresh", action="store_true")
     parser.add_argument("--use-quote-history", action="store_true")
+    parser.add_argument("--prefer-core-etf", action="store_true")
+    parser.add_argument("--avoid-chasing-after-big-move", action="store_true")
+    parser.add_argument("--allow-options", action="store_true")
+    parser.add_argument("--allow-ipo-or-private", action="store_true")
+    parser.add_argument("--reject", action="store_true")
     args = parser.parse_args()
     if args.command == "seed":
         seed_main()
@@ -780,6 +836,15 @@ def main() -> None:
         if not args.question:
             parser.error("question is required for ask-advisor")
         ask_advisor_main(args.question, args.symbol)
+    if args.command == "advisor-profile":
+        advisor_profile_main()
+    if args.command == "advisor-profile-suggest":
+        advisor_profile_suggest_main(args)
+    if args.command == "advisor-profile-confirm":
+        update_id = args.profile_update_id or args.question
+        if not update_id:
+            parser.error("--profile-update-id is required for advisor-profile-confirm")
+        advisor_profile_confirm_main(update_id, args.confirmed_by, args.reject, args.note)
     if args.command == "advisor-pulse":
         advisor_pulse_main()
     if args.command == "pre-market-brief":

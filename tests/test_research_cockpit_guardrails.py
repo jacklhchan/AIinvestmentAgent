@@ -79,6 +79,9 @@ PERMISSIONS_DOC = REPO_ROOT / "docs" / "permissions.md"
 HERMES_CONFIG = REPO_ROOT / "deploy" / "hermes" / "config.snippet.yaml"
 HERMES_DAILY_ADVISOR_TOOLS = {
     "ask_advisor",
+    "get_advisor_profile",
+    "suggest_advisor_profile_update",
+    "confirm_advisor_profile_update",
     "run_hourly_advisor_pulse",
     "run_pre_market_advisor_brief",
     "run_post_close_advisor_brief",

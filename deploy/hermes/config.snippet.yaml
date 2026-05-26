@@ -15,6 +15,9 @@ mcp_servers:
     tools:
       include:
         - ask_advisor
+        - get_advisor_profile
+        - suggest_advisor_profile_update
+        - confirm_advisor_profile_update
         - run_hourly_advisor_pulse
         - run_pre_market_advisor_brief
         - run_post_close_advisor_brief

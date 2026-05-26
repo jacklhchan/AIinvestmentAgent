@@ -7,6 +7,8 @@ from .store import Store
 
 EXPECTED_SCHEMA: dict[str, set[str]] = {
     "advisor_briefs": {"id", "brief_type", "market_session_date", "created_at", "payload"},
+    "advisor_profile_updates": {"id", "status", "created_at", "payload"},
+    "advisor_profiles": {"id", "version", "updated_at", "payload"},
     "advisor_pulses": {"id", "pulse_type", "severity", "created_at", "payload"},
     "advisor_questions": {
         "id",

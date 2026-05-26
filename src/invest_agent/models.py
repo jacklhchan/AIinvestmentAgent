@@ -340,6 +340,20 @@ class SymbolResolutionStatus(StrEnum):
     NO_SYMBOL = "no_symbol"
 
 
+class AdvisorRiskProfile(StrEnum):
+    CONSERVATIVE = "conservative"
+    MODERATE_CONSERVATIVE = "moderate_conservative"
+    MODERATE = "moderate"
+    GROWTH = "growth"
+    AGGRESSIVE = "aggressive"
+
+
+class AdvisorProfileUpdateStatus(StrEnum):
+    PENDING = "pending"
+    CONFIRMED = "confirmed"
+    REJECTED = "rejected"
+
+
 class AdvisorFullBriefType(StrEnum):
     PRE_MARKET = "pre_market"
     POST_CLOSE = "post_close"
@@ -1878,6 +1892,60 @@ class AdvisorQuestionRequest(BaseModel):
     @classmethod
     def normalize_advisor_question_symbol(cls, value: str | None) -> str | None:
         return value.strip().upper() if value and value.strip() else None
+
+
+class AdvisorProfile(BaseModel):
+    id: str = "default"
+    version: int = Field(default=1, ge=1)
+    risk_profile: AdvisorRiskProfile = AdvisorRiskProfile.MODERATE
+    max_single_stock_weight: float | None = Field(default=None, ge=0.0, le=1.0)
+    max_tech_exposure: float | None = Field(default=None, ge=0.0, le=1.0)
+    max_sector_exposure: float | None = Field(default=None, ge=0.0, le=1.0)
+    min_cash_weight: float | None = Field(default=None, ge=0.0, le=1.0)
+    prefer_core_etf: bool = False
+    avoid_chasing_after_big_move: bool = False
+    allow_options: bool | None = None
+    allow_ipo_or_private: bool | None = None
+    notes: list[str] = Field(default_factory=list)
+    confirmed_by: str = "local-user"
+    source_update_id: str | None = None
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class AdvisorProfileUpdateRequest(BaseModel):
+    risk_profile: AdvisorRiskProfile | None = None
+    max_single_stock_weight: float | None = Field(default=None, ge=0.0, le=1.0)
+    max_tech_exposure: float | None = Field(default=None, ge=0.0, le=1.0)
+    max_sector_exposure: float | None = Field(default=None, ge=0.0, le=1.0)
+    min_cash_weight: float | None = Field(default=None, ge=0.0, le=1.0)
+    prefer_core_etf: bool | None = None
+    avoid_chasing_after_big_move: bool | None = None
+    allow_options: bool | None = None
+    allow_ipo_or_private: bool | None = None
+    notes: list[str] = Field(default_factory=list)
+    rationale: str = Field(min_length=3)
+    source_question_id: str | None = None
+    proposed_by: str = "hermes"
+
+
+class AdvisorProfileConfirmationRequest(BaseModel):
+    confirmed: bool = True
+    confirmed_by: str = "local-user"
+    rejection_reason: str | None = None
+
+
+class AdvisorProfileUpdate(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("advprofupd"))
+    status: AdvisorProfileUpdateStatus = AdvisorProfileUpdateStatus.PENDING
+    proposed_changes: dict[str, Any]
+    rationale: str
+    source_question_id: str | None = None
+    proposed_by: str = "hermes"
+    created_at: datetime = Field(default_factory=utc_now)
+    confirmed_at: datetime | None = None
+    confirmed_by: str | None = None
+    rejection_reason: str | None = None
+    applied_profile_version: int | None = None
 
 
 class AdvisorRecommendation(BaseModel):

@@ -31,6 +31,8 @@ from .sector_lens import SectorLensService
 from .models import (
     AdvisorBriefRequest,
     AdvisorFullBriefType,
+    AdvisorProfileConfirmationRequest,
+    AdvisorProfileUpdateRequest,
     AdvisorQuestionRequest,
     CommitteeReviewRunRequest,
     CorrelationRunRequest,
@@ -130,6 +132,69 @@ def ask_advisor(question: str, symbol: str | None = None, style: str = "concise"
         AdvisorOrchestrator(get_store(), settings=get_settings()).answer_user_question(
             AdvisorQuestionRequest(question=question, symbol=symbol, style=style),
             actor=RunCardActor.MCP,
+        )
+    )
+
+
+@mcp.tool()
+def get_advisor_profile() -> dict:
+    """Return the confirmed Advisor Profile plus pending profile updates. Read-only and research-only."""
+    return _json(AdvisorOrchestrator(get_store(), settings=get_settings()).get_advisor_profile())
+
+
+@mcp.tool()
+def suggest_advisor_profile_update(
+    rationale: str,
+    risk_profile: str | None = None,
+    max_single_stock_weight: float | None = None,
+    max_tech_exposure: float | None = None,
+    max_sector_exposure: float | None = None,
+    min_cash_weight: float | None = None,
+    prefer_core_etf: bool | None = None,
+    avoid_chasing_after_big_move: bool | None = None,
+    allow_options: bool | None = None,
+    allow_ipo_or_private: bool | None = None,
+    notes: list[str] | None = None,
+    source_question_id: str | None = None,
+) -> dict:
+    """Suggest a pending Advisor Profile update. It is not applied until the user confirms it."""
+    return _json(
+        AdvisorOrchestrator(get_store(), settings=get_settings()).suggest_profile_update(
+            AdvisorProfileUpdateRequest(
+                rationale=rationale,
+                risk_profile=risk_profile,
+                max_single_stock_weight=max_single_stock_weight,
+                max_tech_exposure=max_tech_exposure,
+                max_sector_exposure=max_sector_exposure,
+                min_cash_weight=min_cash_weight,
+                prefer_core_etf=prefer_core_etf,
+                avoid_chasing_after_big_move=avoid_chasing_after_big_move,
+                allow_options=allow_options,
+                allow_ipo_or_private=allow_ipo_or_private,
+                notes=notes or [],
+                source_question_id=source_question_id,
+                proposed_by="hermes",
+            )
+        )
+    )
+
+
+@mcp.tool()
+def confirm_advisor_profile_update(
+    update_id: str,
+    confirmed: bool = True,
+    confirmed_by: str = "telegram-user",
+    rejection_reason: str | None = None,
+) -> dict:
+    """Confirm or reject a pending Advisor Profile update after explicit user approval."""
+    return _json(
+        AdvisorOrchestrator(get_store(), settings=get_settings()).confirm_profile_update(
+            update_id,
+            AdvisorProfileConfirmationRequest(
+                confirmed=confirmed,
+                confirmed_by=confirmed_by,
+                rejection_reason=rejection_reason,
+            ),
         )
     )
 

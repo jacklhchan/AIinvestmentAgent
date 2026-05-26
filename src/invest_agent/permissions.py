@@ -19,6 +19,7 @@ READ_ONLY_TOOLS = frozenset(
         "get_earnings_review",
         "get_fundamental_snapshot",
         "get_futu_connection_status",
+        "get_advisor_profile",
         "get_hypothesis",
         "get_idea_candidate",
         "get_latest_daily_brief",
@@ -74,6 +75,7 @@ RESEARCH_WRITE_TOOLS = frozenset(
         "add_thesis_update_from_research_goal",
         "apply_earnings_review_to_thesis",
         "ask_advisor",
+        "confirm_advisor_profile_update",
         "complete_catalyst_with_research_goal",
         "create_catalyst",
         "create_hypothesis_draft",
@@ -96,6 +98,7 @@ RESEARCH_WRITE_TOOLS = frozenset(
         "run_hourly_advisor_pulse",
         "run_pre_market_advisor_brief",
         "run_post_close_advisor_brief",
+        "suggest_advisor_profile_update",
     }
 )
 
