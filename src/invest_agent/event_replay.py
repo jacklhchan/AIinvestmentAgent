@@ -5,8 +5,9 @@ from pathlib import Path
 from typing import Any
 
 from .config import Settings
-from .models import EventReplayResult, FundamentalSnapshot, NewsItem, PortfolioSnapshot, Quote
+from .models import EventReplayResult, FundamentalSnapshot, NewsItem, PortfolioSnapshot, Quote, RunCardActor, RunCardTriggerSource, RunCardType
 from .proposal_drafts import ProposalDraftEngine
+from .run_cards import RunCardService, sha256_file
 from .services import InvestmentService
 from .store import Store
 
@@ -14,8 +15,24 @@ from .store import Store
 DEFAULT_REPLAY_PATH = Path("artifacts/replay/latest-events.jsonl")
 
 
-def export_event_replay(store: Store, path: Path | str = DEFAULT_REPLAY_PATH, *, news_limit: int = 100) -> EventReplayResult:
+def export_event_replay(
+    store: Store,
+    path: Path | str = DEFAULT_REPLAY_PATH,
+    *,
+    news_limit: int = 100,
+    actor: RunCardActor | str = RunCardActor.SYSTEM,
+    trigger_source: RunCardTriggerSource | str = RunCardTriggerSource.REPLAY,
+) -> EventReplayResult:
     output_path = Path(path)
+    run_card = RunCardService(store).start_run(
+        RunCardType.EVENT_REPLAY,
+        title="Event Replay Export",
+        actor=actor,
+        trigger_source=trigger_source,
+        rule_version="event_replay_export_v1",
+        inputs={"path": str(output_path), "news_limit": news_limit},
+        assumptions={"output_is_replay_artifact": True, "source": "local_sqlite_store"},
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     counts = {"portfolio": 0, "quote": 0, "news_item": 0, "fundamental_snapshot": 0}
@@ -33,7 +50,14 @@ def export_event_replay(store: Store, path: Path | str = DEFAULT_REPLAY_PATH, *,
             counts["fundamental_snapshot"] += 1
 
     store.audit("event_replay_exported", "event_replay", str(output_path), counts)
-    return EventReplayResult(path=str(output_path), exported_counts=counts)
+    completed = RunCardService(store).complete_run(
+        run_card.id,
+        metrics={"row_count": sum(counts.values()), **counts},
+        warnings=[],
+        outputs={"path": str(output_path), "exported_counts": counts},
+        artifacts=[{"kind": "jsonl", "path": str(output_path), "sha256": sha256_file(output_path)}],
+    )
+    return EventReplayResult(path=str(output_path), exported_counts=counts, run_card_id=completed.id)
 
 
 def replay_event_file(

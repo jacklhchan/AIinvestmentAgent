@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from .catalysts import CatalystCalendarService
 from .market_news import external_ticker
 from .models import (
@@ -15,25 +17,66 @@ from .models import (
     GuidanceTone,
     ResearchEvidenceCreate,
     ResearchGoalCreate,
+    RunCardActor,
+    RunCardTriggerSource,
+    RunCardType,
     ThesisActionBias,
     ThesisImpact,
     ThesisUpdateCreate,
 )
 from .research_goals import ResearchGoalService, compute_evidence_hash
+from .run_cards import RunCardService
 from .store import Store
 from .thesis_tracker import ThesisTrackerService
 
 
+EARNINGS_REVIEW_RULE_VERSION = "earnings_review_v1"
 POSITIVE_YOY_THRESHOLD = 5.0
 NEGATIVE_YOY_THRESHOLD = -5.0
 OCF_QUALITY_TOLERANCE = 10.0
+EARNINGS_REVIEW_ASSUMPTIONS = {
+    "scoring_version": EARNINGS_REVIEW_RULE_VERSION,
+    "positive_yoy_threshold": POSITIVE_YOY_THRESHOLD,
+    "negative_yoy_threshold": NEGATIVE_YOY_THRESHOLD,
+    "ocf_quality_tolerance": OCF_QUALITY_TOLERANCE,
+    "metric_names": ["revenue", "net_income", "operating_income", "operating_cash_flow", "eps_diluted"],
+}
 
 
 class EarningsReviewService:
     def __init__(self, store: Store):
         self.store = store
 
-    def run_review(self, request: EarningsReviewRunRequest) -> EarningsReview:
+    def run_review(
+        self,
+        request: EarningsReviewRunRequest,
+        *,
+        actor: RunCardActor | str = RunCardActor.SYSTEM,
+        trigger_source: RunCardTriggerSource | str = RunCardTriggerSource.MANUAL,
+    ) -> EarningsReview:
+        symbol = request.symbol.upper()
+        run_card = RunCardService(self.store).start_run(
+            RunCardType.EARNINGS_REVIEW,
+            title=f"Earnings Review: {symbol}",
+            symbol=symbol,
+            actor=actor,
+            trigger_source=trigger_source,
+            rule_version=EARNINGS_REVIEW_RULE_VERSION,
+            inputs=request.model_dump(mode="json"),
+            assumptions=EARNINGS_REVIEW_ASSUMPTIONS,
+            links={
+                "research_goal_id": request.research_goal_id,
+                "thesis_id": request.thesis_id,
+                "catalyst_id": request.catalyst_id,
+            },
+        )
+        try:
+            return self._run_review(request, run_card.id)
+        except ValueError as exc:
+            RunCardService(self.store).fail_run(run_card.id, error=str(exc))
+            raise
+
+    def _run_review(self, request: EarningsReviewRunRequest, run_card_id: str) -> EarningsReview:
         symbol = request.symbol.upper()
         catalyst = self.store.get_catalyst(request.catalyst_id) if request.catalyst_id else None
         if request.catalyst_id and not catalyst:
@@ -69,6 +112,7 @@ class EarningsReviewService:
                 added_via="system",
                 confidence=0.78,
                 caveat="Deterministic earnings review from local SEC companyfacts snapshot; no trade execution intent.",
+                run_card_id=run_card_id,
             ),
             trusted_source=True,
         )
@@ -94,6 +138,7 @@ class EarningsReviewService:
                     actual_outcome_summary=_beat_miss_summary(score, metrics, warnings),
                     thesis_delta=thesis_delta,
                     action_bias=action_bias,
+                    run_card_id=run_card_id,
                 ),
                 apply_to_thesis=False,
             )
@@ -122,10 +167,31 @@ class EarningsReviewService:
             thesis_delta=thesis_delta,
             action_bias=action_bias,
             evidence_hash=evidence_hash,
+            run_card_id=run_card_id,
             score=score,
             warnings=warnings,
         )
         stored = self.store.create_earnings_review(review)
+        RunCardService(self.store).complete_run(
+            run_card_id,
+            metrics=_run_metrics(stored),
+            warnings=stored.warnings,
+            outputs={
+                "thesis_delta": stored.thesis_delta.value,
+                "action_bias": stored.action_bias.value,
+                "evidence_hash": stored.evidence_hash,
+                "cashflow_quality": stored.cashflow_quality.value,
+            },
+            dataset=_dataset_lineage(snapshot),
+            evidence_hash=stored.evidence_hash,
+            links={
+                "research_goal_id": stored.research_goal_id,
+                "thesis_id": stored.thesis_id,
+                "catalyst_id": stored.catalyst_id,
+                "catalyst_review_id": stored.catalyst_review_id,
+                "earnings_review_id": stored.id,
+            },
+        )
         self._summarize_goal(goal.id, stored)
         return stored
 
@@ -206,6 +272,40 @@ def _earnings_metrics(snapshot: FundamentalSnapshot) -> dict[str, float | None]:
         "operating_income": _metric_yoy(snapshot, "operating_income"),
         "operating_cash_flow": _metric_yoy(snapshot, "operating_cash_flow"),
         "eps_diluted": _metric_yoy(snapshot, "eps_diluted"),
+    }
+
+
+def _run_metrics(review: EarningsReview) -> dict[str, Any]:
+    return {
+        "revenue_yoy": review.revenue_yoy,
+        "net_income_yoy": review.net_income_yoy,
+        "operating_income_yoy": review.operating_income_yoy,
+        "operating_cash_flow_yoy": review.operating_cash_flow_yoy,
+        "diluted_eps_yoy": review.diluted_eps_yoy,
+        "score": review.score,
+    }
+
+
+def _dataset_lineage(snapshot: FundamentalSnapshot) -> dict[str, Any]:
+    metric_periods = {
+        name: {
+            "fiscal_year": metric.fiscal_year,
+            "fiscal_period": metric.fiscal_period,
+            "end_date": metric.end_date,
+            "form": metric.form,
+            "filed_at": metric.filed_at.isoformat() if metric.filed_at else None,
+            "concept": metric.concept,
+        }
+        for name, metric in snapshot.metrics.items()
+    }
+    return {
+        "source": "local_sec_companyfacts_snapshot",
+        "source_uri": f"sec-companyfacts://CIK{snapshot.cik}",
+        "cik": snapshot.cik,
+        "entity_name": snapshot.entity_name,
+        "snapshot_updated_at": snapshot.updated_at.isoformat(),
+        "latest_filed_at": _latest_filed_at(snapshot).isoformat(),
+        "metric_periods": metric_periods,
     }
 
 

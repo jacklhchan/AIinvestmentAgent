@@ -25,6 +25,10 @@ from .models import (
     ResearchEvidenceCreate,
     ResearchGoalCreate,
     ResearchGoalStatus,
+    RunCardActor,
+    RunCardStatus,
+    RunCardTriggerSource,
+    RunCardType,
     Side,
     CreatedBy,
     CreatedVia,
@@ -41,6 +45,7 @@ from .models import (
 from .primary_sources import refresh_primary_sources
 from .proposal_drafts import ProposalDraftEngine
 from .research_goals import ResearchGoalService
+from .run_cards import RunCardService
 from .sec_companyfacts import SecCompanyFactsIngestor
 from .sec_edgar import SecEdgarIngestor
 from .thesis_tracker import ThesisTrackerService
@@ -364,7 +369,9 @@ def run_earnings_review(
                 research_goal_id=research_goal_id,
                 thesis_id=thesis_id,
                 refresh_fundamentals=False,
-            )
+            ),
+            actor=RunCardActor.MCP,
+            trigger_source=RunCardTriggerSource.MANUAL,
         )
         return _json(review)
     except ValueError as exc:
@@ -389,6 +396,44 @@ def apply_earnings_review_to_thesis(review_id: str, thesis_id: str | None = None
     """Apply a non-severe earnings review thesis delta. Severe deltas require human confirmation outside MCP."""
     try:
         return _json(EarningsReviewService(get_store()).apply_to_thesis(review_id, thesis_id=thesis_id))
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def list_run_cards(
+    run_type: Literal[
+        "earnings_review",
+        "catalyst_review",
+        "event_replay",
+        "safe_autonomy_cycle",
+        "proposal_draft",
+        "future_backtest_import",
+        "future_behavior_report",
+    ]
+    | None = None,
+    status: Literal["running", "completed", "failed", "cancelled"] | None = None,
+    symbol: str | None = None,
+    limit: int = 20,
+) -> list[dict]:
+    """List system-generated research run cards. MCP can read run cards but cannot create arbitrary ones."""
+    parsed_type = RunCardType(run_type) if run_type else None
+    parsed_status = RunCardStatus(status) if status else None
+    return _json(get_store().list_run_cards(run_type=parsed_type, status=parsed_status, symbol=symbol, limit=limit))
+
+
+@mcp.tool()
+def get_run_card(run_card_id: str) -> dict:
+    """Return one research run card."""
+    run_card = get_store().get_run_card(run_card_id)
+    return _json(run_card) if run_card else {"error": f"run card not found: {run_card_id}"}
+
+
+@mcp.tool()
+def get_run_card_artifact(run_card_id: str, kind: Literal["json", "markdown"] = "json") -> dict:
+    """Return a JSON or Markdown run-card artifact as text."""
+    try:
+        return {"run_card_id": run_card_id, "kind": kind, "text": RunCardService(get_store()).get_artifact_text(run_card_id, kind=kind)}
     except ValueError as exc:
         return {"error": str(exc)}
 
@@ -434,7 +479,15 @@ def run_safe_autonomy_cycle(create_proposals: bool | None = None, include_slow_s
 @mcp.tool()
 def export_event_replay_file(path: str = str(DEFAULT_REPLAY_PATH), news_limit: int = 100) -> dict:
     """Export current portfolio, quotes, and news into a JSONL event replay file."""
-    return _json(export_event_replay(get_store(), path, news_limit=news_limit))
+    return _json(
+        export_event_replay(
+            get_store(),
+            path,
+            news_limit=news_limit,
+            actor=RunCardActor.MCP,
+            trigger_source=RunCardTriggerSource.REPLAY,
+        )
+    )
 
 
 @mcp.tool()

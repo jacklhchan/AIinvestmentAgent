@@ -199,6 +199,42 @@ class GuidanceTone(StrEnum):
     UNKNOWN = "unknown"
 
 
+class RunCardType(StrEnum):
+    EARNINGS_REVIEW = "earnings_review"
+    CATALYST_REVIEW = "catalyst_review"
+    EVENT_REPLAY = "event_replay"
+    SAFE_AUTONOMY_CYCLE = "safe_autonomy_cycle"
+    PROPOSAL_DRAFT = "proposal_draft"
+    FUTURE_BACKTEST_IMPORT = "future_backtest_import"
+    FUTURE_BEHAVIOR_REPORT = "future_behavior_report"
+
+
+class RunCardStatus(StrEnum):
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class RunCardActor(StrEnum):
+    SCHEDULER = "scheduler"
+    CLI = "cli"
+    DASHBOARD = "dashboard"
+    MCP = "mcp"
+    API = "api"
+    SYSTEM = "system"
+
+
+class RunCardTriggerSource(StrEnum):
+    MANUAL = "manual"
+    SCHEDULED = "scheduled"
+    CATALYST_COMPLETED = "catalyst_completed"
+    PROPOSAL_DRAFT = "proposal_draft"
+    REPLAY = "replay"
+    SMOKE = "smoke"
+    SYSTEM = "system"
+
+
 class Position(BaseModel):
     symbol: str
     qty: float
@@ -376,6 +412,7 @@ class ResearchEvidence(BaseModel):
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     caveat: str = ""
     contradicts_claim_ids: list[str] = Field(default_factory=list)
+    run_card_id: str | None = None
 
     @field_validator("symbol")
     @classmethod
@@ -436,6 +473,7 @@ class ResearchEvidenceCreate(BaseModel):
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     caveat: str = ""
     contradicts_claim_ids: list[str] = Field(default_factory=list)
+    run_card_id: str | None = None
 
     @field_validator("symbol")
     @classmethod
@@ -597,6 +635,7 @@ class CatalystReview(BaseModel):
     actual_outcome_summary: str
     thesis_delta: CatalystThesisDelta = CatalystThesisDelta.UNKNOWN
     action_bias: CatalystActionBias = CatalystActionBias.NO_CHANGE
+    run_card_id: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
 
 
@@ -606,6 +645,7 @@ class CatalystReviewCreate(BaseModel):
     actual_outcome_summary: str = Field(min_length=3)
     thesis_delta: CatalystThesisDelta = CatalystThesisDelta.UNKNOWN
     action_bias: CatalystActionBias = CatalystActionBias.NO_CHANGE
+    run_card_id: str | None = None
 
 
 class CatalystCompleteRequest(BaseModel):
@@ -637,6 +677,7 @@ class EarningsReview(BaseModel):
     thesis_delta: CatalystThesisDelta = CatalystThesisDelta.UNKNOWN
     action_bias: CatalystActionBias = CatalystActionBias.NO_CHANGE
     evidence_hash: str = ""
+    run_card_id: str | None = None
     score: int = 0
     warnings: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)
@@ -664,6 +705,44 @@ class EarningsReviewRunRequest(BaseModel):
 class EarningsReviewApplyRequest(BaseModel):
     thesis_id: str | None = None
     human_confirmed: bool = False
+
+
+class ResearchRunCard(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("run"))
+    schema_version: str = "run_card_v1"
+    run_type: RunCardType
+    status: RunCardStatus = RunCardStatus.RUNNING
+    symbol: str | None = None
+    title: str
+    started_at: datetime = Field(default_factory=utc_now)
+    completed_at: datetime | None = None
+    duration_ms: int | None = None
+    actor: RunCardActor = RunCardActor.SYSTEM
+    trigger_source: RunCardTriggerSource = RunCardTriggerSource.SYSTEM
+    code_version: str = "unknown"
+    rule_version: str = ""
+    input_hash: str = ""
+    output_hash: str = ""
+    dataset_hash: str = ""
+    evidence_hash: str | None = None
+    research_goal_id: str | None = None
+    thesis_id: str | None = None
+    catalyst_id: str | None = None
+    catalyst_review_id: str | None = None
+    earnings_review_id: str | None = None
+    proposal_id: str | None = None
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    assumptions: dict[str, Any] = Field(default_factory=dict)
+    outputs: dict[str, Any] = Field(default_factory=dict)
+    artifacts: list[dict[str, Any]] = Field(default_factory=list)
+    error: str = ""
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_run_card_symbol(cls, value: str | None) -> str | None:
+        return value.strip().upper() if value else None
 
 
 class FundamentalsRefreshResult(BaseModel):
@@ -727,6 +806,7 @@ class EventReplayResult(BaseModel):
     exported_counts: dict[str, int] = Field(default_factory=dict)
     errors: list[str] = Field(default_factory=list)
     draft_result: DraftProposalResult | None = None
+    run_card_id: str | None = None
 
 
 class ExecutionRecord(BaseModel):

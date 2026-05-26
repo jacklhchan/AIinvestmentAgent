@@ -21,6 +21,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
 - Thesis Tracker layer with long-term symbol theses, pillars, invalidating risks, evidence-linked thesis updates, and proposal-time thesis invariants.
 - Catalyst Calendar layer with upcoming/completed events, source/human verification, post-event reviews, and proposal-time catalyst invariants.
 - Earnings Review layer with SEC companyfacts-based YoY scoring, cashflow quality, research evidence, catalyst reviews, and thesis-delta artifacts.
+- Research Run Card layer with versioned rule metadata, input/output/dataset hashes, evidence links, and JSON/Markdown artifacts for earnings reviews, catalyst reviews, and event replay exports.
 - Event replay export/import for portfolio, quotes, news/evidence, and fundamental snapshot JSONL.
 - Proposal draft engine that turns recent symbol-specific watchlist news into structured draft proposals, records a research goal for each draft, and only creates policy-checked proposals when evidence gate passes.
 - Safe autonomy loop that refreshes read-only data, drafts watchlist proposals, applies evidence gate and proposal cooldown, and creates only paper-mode pending proposals for human approval.
@@ -52,6 +53,9 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - `list_earnings_reviews`
   - `get_earnings_review`
   - `apply_earnings_review_to_thesis`
+  - `list_run_cards`
+  - `get_run_card`
+  - `get_run_card_artifact`
   - `get_safe_autonomy_status`
   - `run_safe_autonomy_cycle`
   - `export_event_replay_file`
@@ -65,7 +69,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - `reject_trade_proposal`
 - Hermes config snippet at `deploy/hermes/config.snippet.yaml`.
 - launchd example plists at `deploy/launchd/com.local.invest-agent-api.plist` and `deploy/launchd/com.local.invest-agent-scheduler.plist`.
-- Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, non-pending state handling, Futu adapter mapping, dashboard localization, news parsing, watchlist resolution, SEC/IR parsing, event replay, proposal draft creation, research evidence gates, thesis tracker behavior, catalyst calendar invariants, and earnings review behavior.
+- Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, non-pending state handling, Futu adapter mapping, dashboard localization, news parsing, watchlist resolution, SEC/IR parsing, event replay, proposal draft creation, research evidence gates, thesis tracker behavior, catalyst calendar invariants, earnings review behavior, and research run card artifacts.
 
 ## Local Hermes/Codex Setup
 
@@ -80,7 +84,7 @@ The global Hermes config at `/Users/apple/.hermes/config.yaml` has been updated 
 
 `hermes auth status openai-codex` shows logged in.
 
-`hermes mcp list` shows `invest_agent` enabled with 35 selected tools after adding the 4 earnings review tools.
+`hermes mcp list` shows `invest_agent` enabled with 38 selected tools after adding the 3 read-only run card tools.
 
 ## Futu Setup
 
@@ -240,6 +244,7 @@ The app now adds a deterministic post-earnings review layer built on local SEC c
 - SQLite now has an `earnings_reviews` table.
 - An earnings review stores symbol, period, catalyst/research/thesis links, revenue/net income/operating income/operating cash flow/diluted EPS YoY, cashflow quality, thesis delta, action bias, evidence hash, score, warnings, and source summary.
 - `EarningsReviewService.run_review` reads the latest local SEC companyfacts snapshot, creates or reuses a research goal, writes source-verified `sec-companyfacts` evidence, computes a deterministic thesis delta, and stores the review artifact.
+- Earnings review scoring stores versioned rule metadata (`earnings_review_v1`), deterministic thresholds, SEC companyfacts snapshot lineage, and linked evidence/run-card hashes.
 - If the review is linked to a completed earnings catalyst, it creates a `catalyst_review`, which satisfies the post-event review requirement and unblocks future proposals that otherwise passed research/policy checks.
 - MCP-run earnings reviews are research-only artifacts. Severe deltas such as `invalidates`, `exit`, `trim`, or `block_new_proposal` require human confirmation before applying to a thesis.
 - REST endpoints:
@@ -256,6 +261,34 @@ The app now adds a deterministic post-earnings review layer built on local SEC c
   - `python -m invest_agent.cli earnings-review --symbol AAPL`
   - `python -m invest_agent.cli list-earnings-reviews --symbol AAPL`
 - Dashboard has a `財報檢討` panel and `執行財報檢討` form.
+
+This phase still does not unlock Futu OpenD and does not place live orders.
+
+## Research Run Cards
+
+The app now adds a local Trust Layer-style artifact spine for important research actions.
+
+- SQLite now has a `research_run_cards` table.
+- A run card stores run type, status, symbol, actor, trigger source, git commit, rule version, input/output/dataset/evidence hashes, linked research/thesis/catalyst/earnings/proposal IDs, metrics, warnings, assumptions, outputs, errors, and artifact metadata.
+- `RunCardService` writes deterministic JSON and human-readable Markdown artifacts under `artifacts/run_cards/...`.
+- Earnings reviews now always create a run card. The linked source-verified `sec-companyfacts` evidence row and `earnings_review` row both store `run_card_id`.
+- Catalyst reviews created directly also create a run card. Catalyst reviews created by earnings review reuse the earnings review run card.
+- Event replay export now creates an `event_replay` run card and records the JSONL export artifact hash.
+- Hermes MCP exposes only read-only run card tools; it cannot create arbitrary run cards.
+- REST endpoints:
+  - `GET /api/run-cards`
+  - `GET /api/run-cards/{run_card_id}`
+  - `GET /api/run-cards/{run_card_id}/artifact?kind=json`
+  - `GET /api/run-cards/{run_card_id}/artifact?kind=markdown`
+- Hermes MCP run card tools:
+  - `list_run_cards`
+  - `get_run_card`
+  - `get_run_card_artifact`
+- CLI:
+  - `python -m invest_agent.cli list-run-cards --run-type earnings_review --symbol AAPL`
+  - `python -m invest_agent.cli show-run-card --run-card-id run_...`
+  - `python -m invest_agent.cli show-run-card --run-card-id run_... --kind markdown`
+- Dashboard has a `研究執行紀錄` panel showing recent run cards, status, linked IDs, evidence hash, input/output hash, warnings, and artifact kinds.
 
 This phase still does not unlock Futu OpenD and does not place live orders.
 
@@ -321,7 +354,7 @@ curl -s -X POST http://127.0.0.1:8788/api/proposals ...
 Result:
 
 ```text
-59 passed
+64 passed
 ```
 
 HTTP checks were also verified:
@@ -350,6 +383,9 @@ HTTP checks were also verified:
 - `POST /api/earnings-reviews/run`
 - `GET /api/earnings-reviews/{review_id}`
 - `POST /api/earnings-reviews/{review_id}/apply-to-thesis`
+- `GET /api/run-cards`
+- `GET /api/run-cards/{run_card_id}`
+- `GET /api/run-cards/{run_card_id}/artifact?kind=markdown`
 - `GET /api/autonomy/status`
 - `POST /api/autonomy/run`
 - `POST /api/events/export`
@@ -370,7 +406,7 @@ HTTP checks were also verified:
 - `python -m invest_agent.cli event-export`
 - `python -m invest_agent.cli event-replay`
 - `python -m invest_agent.cli draft-proposals`
-- invariant tests for direct proposal creation, MCP-unverified evidence, symbol mismatch, stale primary-source evidence, contradictory evidence, proposal `evidence_hash`, active thesis draft attachment, invalidated/unconfirmed thesis proposal blocking, MCP-unverified catalysts, high-impact catalyst blocking, portfolio-wide macro catalyst blocking, medium-impact catalyst warnings, catalyst review thesis delta, and earnings review thesis delta
+- invariant tests for direct proposal creation, MCP-unverified evidence, symbol mismatch, stale primary-source evidence, contradictory evidence, proposal `evidence_hash`, active thesis draft attachment, invalidated/unconfirmed thesis proposal blocking, MCP-unverified catalysts, high-impact catalyst blocking, portfolio-wide macro catalyst blocking, medium-impact catalyst warnings, catalyst review thesis delta, earnings review thesis delta, and run card artifact linkage/hash behavior
 
 The dashboard was visually checked in the Codex in-app browser.
 
@@ -390,6 +426,12 @@ Latest dashboard screenshot after adding Earnings Review:
 
 ```text
 artifacts/dashboard-earnings-review.png
+```
+
+Latest dashboard screenshot after adding Research Run Cards:
+
+```text
+artifacts/dashboard-run-cards.png
 ```
 
 Futu OpenD read-only refresh was validated against the local OpenD on port `11111`; it refreshed 7 positions and 7 quote snapshots.
@@ -419,7 +461,7 @@ The following are local runtime artifacts and intentionally ignored:
 
 - Keep proposal invariant locked: no `PENDING` proposal without `research_goal_id` or explicit `manual_override_reason`.
 - Keep verified provenance locked: MCP/user-submitted text cannot become source-verified evidence.
-- Add Run Card / Trust Layer artifact importer for catalyst reviews, earnings reviews, event replay, and later Vibe sidecar results.
+- Extend Run Card / Trust Layer artifacts to safe autonomy cycles, proposal draft batches, and later Vibe sidecar imports.
 - Add Trade Journal / Behavior Report: Futu CSV import, FIFO roundtrip, win rate, PnL ratio, drawdown, and overtrading checks.
 - Add valuation ratios and filing-period normalization on top of SEC companyfacts.
 - Keep live execution disabled until Keychain secret loading, two-OpenD separation, atomic approval, idempotency keys, broker-side revalidation, order/deal reconciliation, and a small live smoke-test plan are implemented.

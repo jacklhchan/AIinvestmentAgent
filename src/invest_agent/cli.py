@@ -13,9 +13,17 @@ from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event
 from .futu_adapter import refresh_futu_readonly
 from .ir_feeds import IrFeedIngestor
 from .market_news import MarketNewsIngestor
-from .models import EarningsReviewRunRequest, ProposalCreate, Side
+from .models import (
+    EarningsReviewRunRequest,
+    ProposalCreate,
+    RunCardActor,
+    RunCardTriggerSource,
+    RunCardType,
+    Side,
+)
 from .primary_sources import refresh_primary_sources
 from .proposal_drafts import ProposalDraftEngine
+from .run_cards import RunCardService
 from .sec_companyfacts import SecCompanyFactsIngestor
 from .sec_edgar import SecEdgarIngestor
 
@@ -90,7 +98,12 @@ def fundamentals_refresh_main() -> None:
 
 
 def event_export_main(path: str | None = None) -> None:
-    result = export_event_replay(get_store(), path or DEFAULT_REPLAY_PATH)
+    result = export_event_replay(
+        get_store(),
+        path or DEFAULT_REPLAY_PATH,
+        actor=RunCardActor.CLI,
+        trigger_source=RunCardTriggerSource.REPLAY,
+    )
     print(json.dumps(_json(result), indent=2, ensure_ascii=False))
 
 
@@ -137,13 +150,33 @@ def earnings_review_main(
             catalyst_id=catalyst_id,
             research_goal_id=research_goal_id,
             thesis_id=thesis_id,
-        )
+        ),
+        actor=RunCardActor.CLI,
+        trigger_source=RunCardTriggerSource.MANUAL,
     )
     print(json.dumps(_json(result), indent=2, ensure_ascii=False))
 
 
 def list_earnings_reviews_main(symbol: str | None = None) -> None:
     print(json.dumps(_json(get_store().list_earnings_reviews(symbol=symbol)), indent=2, ensure_ascii=False))
+
+
+def list_run_cards_main(run_type: str | None = None, symbol: str | None = None, limit: int = 20) -> None:
+    parsed_type = RunCardType(run_type) if run_type else None
+    print(
+        json.dumps(
+            _json(get_store().list_run_cards(run_type=parsed_type, symbol=symbol, limit=limit)),
+            indent=2,
+            ensure_ascii=False,
+        )
+    )
+
+
+def show_run_card_main(run_card_id: str, kind: str | None = None) -> None:
+    if kind:
+        print(RunCardService(get_store()).get_artifact_text(run_card_id, kind=kind))
+        return
+    print(json.dumps(_json(RunCardService(get_store()).require_run_card(run_card_id)), indent=2, ensure_ascii=False))
 
 
 def _json(value):
@@ -179,6 +212,8 @@ def main() -> None:
             "catalyst-preview",
             "earnings-review",
             "list-earnings-reviews",
+            "list-run-cards",
+            "show-run-card",
         ],
     )
     parser.add_argument("--path", default=str(DEFAULT_REPLAY_PATH))
@@ -187,6 +222,10 @@ def main() -> None:
     parser.add_argument("--catalyst-id", default=None)
     parser.add_argument("--research-goal-id", default=None)
     parser.add_argument("--thesis-id", default=None)
+    parser.add_argument("--run-type", default=None)
+    parser.add_argument("--run-card-id", default=None)
+    parser.add_argument("--limit", type=int, default=20)
+    parser.add_argument("--kind", default=None)
     args = parser.parse_args()
     if args.command == "seed":
         seed_main()
@@ -226,6 +265,12 @@ def main() -> None:
         earnings_review_main(args.symbol, args.catalyst_id, args.research_goal_id, args.thesis_id)
     if args.command == "list-earnings-reviews":
         list_earnings_reviews_main(args.symbol)
+    if args.command == "list-run-cards":
+        list_run_cards_main(args.run_type, args.symbol, args.limit)
+    if args.command == "show-run-card":
+        if not args.run_card_id:
+            parser.error("--run-card-id is required for show-run-card")
+        show_run_card_main(args.run_card_id, args.kind)
 
 
 if __name__ == "__main__":

@@ -598,6 +598,7 @@ research_evidence
 - confidence
 - caveat
 - contradicts_claim_ids[]
+- run_card_id
 
 proposals
 - research_goal_id
@@ -657,6 +658,7 @@ catalyst_reviews
 - actual_outcome_summary
 - thesis_delta
 - action_bias
+- run_card_id
 - created_at
 
 earnings_reviews
@@ -677,7 +679,32 @@ earnings_reviews
 - evidence_hash
 - score
 - warnings
+- run_card_id
+- scoring_version
+- dataset_hash
 - created_at
+
+research_run_cards
+- id
+- run_type: earnings_review | catalyst_review | event_replay | safe_autonomy_cycle | proposal_draft | backtest_import | behavior_report
+- status: running | completed | failed | cancelled
+- symbol nullable
+- actor: scheduler | cli | dashboard | mcp | api | system
+- trigger_source: manual | scheduled | catalyst_completed | proposal_draft | replay | smoke | system
+- code_version
+- rule_version
+- input_hash
+- output_hash
+- dataset_hash
+- evidence_hash
+- linked research_goal / thesis / catalyst / catalyst_review / earnings_review / proposal ids
+- metrics_json
+- warnings_json
+- assumptions_json
+- outputs_json
+- artifacts_json
+- started_at
+- completed_at
 ```
 
 **新的 proposal flow**
@@ -688,6 +715,7 @@ Futu/SEC/IR/news/fundamentals refresh
 → create research_goal
 → attach directional evidence
 → attach verified primary-source / SEC companyfacts evidence
+→ attach run_card_id when evidence came from a structured research artifact
 → evaluate evidence gate
 → if sufficient: create PENDING proposal through policy engine
 → if insufficient: keep research note only, do not create proposal
@@ -721,10 +749,12 @@ src/invest_agent/mcp_server.py
 src/invest_agent/thesis_tracker.py
 src/invest_agent/catalysts.py
 src/invest_agent/earnings_review.py
+src/invest_agent/run_cards.py
 tests/test_research_goals.py
 tests/test_thesis_tracker.py
 tests/test_catalysts.py
 tests/test_earnings_review.py
+tests/test_run_cards.py
 ```
 
 **下一步**
@@ -734,7 +764,7 @@ tests/test_earnings_review.py
 3. Thesis Tracker 已落地第一版：持倉 thesis、pillar、risk、invalidation condition、research-goal-backed thesis updates，並在 proposal creation 前做 thesis invariant。
 4. Catalyst Calendar 已落地第一版：earnings、investor day、product、regulatory、macro、conference、expected impact、post-event review，並在 proposal creation 前做 catalyst invariant。
 5. Earnings Review 已落地第一版：本機 SEC companyfacts → deterministic YoY scoring → catalyst review / thesis delta artifact，不產生 approval 或 execution。
-6. 下一步新增 Run Card / Trust Layer artifact：讓 catalyst review / earnings review / event replay / backtest sidecar 輸出可追溯 artifact。
-7. 新增 Trade Journal / Behavior Report：先支援 Futu CSV export 的 FIFO roundtrip、win rate、PnL ratio、drawdown、overtrading。
+6. Run Card / Trust Layer artifact 已落地第一版：earnings review、catalyst review、event replay 會輸出可 hash、可讀、可掛 evidence 的 JSON/Markdown artifact；Hermes 只能 read-only 查詢。
+7. 下一步新增 Trade Journal / Behavior Report：先支援 Futu CSV export 的 FIFO roundtrip、win rate、PnL ratio、drawdown、overtrading。
 8. 將 Vibe / backtest sidecar 保持為 research-only adapter，輸出 run card 到 evidence ledger，不接 approval/execution。
 9. 最後才碰 live path：Keychain、雙 OpenD、atomic approval、idempotency、broker-side revalidation、order/deal reconciliation。

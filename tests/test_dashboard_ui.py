@@ -25,4 +25,5 @@ def test_dashboard_is_traditional_chinese_with_data_provenance() -> None:
     assert "新增催化事件" in response.text
     assert "財報檢討" in response.text
     assert "執行財報檢討" in response.text
+    assert "研究執行紀錄" in response.text
     assert "操作紀錄" in response.text

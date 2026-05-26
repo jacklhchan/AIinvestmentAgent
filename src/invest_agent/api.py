@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel
 
 from .autonomy import SafeAutonomyRunner, autonomy_status
@@ -28,6 +28,10 @@ from .models import (
     ResearchEvidenceCreate,
     ResearchGoalCreate,
     ResearchGoalStatus,
+    RunCardActor,
+    RunCardStatus,
+    RunCardTriggerSource,
+    RunCardType,
     ThesisCreate,
     ThesisStatus,
     ThesisUpdateCreate,
@@ -35,6 +39,7 @@ from .models import (
 from .primary_sources import refresh_primary_sources
 from .proposal_drafts import ProposalDraftEngine
 from .research_goals import ResearchGoalService
+from .run_cards import RunCardService
 from .sec_companyfacts import SecCompanyFactsIngestor
 from .sec_edgar import SecEdgarIngestor
 from .thesis_tracker import ThesisTrackerService
@@ -310,7 +315,11 @@ def run_earnings_review(request: EarningsReviewRunRequest):
     if request.refresh_fundamentals:
         SecCompanyFactsIngestor(settings, store).refresh_fundamentals(symbols=[request.symbol], max_symbols=1)
     try:
-        return EarningsReviewService(store).run_review(request)
+        return EarningsReviewService(store).run_review(
+            request,
+            actor=RunCardActor.API,
+            trigger_source=RunCardTriggerSource.MANUAL,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -336,6 +345,32 @@ def apply_earnings_review_to_thesis(review_id: str, request: EarningsReviewApply
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.get("/api/run-cards")
+def run_cards(
+    run_type: RunCardType | None = None,
+    status: RunCardStatus | None = None,
+    symbol: str | None = None,
+    limit: int = 50,
+):
+    return get_store().list_run_cards(run_type=run_type, status=status, symbol=symbol, limit=limit)
+
+
+@app.get("/api/run-cards/{run_card_id}")
+def run_card(run_card_id: str):
+    item = get_store().get_run_card(run_card_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="run card not found")
+    return item
+
+
+@app.get("/api/run-cards/{run_card_id}/artifact", response_class=PlainTextResponse)
+def run_card_artifact(run_card_id: str, kind: str = "json"):
+    try:
+        return RunCardService(get_store()).get_artifact_text(run_card_id, kind=kind)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @app.get("/api/autonomy/status")
 def autonomy_status_api():
     return autonomy_status(get_settings(), get_store())
@@ -354,7 +389,12 @@ def run_autonomy_cycle(request: AutonomyRunRequest | None = None):
 @app.post("/api/events/export")
 def export_events(request: EventReplayRequest | None = None):
     request = request or EventReplayRequest()
-    return export_event_replay(get_store(), request.path)
+    return export_event_replay(
+        get_store(),
+        request.path,
+        actor=RunCardActor.API,
+        trigger_source=RunCardTriggerSource.REPLAY,
+    )
 
 
 @app.post("/api/events/replay")
@@ -851,6 +891,13 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       </div>
     </section>
     <section class="panel">
+      <h2>研究執行紀錄</h2>
+      <table>
+        <thead><tr><th>狀態</th><th>Run</th><th>連結</th><th>Hash / Artifact</th></tr></thead>
+        <tbody id="run-cards"></tbody>
+      </table>
+    </section>
+    <section class="panel">
       <h2>SEC 基本面快照</h2>
       <table>
         <thead><tr><th>標的</th><th>收入</th><th>淨收入</th><th>現金流 / 來源</th></tr></thead>
@@ -1003,6 +1050,21 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       weak: "偏弱",
       unknown: "未知"
     };
+    const runCardTypeLabels = {
+      earnings_review: "財報檢討",
+      catalyst_review: "催化事件 Review",
+      event_replay: "事件重播",
+      safe_autonomy_cycle: "自治循環",
+      proposal_draft: "提案草稿",
+      future_backtest_import: "Backtest 匯入",
+      future_behavior_report: "交易行為報告"
+    };
+    const runCardStatusLabels = {
+      running: "執行中",
+      completed: "完成",
+      failed: "失敗",
+      cancelled: "取消"
+    };
     const verificationLabels = {
       unverified: "未驗證",
       source_verified: "來源驗證",
@@ -1061,6 +1123,11 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       catalyst_post_event_goal_created: "事件後研究目標已建立",
       earnings_review_created: "財報檢討已建立",
       earnings_review_goal_updated: "財報研究目標已更新",
+      run_card_started: "Run Card 已開始",
+      run_card_updated: "Run Card 已更新",
+      run_card_completed: "Run Card 已完成",
+      run_card_failed: "Run Card 已失敗",
+      run_card_artifacts_written: "Run Card artifact 已寫入",
       proposal_research_invariant_rejected: "提案違反研究 Gate 不變式"
     };
     const sourceClass = source => `source-${String(source || "local").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
@@ -1264,6 +1331,25 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       }).join("") || `<tr><td colspan="4" class="muted">尚未建立財報檢討；可先刷新 SEC Fundamentals，再執行 earnings review。</td></tr>`;
     }
 
+    function renderRunCards(runCards) {
+      document.querySelector("#run-cards").innerHTML = runCards.map(card => {
+        const links = [
+          card.research_goal_id ? `Goal ${escapeHtml(card.research_goal_id)}` : "",
+          card.earnings_review_id ? `Earnings ${escapeHtml(card.earnings_review_id)}` : "",
+          card.catalyst_review_id ? `Catalyst Review ${escapeHtml(card.catalyst_review_id)}` : "",
+          card.catalyst_id ? `Catalyst ${escapeHtml(card.catalyst_id)}` : ""
+        ].filter(Boolean).join("<br>") || '<span class="muted">未連結</span>';
+        const artifactKinds = (card.artifacts || []).map(item => escapeHtml(item.kind)).join(", ") || "未寫入";
+        const warningText = (card.warnings || []).length ? `<br><span class="muted">Warnings ${escapeHtml(card.warnings.length)}</span>` : "";
+        return `<tr>
+          <td>${pill(card.status, runCardStatusLabels[card.status] || card.status)}</td>
+          <td><strong>${escapeHtml(card.symbol || "組合")}</strong><br>${escapeHtml(runCardTypeLabels[card.run_type] || card.run_type)}<br><span class="muted">${formatDate(card.started_at)} · ${escapeHtml(card.actor)}</span></td>
+          <td>${links}${warningText}</td>
+          <td><span class="muted">input ${escapeHtml((card.input_hash || "").slice(0, 10))}</span><br><span class="muted">output ${escapeHtml((card.output_hash || "").slice(0, 10))}</span><br><span class="muted">${artifactKinds}</span></td>
+        </tr>`;
+      }).join("") || `<tr><td colspan="4" class="muted">尚未有 run card；財報檢討和 event replay 會自動建立。</td></tr>`;
+    }
+
     function renderProposals(proposals) {
       document.querySelector("#proposals").innerHTML = proposals.map(p => {
         const risk = p.risk_check.passed ? "通過" : (p.risk_check.reasons || []).map(escapeHtml).join("; ");
@@ -1301,7 +1387,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
     }
 
     async function loadAll() {
-      const [health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, researchGoals, theses, catalysts, earningsReviews] = await Promise.all([
+      const [health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, researchGoals, theses, catalysts, earningsReviews, runCards] = await Promise.all([
         api("/health"),
         api("/api/portfolio"),
         api("/api/quotes"),
@@ -1314,7 +1400,8 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         api("/api/research-goals?limit=8"),
         api("/api/theses?limit=8"),
         api("/api/catalysts/upcoming?days=14&limit=8"),
-        api("/api/earnings-reviews?limit=8")
+        api("/api/earnings-reviews?limit=8"),
+        api("/api/run-cards?limit=8")
       ]);
       document.querySelector("#mode").textContent = health.paper_only ? "紙上交易模式" : "已要求實盤模式";
       const futuButton = document.querySelector("#futu-refresh");
@@ -1330,6 +1417,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       renderTheses(theses);
       renderCatalysts(catalysts);
       renderEarningsReviews(earningsReviews);
+      renderRunCards(runCards);
       renderFundamentals(fundamentals);
       renderPositions(portfolio, quotes);
       renderProposals(proposals);

@@ -21,6 +21,9 @@ from .models import (
     ResearchEvidence,
     ResearchGoal,
     ResearchGoalStatus,
+    ResearchRunCard,
+    RunCardStatus,
+    RunCardType,
     Thesis,
     ThesisPillar,
     ThesisRisk,
@@ -183,6 +186,16 @@ class Store:
                     payload TEXT NOT NULL,
                     FOREIGN KEY (catalyst_id) REFERENCES catalysts(id),
                     FOREIGN KEY (research_goal_id) REFERENCES research_goals(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS research_run_cards (
+                    id TEXT PRIMARY KEY,
+                    run_type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    symbol TEXT,
+                    started_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    payload TEXT NOT NULL
                 );
                 """
             )
@@ -393,6 +406,88 @@ class Store:
                 tuple(goal_ids),
             ).fetchall()
         return {row["goal_id"]: int(row["count"]) for row in rows}
+
+    def create_run_card(self, run_card: ResearchRunCard) -> ResearchRunCard:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO research_run_cards(id, run_type, status, symbol, started_at, completed_at, payload)
+                VALUES(?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_card.id,
+                    run_card.run_type.value,
+                    run_card.status.value,
+                    run_card.symbol,
+                    run_card.started_at.isoformat(),
+                    run_card.completed_at.isoformat() if run_card.completed_at else None,
+                    self._dump(run_card),
+                ),
+            )
+        self.audit(
+            "run_card_started",
+            "run_card",
+            run_card.id,
+            {"run_type": run_card.run_type.value, "symbol": run_card.symbol, "status": run_card.status.value},
+        )
+        return run_card
+
+    def update_run_card(self, run_card: ResearchRunCard, event_type: str = "run_card_updated") -> ResearchRunCard:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE research_run_cards
+                SET run_type = ?, status = ?, symbol = ?, started_at = ?, completed_at = ?, payload = ?
+                WHERE id = ?
+                """,
+                (
+                    run_card.run_type.value,
+                    run_card.status.value,
+                    run_card.symbol,
+                    run_card.started_at.isoformat(),
+                    run_card.completed_at.isoformat() if run_card.completed_at else None,
+                    self._dump(run_card),
+                    run_card.id,
+                ),
+            )
+        self.audit(
+            event_type,
+            "run_card",
+            run_card.id,
+            {"run_type": run_card.run_type.value, "symbol": run_card.symbol, "status": run_card.status.value},
+        )
+        return self.get_run_card(run_card.id) or run_card
+
+    def get_run_card(self, run_card_id: str) -> ResearchRunCard | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT payload FROM research_run_cards WHERE id = ?", (run_card_id,)).fetchone()
+        return ResearchRunCard.model_validate_json(row["payload"]) if row else None
+
+    def list_run_cards(
+        self,
+        *,
+        run_type: RunCardType | None = None,
+        status: RunCardStatus | None = None,
+        symbol: str | None = None,
+        limit: int = 50,
+    ) -> list[ResearchRunCard]:
+        clauses: list[str] = []
+        args: list[Any] = []
+        if run_type:
+            clauses.append("run_type = ?")
+            args.append(run_type.value)
+        if status:
+            clauses.append("status = ?")
+            args.append(status.value)
+        if symbol:
+            clauses.append("symbol = ?")
+            args.append(symbol.upper())
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"SELECT payload FROM research_run_cards {where} ORDER BY started_at DESC LIMIT ?"
+        args.append(limit)
+        with self.connect() as conn:
+            rows = conn.execute(query, tuple(args)).fetchall()
+        return [ResearchRunCard.model_validate_json(row["payload"]) for row in rows]
 
     def create_thesis(self, thesis: Thesis) -> Thesis:
         stored_thesis = thesis.model_copy(update={"updates": []})

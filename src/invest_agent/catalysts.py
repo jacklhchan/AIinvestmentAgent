@@ -18,12 +18,16 @@ from .models import (
     CreatedBy,
     CreatedVia,
     ResearchGoalCreate,
+    RunCardActor,
+    RunCardTriggerSource,
+    RunCardType,
     ThesisActionBias,
     ThesisImpact,
     ThesisUpdateCreate,
     utc_now,
 )
 from .research_goals import ResearchGoalService, compute_evidence_hash
+from .run_cards import RunCardService
 from .store import Store
 from .thesis_tracker import ThesisTrackerService
 
@@ -111,8 +115,41 @@ class CatalystCalendarService:
         request: CatalystReviewCreate,
         *,
         apply_to_thesis: bool = True,
+        actor: RunCardActor | str = RunCardActor.SYSTEM,
+        trigger_source: RunCardTriggerSource | str = RunCardTriggerSource.MANUAL,
     ) -> CatalystReview:
         catalyst = self.require_catalyst(catalyst_id)
+        run_card_id = request.run_card_id
+        created_run_card = not run_card_id
+        if not run_card_id:
+            run_card = RunCardService(self.store).start_run(
+                RunCardType.CATALYST_REVIEW,
+                title=f"Catalyst Review: {catalyst.title}",
+                symbol=catalyst.symbol,
+                actor=actor,
+                trigger_source=trigger_source,
+                rule_version="catalyst_review_v1",
+                inputs=request.model_dump(mode="json"),
+                dataset={
+                    "catalyst_id": catalyst.id,
+                    "symbol": catalyst.symbol,
+                    "event_type": catalyst.event_type.value,
+                    "event_date": catalyst.event_date.isoformat(),
+                    "expected_impact": catalyst.expected_impact.value,
+                    "source_type": catalyst.source_type.value,
+                    "verification_status": catalyst.verification_status.value,
+                },
+                assumptions={
+                    "review_requires_research_goal_for_evidence_hash": bool(request.research_goal_id),
+                    "output_is_research_only": True,
+                },
+                links={
+                    "research_goal_id": request.research_goal_id,
+                    "thesis_id": catalyst.linked_thesis_id,
+                    "catalyst_id": catalyst.id,
+                },
+            )
+            run_card_id = run_card.id
         evidence_hash = request.evidence_hash or ""
         if request.research_goal_id:
             goal = self.store.get_research_goal(request.research_goal_id)
@@ -134,6 +171,7 @@ class CatalystCalendarService:
             actual_outcome_summary=request.actual_outcome_summary.strip(),
             thesis_delta=request.thesis_delta,
             action_bias=request.action_bias,
+            run_card_id=run_card_id,
         )
         catalyst.status = CatalystStatus.COMPLETED
         catalyst.actual_outcome_summary = review.actual_outcome_summary
@@ -142,6 +180,28 @@ class CatalystCalendarService:
         catalyst.updated_at = utc_now()
         self.store.update_catalyst(catalyst, "catalyst_review_applied")
         saved = self.store.create_catalyst_review(review)
+        if created_run_card:
+            RunCardService(self.store).complete_run(
+                run_card_id,
+                metrics={
+                    "expected_impact": catalyst.expected_impact.value,
+                    "review_count": len(self.store.list_catalyst_reviews(catalyst.id)),
+                },
+                warnings=[],
+                outputs={
+                    "thesis_delta": saved.thesis_delta.value,
+                    "action_bias": saved.action_bias.value,
+                    "evidence_hash": saved.evidence_hash,
+                    "actual_outcome_summary": saved.actual_outcome_summary,
+                },
+                evidence_hash=saved.evidence_hash,
+                links={
+                    "research_goal_id": saved.research_goal_id,
+                    "thesis_id": catalyst.linked_thesis_id,
+                    "catalyst_id": catalyst.id,
+                    "catalyst_review_id": saved.id,
+                },
+            )
         if apply_to_thesis:
             self._maybe_update_linked_thesis(catalyst, saved)
         return saved
