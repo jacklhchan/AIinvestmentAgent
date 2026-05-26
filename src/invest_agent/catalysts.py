@@ -7,6 +7,7 @@ from .models import (
     CatalystActionBias,
     CatalystCompleteRequest,
     CatalystCreate,
+    CatalystEventType,
     CatalystExpectedImpact,
     CatalystReview,
     CatalystReviewCreate,
@@ -104,7 +105,13 @@ class CatalystCalendarService:
             catalyst.linked_research_goal_id = goal.id
         return self.store.update_catalyst(catalyst, "catalyst_completed")
 
-    def create_review(self, catalyst_id: str, request: CatalystReviewCreate) -> CatalystReview:
+    def create_review(
+        self,
+        catalyst_id: str,
+        request: CatalystReviewCreate,
+        *,
+        apply_to_thesis: bool = True,
+    ) -> CatalystReview:
         catalyst = self.require_catalyst(catalyst_id)
         evidence_hash = request.evidence_hash or ""
         if request.research_goal_id:
@@ -135,7 +142,8 @@ class CatalystCalendarService:
         catalyst.updated_at = utc_now()
         self.store.update_catalyst(catalyst, "catalyst_review_applied")
         saved = self.store.create_catalyst_review(review)
-        self._maybe_update_linked_thesis(catalyst, saved)
+        if apply_to_thesis:
+            self._maybe_update_linked_thesis(catalyst, saved)
         return saved
 
     def create_post_event_research_goal(self, catalyst: Catalyst):
@@ -170,8 +178,8 @@ class CatalystCalendarService:
         now = utc_now()
         reasons: list[str] = []
         warnings: list[str] = []
-        upcoming = self.store.list_catalysts(status=CatalystStatus.UPCOMING, symbol=symbol, limit=200)
-        completed = self.store.list_catalysts(status=CatalystStatus.COMPLETED, symbol=symbol, limit=200)
+        upcoming = self._proposal_scope_catalysts(CatalystStatus.UPCOMING, symbol)
+        completed = self._proposal_scope_catalysts(CatalystStatus.COMPLETED, symbol)
         for catalyst in upcoming:
             hours_until = (catalyst.event_date - now).total_seconds() / 3600
             if hours_until < 0:
@@ -205,6 +213,17 @@ class CatalystCalendarService:
         if not catalyst:
             raise ValueError(f"catalyst not found: {catalyst_id}")
         return catalyst
+
+    def _proposal_scope_catalysts(self, status: CatalystStatus, symbol: str) -> list[Catalyst]:
+        symbol_specific = self.store.list_catalysts(status=status, symbol=symbol, limit=200)
+        macro_global = [
+            catalyst
+            for catalyst in self.store.list_catalysts(status=status, limit=200)
+            if catalyst.symbol is None and catalyst.event_type == CatalystEventType.MACRO
+        ]
+        by_id = {catalyst.id: catalyst for catalyst in symbol_specific}
+        by_id.update({catalyst.id: catalyst for catalyst in macro_global})
+        return sorted(by_id.values(), key=lambda catalyst: catalyst.event_date)
 
     def _maybe_update_linked_thesis(self, catalyst: Catalyst, review: CatalystReview) -> None:
         if not catalyst.linked_thesis_id or review.thesis_delta == CatalystThesisDelta.UNKNOWN:

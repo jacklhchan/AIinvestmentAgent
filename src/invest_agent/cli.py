@@ -8,11 +8,12 @@ from .catalysts import CatalystCalendarService
 from .config import get_settings
 from .demo_data import seed_demo_data
 from .deps import get_service, get_store
+from .earnings_review import EarningsReviewService
 from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event_file
 from .futu_adapter import refresh_futu_readonly
 from .ir_feeds import IrFeedIngestor
 from .market_news import MarketNewsIngestor
-from .models import ProposalCreate, Side
+from .models import EarningsReviewRunRequest, ProposalCreate, Side
 from .primary_sources import refresh_primary_sources
 from .proposal_drafts import ProposalDraftEngine
 from .sec_companyfacts import SecCompanyFactsIngestor
@@ -124,6 +125,27 @@ def list_catalysts_main(days: int | None = None) -> None:
     print(json.dumps(_json(result), indent=2, ensure_ascii=False))
 
 
+def earnings_review_main(
+    symbol: str,
+    catalyst_id: str | None = None,
+    research_goal_id: str | None = None,
+    thesis_id: str | None = None,
+) -> None:
+    result = EarningsReviewService(get_store()).run_review(
+        EarningsReviewRunRequest(
+            symbol=symbol,
+            catalyst_id=catalyst_id,
+            research_goal_id=research_goal_id,
+            thesis_id=thesis_id,
+        )
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def list_earnings_reviews_main(symbol: str | None = None) -> None:
+    print(json.dumps(_json(get_store().list_earnings_reviews(symbol=symbol)), indent=2, ensure_ascii=False))
+
+
 def _json(value):
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
@@ -155,10 +177,16 @@ def main() -> None:
             "list-theses",
             "list-catalysts",
             "catalyst-preview",
+            "earnings-review",
+            "list-earnings-reviews",
         ],
     )
     parser.add_argument("--path", default=str(DEFAULT_REPLAY_PATH))
     parser.add_argument("--days", type=int, default=None)
+    parser.add_argument("--symbol", default=None)
+    parser.add_argument("--catalyst-id", default=None)
+    parser.add_argument("--research-goal-id", default=None)
+    parser.add_argument("--thesis-id", default=None)
     args = parser.parse_args()
     if args.command == "seed":
         seed_main()
@@ -192,6 +220,12 @@ def main() -> None:
         list_catalysts_main(args.days)
     if args.command == "catalyst-preview":
         list_catalysts_main(args.days or 14)
+    if args.command == "earnings-review":
+        if not args.symbol:
+            parser.error("--symbol is required for earnings-review")
+        earnings_review_main(args.symbol, args.catalyst_id, args.research_goal_id, args.thesis_id)
+    if args.command == "list-earnings-reviews":
+        list_earnings_reviews_main(args.symbol)
 
 
 if __name__ == "__main__":

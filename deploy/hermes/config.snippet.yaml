@@ -34,6 +34,10 @@ mcp_servers:
         - create_catalyst
         - get_catalyst_snapshot
         - complete_catalyst_with_research_goal
+        - run_earnings_review
+        - list_earnings_reviews
+        - get_earnings_review
+        - apply_earnings_review_to_thesis
         - get_safe_autonomy_status
         - run_safe_autonomy_cycle
         - export_event_replay_file

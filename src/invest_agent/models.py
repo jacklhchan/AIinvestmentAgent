@@ -185,6 +185,20 @@ class CatalystActionBias(StrEnum):
     BLOCK_NEW_PROPOSAL = "block_new_proposal"
 
 
+class CashflowQuality(StrEnum):
+    HEALTHY = "healthy"
+    MIXED = "mixed"
+    WEAK = "weak"
+    UNKNOWN = "unknown"
+
+
+class GuidanceTone(StrEnum):
+    POSITIVE = "positive"
+    MIXED = "mixed"
+    NEGATIVE = "negative"
+    UNKNOWN = "unknown"
+
+
 class Position(BaseModel):
     symbol: str
     qty: float
@@ -597,6 +611,59 @@ class CatalystReviewCreate(BaseModel):
 class CatalystCompleteRequest(BaseModel):
     actual_outcome_summary: str = Field(min_length=3)
     create_research_goal: bool = True
+
+
+class EarningsReview(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("earn"))
+    symbol: str
+    period: str = "unknown"
+    fiscal_year: int | None = None
+    fiscal_quarter: str = ""
+    release_date: datetime | None = None
+    filing_date: datetime | None = None
+    catalyst_id: str | None = None
+    catalyst_review_id: str | None = None
+    research_goal_id: str | None = None
+    thesis_id: str | None = None
+    revenue_yoy: float | None = None
+    net_income_yoy: float | None = None
+    operating_income_yoy: float | None = None
+    operating_cash_flow_yoy: float | None = None
+    diluted_eps_yoy: float | None = None
+    cashflow_quality: CashflowQuality = CashflowQuality.UNKNOWN
+    guidance_tone: GuidanceTone = GuidanceTone.UNKNOWN
+    beat_miss_summary: str = ""
+    source_summary: str = ""
+    thesis_delta: CatalystThesisDelta = CatalystThesisDelta.UNKNOWN
+    action_bias: CatalystActionBias = CatalystActionBias.NO_CHANGE
+    evidence_hash: str = ""
+    score: int = 0
+    warnings: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_earnings_review_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+
+class EarningsReviewRunRequest(BaseModel):
+    symbol: str
+    catalyst_id: str | None = None
+    research_goal_id: str | None = None
+    thesis_id: str | None = None
+    period: str | None = None
+    refresh_fundamentals: bool = False
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_earnings_run_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+
+class EarningsReviewApplyRequest(BaseModel):
+    thesis_id: str | None = None
+    human_confirmed: bool = False
 
 
 class FundamentalsRefreshResult(BaseModel):

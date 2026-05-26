@@ -10,6 +10,7 @@ from .models import (
     Catalyst,
     CatalystReview,
     CatalystStatus,
+    EarningsReview,
     ExecutionRecord,
     FundamentalSnapshot,
     NewsItem,
@@ -164,6 +165,18 @@ class Store:
                 CREATE TABLE IF NOT EXISTS catalyst_reviews (
                     id TEXT PRIMARY KEY,
                     catalyst_id TEXT NOT NULL,
+                    research_goal_id TEXT,
+                    thesis_delta TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    FOREIGN KEY (catalyst_id) REFERENCES catalysts(id),
+                    FOREIGN KEY (research_goal_id) REFERENCES research_goals(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS earnings_reviews (
+                    id TEXT PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    catalyst_id TEXT,
                     research_goal_id TEXT,
                     thesis_delta TEXT NOT NULL,
                     created_at TEXT NOT NULL,
@@ -664,6 +677,54 @@ class Store:
                 (catalyst_id,),
             ).fetchall()
         return [CatalystReview.model_validate_json(row["payload"]) for row in rows]
+
+    def create_earnings_review(self, review: EarningsReview) -> EarningsReview:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO earnings_reviews(id, symbol, catalyst_id, research_goal_id, thesis_delta, created_at, payload)
+                VALUES(?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    review.id,
+                    review.symbol,
+                    review.catalyst_id,
+                    review.research_goal_id,
+                    review.thesis_delta.value,
+                    review.created_at.isoformat(),
+                    self._dump(review),
+                ),
+            )
+        self.audit(
+            "earnings_review_created",
+            "earnings_review",
+            review.id,
+            {
+                "symbol": review.symbol,
+                "catalyst_id": review.catalyst_id,
+                "research_goal_id": review.research_goal_id,
+                "thesis_delta": review.thesis_delta.value,
+            },
+        )
+        return review
+
+    def get_earnings_review(self, review_id: str) -> EarningsReview | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT payload FROM earnings_reviews WHERE id = ?", (review_id,)).fetchone()
+        return EarningsReview.model_validate_json(row["payload"]) if row else None
+
+    def list_earnings_reviews(self, *, symbol: str | None = None, limit: int = 50) -> list[EarningsReview]:
+        clauses: list[str] = []
+        args: list[Any] = []
+        if symbol:
+            clauses.append("symbol = ?")
+            args.append(symbol.upper())
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"SELECT payload FROM earnings_reviews {where} ORDER BY created_at DESC LIMIT ?"
+        args.append(limit)
+        with self.connect() as conn:
+            rows = conn.execute(query, tuple(args)).fetchall()
+        return [EarningsReview.model_validate_json(row["payload"]) for row in rows]
 
     def create_proposal(self, proposal: Proposal) -> Proposal:
         with self.connect() as conn:

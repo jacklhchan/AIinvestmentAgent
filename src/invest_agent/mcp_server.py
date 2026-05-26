@@ -8,6 +8,7 @@ from .autonomy import SafeAutonomyRunner, autonomy_status
 from .catalysts import CatalystCalendarService, mcp_catalyst_request
 from .deps import get_service, get_store
 from .config import get_settings
+from .earnings_review import EarningsReviewService
 from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event_file as replay_events_from_file
 from .futu_adapter import get_futu_status, refresh_futu_readonly
 from .ir_feeds import IrFeedIngestor
@@ -20,6 +21,7 @@ from .models import (
     CatalystEventType,
     CatalystExpectedImpact,
     CatalystStatus,
+    EarningsReviewRunRequest,
     ResearchEvidenceCreate,
     ResearchGoalCreate,
     ResearchGoalStatus,
@@ -344,6 +346,51 @@ def complete_catalyst_with_research_goal(catalyst_id: str, actual_outcome_summar
         CatalystCompleteRequest(actual_outcome_summary=actual_outcome_summary, create_research_goal=True),
     )
     return _json(catalyst)
+
+
+@mcp.tool()
+def run_earnings_review(
+    symbol: str,
+    catalyst_id: str | None = None,
+    research_goal_id: str | None = None,
+    thesis_id: str | None = None,
+) -> dict:
+    """Run a research-only earnings review from local SEC companyfacts. It can create review artifacts but never approvals."""
+    try:
+        review = EarningsReviewService(get_store()).run_review(
+            EarningsReviewRunRequest(
+                symbol=symbol,
+                catalyst_id=catalyst_id,
+                research_goal_id=research_goal_id,
+                thesis_id=thesis_id,
+                refresh_fundamentals=False,
+            )
+        )
+        return _json(review)
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def list_earnings_reviews(symbol: str | None = None, limit: int = 20) -> list[dict]:
+    """List local earnings review artifacts."""
+    return _json(get_store().list_earnings_reviews(symbol=symbol, limit=limit))
+
+
+@mcp.tool()
+def get_earnings_review(review_id: str) -> dict:
+    """Return one earnings review artifact."""
+    review = get_store().get_earnings_review(review_id)
+    return _json(review) if review else {"error": f"earnings review not found: {review_id}"}
+
+
+@mcp.tool()
+def apply_earnings_review_to_thesis(review_id: str, thesis_id: str | None = None) -> dict:
+    """Apply a non-severe earnings review thesis delta. Severe deltas require human confirmation outside MCP."""
+    try:
+        return _json(EarningsReviewService(get_store()).apply_to_thesis(review_id, thesis_id=thesis_id))
+    except ValueError as exc:
+        return {"error": str(exc)}
 
 
 @mcp.tool()

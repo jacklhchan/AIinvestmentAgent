@@ -9,6 +9,7 @@ from .autonomy import SafeAutonomyRunner, autonomy_status
 from .catalysts import CatalystCalendarService
 from .config import get_settings
 from .deps import get_service, get_store
+from .earnings_review import EarningsReviewService
 from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event_file
 from .futu_adapter import FutuIntegrationError, get_futu_status, refresh_futu_readonly
 from .ir_feeds import IrFeedIngestor
@@ -20,6 +21,8 @@ from .models import (
     CatalystStatus,
     CreatedBy,
     CreatedVia,
+    EarningsReviewApplyRequest,
+    EarningsReviewRunRequest,
     ProposalCreate,
     ProposalStatus,
     ResearchEvidenceCreate,
@@ -293,6 +296,44 @@ def review_catalyst(catalyst_id: str, request: CatalystReviewCreate):
         return CatalystCalendarService(get_store()).create_review(catalyst_id, request)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/earnings-reviews")
+def earnings_reviews(symbol: str | None = None, limit: int = 50):
+    return get_store().list_earnings_reviews(symbol=symbol, limit=limit)
+
+
+@app.post("/api/earnings-reviews/run")
+def run_earnings_review(request: EarningsReviewRunRequest):
+    settings = get_settings()
+    store = get_store()
+    if request.refresh_fundamentals:
+        SecCompanyFactsIngestor(settings, store).refresh_fundamentals(symbols=[request.symbol], max_symbols=1)
+    try:
+        return EarningsReviewService(store).run_review(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/earnings-reviews/{review_id}")
+def earnings_review(review_id: str):
+    item = get_store().get_earnings_review(review_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="earnings review not found")
+    return item
+
+
+@app.post("/api/earnings-reviews/{review_id}/apply-to-thesis")
+def apply_earnings_review_to_thesis(review_id: str, request: EarningsReviewApplyRequest | None = None):
+    request = request or EarningsReviewApplyRequest()
+    try:
+        return EarningsReviewService(get_store()).apply_to_thesis(
+            review_id,
+            thesis_id=request.thesis_id,
+            human_confirmed=request.human_confirmed,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/autonomy/status")
@@ -788,6 +829,27 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         </form>
       </div>
     </section>
+    <section class="grid">
+      <div class="panel">
+        <h2>財報檢討</h2>
+        <table>
+          <thead><tr><th>標的 / 期間</th><th>YoY 指標</th><th>Thesis Delta</th><th>證據</th></tr></thead>
+          <tbody id="earnings-reviews"></tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <h2>執行財報檢討</h2>
+        <form id="earnings-review-form">
+          <div class="form-grid">
+            <div class="field"><label for="earnings_symbol">標的</label><input id="earnings_symbol" name="symbol" value="AAPL" required /></div>
+            <div class="field"><label for="earnings_catalyst_id">Catalyst ID</label><input id="earnings_catalyst_id" name="catalyst_id" placeholder="可留空" /></div>
+            <div class="field"><label for="earnings_thesis_id">Thesis ID</label><input id="earnings_thesis_id" name="thesis_id" placeholder="可留空" /></div>
+            <div class="field"><label for="earnings_refresh">刷新 SEC</label><select id="earnings_refresh" name="refresh_fundamentals"><option value="false">使用本機快照</option><option value="true">先刷新</option></select></div>
+          </div>
+          <button class="primary" type="submit">建立財報檢討</button>
+        </form>
+      </div>
+    </section>
     <section class="panel">
       <h2>SEC 基本面快照</h2>
       <table>
@@ -920,6 +982,27 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       other: "其他"
     };
     const impactLabels = { high: "高影響", medium: "中影響", low: "低影響" };
+    const thesisDeltaLabels = {
+      strengthens: "強化",
+      weakens: "削弱",
+      neutral: "中性",
+      invalidates: "推翻",
+      unknown: "未知"
+    };
+    const actionBiasLabels = {
+      no_change: "不變",
+      watch_only: "觀察",
+      increase: "加碼候選",
+      trim: "減碼候選",
+      exit: "退出候選",
+      block_new_proposal: "封鎖新提案"
+    };
+    const cashflowQualityLabels = {
+      healthy: "健康",
+      mixed: "混合",
+      weak: "偏弱",
+      unknown: "未知"
+    };
     const verificationLabels = {
       unverified: "未驗證",
       source_verified: "來源驗證",
@@ -976,6 +1059,8 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       catalyst_review_created: "催化事件 Review 已建立",
       catalyst_review_applied: "催化事件 Review 已套用",
       catalyst_post_event_goal_created: "事件後研究目標已建立",
+      earnings_review_created: "財報檢討已建立",
+      earnings_review_goal_updated: "財報研究目標已更新",
       proposal_research_invariant_rejected: "提案違反研究 Gate 不變式"
     };
     const sourceClass = source => `source-${String(source || "local").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
@@ -1161,6 +1246,24 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       }).join("") || `<tr><td colspan="4" class="muted">未來 14 天沒有催化事件；可先手動新增 earnings / macro / investor day。</td></tr>`;
     }
 
+    const pctText = value => value === null || value === undefined ? "n/a" : `${Number(value) > 0 ? "+" : ""}${Number(value).toFixed(1)}%`;
+    function renderEarningsReviews(reviews) {
+      document.querySelector("#earnings-reviews").innerHTML = reviews.map(review => {
+        const metrics = [
+          `收入 ${pctText(review.revenue_yoy)}`,
+          `淨利 ${pctText(review.net_income_yoy)}`,
+          `OCF ${pctText(review.operating_cash_flow_yoy)}`,
+          `EPS ${pctText(review.diluted_eps_yoy)}`
+        ].join("<br>");
+        return `<tr>
+          <td><strong>${escapeHtml(review.symbol)}</strong><br><span class="muted">${escapeHtml(review.period || "unknown")} · ${formatDate(review.created_at)}</span></td>
+          <td>${metrics}<br><span class="muted">Cashflow ${escapeHtml(cashflowQualityLabels[review.cashflow_quality] || review.cashflow_quality)}</span></td>
+          <td>${pill(review.thesis_delta, thesisDeltaLabels[review.thesis_delta] || review.thesis_delta)}<br><span class="muted">${escapeHtml(actionBiasLabels[review.action_bias] || review.action_bias)} · score ${escapeHtml(review.score)}</span></td>
+          <td>${sourceBadge("sec-companyfacts")}<br><span class="muted">${escapeHtml((review.evidence_hash || "").slice(0, 12))}${review.catalyst_id ? ` · Catalyst ${escapeHtml(review.catalyst_id)}` : ""}</span></td>
+        </tr>`;
+      }).join("") || `<tr><td colspan="4" class="muted">尚未建立財報檢討；可先刷新 SEC Fundamentals，再執行 earnings review。</td></tr>`;
+    }
+
     function renderProposals(proposals) {
       document.querySelector("#proposals").innerHTML = proposals.map(p => {
         const risk = p.risk_check.passed ? "通過" : (p.risk_check.reasons || []).map(escapeHtml).join("; ");
@@ -1198,7 +1301,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
     }
 
     async function loadAll() {
-      const [health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, researchGoals, theses, catalysts] = await Promise.all([
+      const [health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, researchGoals, theses, catalysts, earningsReviews] = await Promise.all([
         api("/health"),
         api("/api/portfolio"),
         api("/api/quotes"),
@@ -1210,7 +1313,8 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         api("/api/autonomy/status"),
         api("/api/research-goals?limit=8"),
         api("/api/theses?limit=8"),
-        api("/api/catalysts/upcoming?days=14&limit=8")
+        api("/api/catalysts/upcoming?days=14&limit=8"),
+        api("/api/earnings-reviews?limit=8")
       ]);
       document.querySelector("#mode").textContent = health.paper_only ? "紙上交易模式" : "已要求實盤模式";
       const futuButton = document.querySelector("#futu-refresh");
@@ -1225,6 +1329,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       renderResearchGoals(researchGoals);
       renderTheses(theses);
       renderCatalysts(catalysts);
+      renderEarningsReviews(earningsReviews);
       renderFundamentals(fundamentals);
       renderPositions(portfolio, quotes);
       renderProposals(proposals);
@@ -1407,6 +1512,23 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       try {
         const created = await api("/api/catalysts", { method: "POST", body: JSON.stringify(body) });
         setToast(`已建立催化事件 ${created.id}`);
+        await loadAll();
+      } catch (error) {
+        setToast(error.message);
+      }
+    });
+    document.querySelector("#earnings-review-form").addEventListener("submit", async event => {
+      event.preventDefault();
+      const form = new FormData(event.target);
+      const body = {
+        symbol: form.get("symbol"),
+        catalyst_id: form.get("catalyst_id") || null,
+        thesis_id: form.get("thesis_id") || null,
+        refresh_fundamentals: form.get("refresh_fundamentals") === "true"
+      };
+      try {
+        const created = await api("/api/earnings-reviews/run", { method: "POST", body: JSON.stringify(body) });
+        setToast(`已建立財報檢討 ${created.id}，delta：${thesisDeltaLabels[created.thesis_delta] || created.thesis_delta}`);
         await loadAll();
       } catch (error) {
         setToast(error.message);

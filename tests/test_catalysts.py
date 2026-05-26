@@ -9,6 +9,7 @@ from invest_agent.demo_data import seed_demo_data
 from invest_agent.models import (
     CatalystCompleteRequest,
     CatalystCreate,
+    CatalystEventType,
     CatalystExpectedImpact,
     CatalystReviewCreate,
     CatalystSourceType,
@@ -160,6 +161,26 @@ def test_high_impact_earnings_window_blocks_new_pending_buy(tmp_path) -> None:
 
     assert proposal.status == ProposalStatus.RISK_REJECTED
     assert any("high-impact catalyst" in reason for reason in proposal.risk_check.reasons)
+
+
+def test_high_impact_macro_catalyst_blocks_symbol_proposal(tmp_path) -> None:
+    _settings, store, service = make_stack(tmp_path)
+    goal_id = create_passed_goal(store)
+    CatalystCalendarService(store).create_catalyst(
+        CatalystCreate(
+            symbol=None,
+            event_type=CatalystEventType.MACRO,
+            title="FOMC decision",
+            event_date=utc_now() + timedelta(hours=10),
+            expected_impact=CatalystExpectedImpact.HIGH,
+        ),
+        human_verified=True,
+    )
+
+    proposal = service.create_proposal(create_pending_request(goal_id))
+
+    assert proposal.status == ProposalStatus.RISK_REJECTED
+    assert any("FOMC decision" in reason for reason in proposal.risk_check.reasons)
 
 
 def test_medium_impact_catalyst_adds_policy_warning(tmp_path) -> None:

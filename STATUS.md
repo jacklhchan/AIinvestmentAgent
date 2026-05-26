@@ -20,6 +20,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
 - Research Goal / Evidence Ledger layer with research-only goals, claims, criteria, evidence rows, verification status, caveats, and evidence gate summaries.
 - Thesis Tracker layer with long-term symbol theses, pillars, invalidating risks, evidence-linked thesis updates, and proposal-time thesis invariants.
 - Catalyst Calendar layer with upcoming/completed events, source/human verification, post-event reviews, and proposal-time catalyst invariants.
+- Earnings Review layer with SEC companyfacts-based YoY scoring, cashflow quality, research evidence, catalyst reviews, and thesis-delta artifacts.
 - Event replay export/import for portfolio, quotes, news/evidence, and fundamental snapshot JSONL.
 - Proposal draft engine that turns recent symbol-specific watchlist news into structured draft proposals, records a research goal for each draft, and only creates policy-checked proposals when evidence gate passes.
 - Safe autonomy loop that refreshes read-only data, drafts watchlist proposals, applies evidence gate and proposal cooldown, and creates only paper-mode pending proposals for human approval.
@@ -47,6 +48,10 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - `create_catalyst`
   - `get_catalyst_snapshot`
   - `complete_catalyst_with_research_goal`
+  - `run_earnings_review`
+  - `list_earnings_reviews`
+  - `get_earnings_review`
+  - `apply_earnings_review_to_thesis`
   - `get_safe_autonomy_status`
   - `run_safe_autonomy_cycle`
   - `export_event_replay_file`
@@ -60,7 +65,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - `reject_trade_proposal`
 - Hermes config snippet at `deploy/hermes/config.snippet.yaml`.
 - launchd example plists at `deploy/launchd/com.local.invest-agent-api.plist` and `deploy/launchd/com.local.invest-agent-scheduler.plist`.
-- Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, non-pending state handling, Futu adapter mapping, dashboard localization, news parsing, watchlist resolution, SEC/IR parsing, event replay, proposal draft creation, research evidence gates, thesis tracker behavior, and catalyst calendar invariants.
+- Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, non-pending state handling, Futu adapter mapping, dashboard localization, news parsing, watchlist resolution, SEC/IR parsing, event replay, proposal draft creation, research evidence gates, thesis tracker behavior, catalyst calendar invariants, and earnings review behavior.
 
 ## Local Hermes/Codex Setup
 
@@ -75,7 +80,7 @@ The global Hermes config at `/Users/apple/.hermes/config.yaml` has been updated 
 
 `hermes auth status openai-codex` shows logged in.
 
-`hermes mcp list` shows `invest_agent` enabled with 31 selected tools after adding the 4 catalyst calendar tools.
+`hermes mcp list` shows `invest_agent` enabled with 35 selected tools after adding the 4 earnings review tools.
 
 ## Futu Setup
 
@@ -206,6 +211,7 @@ The app now adds a proposal-time event risk layer for earnings, investor days, p
   - High-impact upcoming catalysts within 48 hours block new pending proposals unless a manual override is provided.
   - Medium-impact upcoming catalysts within 24 hours add policy warnings and a confidence haircut.
   - Recently completed high/medium-impact catalysts without post-event review block new pending proposals unless manually overridden.
+- Portfolio-wide macro catalysts use `symbol = null` and `event_type = macro`; those high/medium-impact events now apply to every symbol proposal check.
 - Catalyst completion can create a post-event research goal candidate.
 - Catalyst review can write thesis delta and update a linked thesis.
 - REST endpoints:
@@ -224,6 +230,32 @@ The app now adds a proposal-time event risk layer for earnings, investor days, p
   - `python -m invest_agent.cli list-catalysts --days 14`
   - `python -m invest_agent.cli catalyst-preview --days 7`
 - Dashboard has a `催化事件` panel and `新增催化事件` form.
+
+This phase still does not unlock Futu OpenD and does not place live orders.
+
+## Earnings Review
+
+The app now adds a deterministic post-earnings review layer built on local SEC companyfacts snapshots.
+
+- SQLite now has an `earnings_reviews` table.
+- An earnings review stores symbol, period, catalyst/research/thesis links, revenue/net income/operating income/operating cash flow/diluted EPS YoY, cashflow quality, thesis delta, action bias, evidence hash, score, warnings, and source summary.
+- `EarningsReviewService.run_review` reads the latest local SEC companyfacts snapshot, creates or reuses a research goal, writes source-verified `sec-companyfacts` evidence, computes a deterministic thesis delta, and stores the review artifact.
+- If the review is linked to a completed earnings catalyst, it creates a `catalyst_review`, which satisfies the post-event review requirement and unblocks future proposals that otherwise passed research/policy checks.
+- MCP-run earnings reviews are research-only artifacts. Severe deltas such as `invalidates`, `exit`, `trim`, or `block_new_proposal` require human confirmation before applying to a thesis.
+- REST endpoints:
+  - `GET /api/earnings-reviews`
+  - `POST /api/earnings-reviews/run`
+  - `GET /api/earnings-reviews/{review_id}`
+  - `POST /api/earnings-reviews/{review_id}/apply-to-thesis`
+- Hermes MCP earnings review tools:
+  - `run_earnings_review`
+  - `list_earnings_reviews`
+  - `get_earnings_review`
+  - `apply_earnings_review_to_thesis`
+- CLI:
+  - `python -m invest_agent.cli earnings-review --symbol AAPL`
+  - `python -m invest_agent.cli list-earnings-reviews --symbol AAPL`
+- Dashboard has a `財報檢討` panel and `執行財報檢討` form.
 
 This phase still does not unlock Futu OpenD and does not place live orders.
 
@@ -289,7 +321,7 @@ curl -s -X POST http://127.0.0.1:8788/api/proposals ...
 Result:
 
 ```text
-52 passed
+59 passed
 ```
 
 HTTP checks were also verified:
@@ -314,6 +346,10 @@ HTTP checks were also verified:
 - `GET /api/catalysts/{catalyst_id}`
 - `POST /api/catalysts/{catalyst_id}/complete`
 - `POST /api/catalysts/{catalyst_id}/review`
+- `GET /api/earnings-reviews`
+- `POST /api/earnings-reviews/run`
+- `GET /api/earnings-reviews/{review_id}`
+- `POST /api/earnings-reviews/{review_id}/apply-to-thesis`
 - `GET /api/autonomy/status`
 - `POST /api/autonomy/run`
 - `POST /api/events/export`
@@ -334,7 +370,7 @@ HTTP checks were also verified:
 - `python -m invest_agent.cli event-export`
 - `python -m invest_agent.cli event-replay`
 - `python -m invest_agent.cli draft-proposals`
-- invariant tests for direct proposal creation, MCP-unverified evidence, symbol mismatch, stale primary-source evidence, contradictory evidence, proposal `evidence_hash`, active thesis draft attachment, invalidated/unconfirmed thesis proposal blocking, MCP-unverified catalysts, high-impact catalyst blocking, medium-impact catalyst warnings, and catalyst review thesis delta
+- invariant tests for direct proposal creation, MCP-unverified evidence, symbol mismatch, stale primary-source evidence, contradictory evidence, proposal `evidence_hash`, active thesis draft attachment, invalidated/unconfirmed thesis proposal blocking, MCP-unverified catalysts, high-impact catalyst blocking, portfolio-wide macro catalyst blocking, medium-impact catalyst warnings, catalyst review thesis delta, and earnings review thesis delta
 
 The dashboard was visually checked in the Codex in-app browser.
 
@@ -348,6 +384,12 @@ Latest dashboard screenshot after adding Thesis Tracker:
 
 ```text
 artifacts/dashboard-thesis-tracker.png
+```
+
+Latest dashboard screenshot after adding Earnings Review:
+
+```text
+artifacts/dashboard-earnings-review.png
 ```
 
 Futu OpenD read-only refresh was validated against the local OpenD on port `11111`; it refreshed 7 positions and 7 quote snapshots.
@@ -377,7 +419,6 @@ The following are local runtime artifacts and intentionally ignored:
 
 - Keep proposal invariant locked: no `PENDING` proposal without `research_goal_id` or explicit `manual_override_reason`.
 - Keep verified provenance locked: MCP/user-submitted text cannot become source-verified evidence.
-- Add Earnings Review: output `thesis_delta = strengthen | weaken | neutral | invalidates`.
 - Add Run Card / Trust Layer artifact importer for catalyst reviews, earnings reviews, event replay, and later Vibe sidecar results.
 - Add Trade Journal / Behavior Report: Futu CSV import, FIFO roundtrip, win rate, PnL ratio, drawdown, and overtrading checks.
 - Add valuation ratios and filing-period normalization on top of SEC companyfacts.
