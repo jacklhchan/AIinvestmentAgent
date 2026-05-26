@@ -5,6 +5,7 @@
 ## 已包含
 
 - FastAPI 本機控制平面：`http://127.0.0.1:8788`
+- AI Advisor Brief：首頁一鍵自動整理 portfolio、proposal、research goals、theses、catalysts、earnings reviews、behavior / shadow reports，直接輸出 research-only 建議
 - SQLite 狀態儲存：proposal、approval、paper executions、portfolio、quotes、news、fundamentals、research goals、evidence rows、theses、thesis updates、catalysts、catalyst reviews、earnings reviews、research run cards、trade journal、behavior reports、shadow account、audit events
 - 風控/審批狀態機：TTL、重複單、notional、confidence、price drift revalidation
 - Hermes stdio MCP server：讓 Hermes 讀 portfolio/news/proposals 並建立/批准/拒絕 proposal
@@ -38,6 +39,31 @@ python -m invest_agent.api
 ```
 
 開啟 `http://127.0.0.1:8788`。介面預設為繁體中文，並會用來源 badge 區分 `Demo` 與 `富途 OpenD` 資料。
+
+## AI Advisor Brief
+
+Dashboard 第一屏的 `AI Advisor Brief` 是日常使用入口。按 `讓 Agent 自動分析` 後，系統會自動讀取目前狀態並整理建議：
+
+- 待審批 proposal 與 warning。
+- 48 小時內的高影響 catalyst 與事件後未 review 項目。
+- 最近 earnings review 是否削弱 / 推翻 thesis。
+- 最新 behavior report 的處分效應、過度交易、追高、錨定診斷。
+- 最新 shadow report 的 thesis mismatch、ignored catalyst、early exit。
+- 持倉是否缺少 human-confirmed active thesis。
+- research goal 是否證據不足。
+
+這個 brief 可以自動建立輕量 behavior report，但仍是 research-only：不會建立交易 proposal、不會 approve proposal、不會 unlock Futu，也不會下實盤單。底下的 thesis / catalyst / earnings / journal / shadow 表單保留給人工覆核、修正與審計追溯。
+
+Hermes MCP 也 exposes `get_advisor_brief`，所以你可以直接叫 Hermes「幫我看今天怎樣」，由它讀 brief 後用自然語言回答。
+
+REST API：
+
+```bash
+curl http://127.0.0.1:8788/api/advisor/brief
+curl -X POST http://127.0.0.1:8788/api/advisor/brief \
+  -H "Content-Type: application/json" \
+  -d '{"run_light_analysis":true,"max_items":8}'
+```
 
 ## Futu OpenD Read-Only
 

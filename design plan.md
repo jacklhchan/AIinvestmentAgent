@@ -12,6 +12,19 @@
 
 如果只想做一個**最小但正確**的第一版，建議先完成四件事：**只讀監控**、**結構化提案**、**Telegram 審批**、**紙上交易／回測與事件重播**；等提案品質、審批 UX 與風險控制穩定後，再接通實盤送單。Futu 文件指出紙上交易支援市場單與限價單，且不需要 unlock，但不支援所有成交相關推送與完整實盤行為，因此它很適合流程驗證，不適合直接當成實盤等價物。citeturn4search9turn6search3turn6search10
 
+## 目前落地：Advisor-first 操作入口
+
+控制平面已經累積 thesis、catalyst、earnings review、run card、trade journal、behavior report、shadow report 與 research goal 等多個審計層。這些表單適合 debug、人工覆核與追溯，但日常使用不應要求使用者逐一選 ID 或手動串流程。
+
+因此目前 dashboard 的第一入口改成 `AI Advisor Brief`：
+
+- Agent 自動讀取 portfolio、pending proposals、research goals、theses、catalysts、earnings reviews、behavior reports、shadow reports 與 shadow events。
+- Brief 會把結果排序成 `blocked`、`action`、`watch`、`info`，並給出下一步建議。
+- 按 `讓 Agent 自動分析` 時，可以自動建立最新輕量 behavior report，讓交易行為診斷更新到 brief。
+- Hermes 透過 MCP `get_advisor_brief` 讀同一份 brief，讓對話入口可以直接給建議，而不是要求使用者手動選 report / thesis / catalyst ID。
+- 這仍然是 research-only workflow：不自動建立 proposal、不自動 approve、不 unlock Futu、不送 live order。
+- 原本的手動表單保留為「控制平面 / 審計工作台」，而不是日常主入口。
+
 ## 總體架構與資料流
 
 ```mermaid

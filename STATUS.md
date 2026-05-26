@@ -11,6 +11,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
 ## Implemented
 
 - FastAPI control plane on `127.0.0.1:8788`.
+- AI Advisor Brief first-screen workflow that automatically summarizes portfolio, proposal, thesis, catalyst, earnings, behavior, shadow, and research-goal state into research-only advice.
 - SQLite-backed local store for portfolio snapshot, quotes, news, proposals, executions, and audit events.
 - Demo portfolio, quotes, and news seed data.
 - Watchlist resolver that merges configured symbols, held positions, and locally cached quotes.
@@ -34,6 +35,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - `get_portfolio_snapshot`
   - `get_watchlist_quotes`
   - `get_watchlist_symbols`
+  - `get_advisor_brief`
   - `get_news_digest`
   - `refresh_market_news`
   - `refresh_primary_source_filings`
@@ -79,7 +81,18 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - `reject_trade_proposal`
 - Hermes config snippet at `deploy/hermes/config.snippet.yaml`.
 - launchd example plists at `deploy/launchd/com.local.invest-agent-api.plist` and `deploy/launchd/com.local.invest-agent-scheduler.plist`.
-- Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, non-pending state handling, Futu adapter mapping, dashboard localization, news parsing, watchlist resolution, SEC/IR parsing, event replay, proposal draft creation, research evidence gates, thesis tracker behavior, catalyst calendar invariants, earnings review behavior, research run card artifacts, trade journal behavior analytics, and shadow account counterfactual reports.
+- Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, non-pending state handling, Futu adapter mapping, dashboard localization, news parsing, watchlist resolution, SEC/IR parsing, event replay, proposal draft creation, research evidence gates, thesis tracker behavior, catalyst calendar invariants, earnings review behavior, research run card artifacts, trade journal behavior analytics, shadow account counterfactual reports, and AI Advisor Brief behavior.
+
+## AI Advisor Brief
+
+The dashboard now has an advisor-first entry point so daily use no longer requires selecting internal IDs or manually chaining thesis/catalyst/earnings/journal/shadow panels.
+
+- `GET /api/advisor/brief` returns a no-side-effect research brief.
+- `POST /api/advisor/brief` can run light analysis, currently by creating the latest behavior report when trade fills exist.
+- Hermes MCP exposes `get_advisor_brief` so the conversational agent can answer from the same advisor-first summary instead of asking the user to select internal IDs.
+- The brief ranks advice as `blocked`, `action`, `watch`, or `info`.
+- Inputs include pending proposals, catalyst windows, completed catalysts missing review, earnings review thesis deltas, behavior diagnostics, latest shadow events, thesis coverage, and insufficient research goals.
+- The workflow is research-only. It does not create trade proposals, approve proposals, unlock Futu OpenD, or place live broker orders.
 
 ## Local Hermes/Codex Setup
 
@@ -94,7 +107,7 @@ The global Hermes config at `/Users/apple/.hermes/config.yaml` has been updated 
 
 `hermes auth status openai-codex` shows logged in.
 
-`/Users/apple/.hermes/hermes-agent/venv/bin/hermes mcp list` shows `invest_agent` enabled with 46 selected tools after adding the 5 read-only shadow account tools.
+`/Users/apple/.hermes/hermes-agent/venv/bin/hermes mcp list` shows `invest_agent` enabled with 47 selected tools after adding the advisor brief tool.
 
 ## Futu Setup
 

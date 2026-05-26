@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pydantic import BaseModel
 
+from .advisor import AdvisorService
 from .autonomy import SafeAutonomyRunner, autonomy_status
 from .catalysts import CatalystCalendarService
 from .config import get_settings
@@ -15,6 +16,7 @@ from .futu_adapter import FutuIntegrationError, get_futu_status, refresh_futu_re
 from .ir_feeds import IrFeedIngestor
 from .market_news import MarketNewsIngestor, external_ticker, resolve_watchlist_symbols
 from .models import (
+    AdvisorBriefRequest,
     CatalystCompleteRequest,
     CatalystCreate,
     CatalystReviewCreate,
@@ -114,6 +116,11 @@ def dashboard() -> str:
     return DASHBOARD_HTML
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon() -> Response:
+    return Response(status_code=204)
+
+
 @app.get("/health")
 def health() -> dict:
     settings = get_settings()
@@ -136,6 +143,17 @@ def portfolio():
 @app.get("/api/quotes")
 def quotes():
     return get_store().list_quotes()
+
+
+@app.get("/api/advisor/brief")
+def advisor_brief():
+    return AdvisorService(get_store(), paper_only=get_settings().is_paper).build_brief()
+
+
+@app.post("/api/advisor/brief")
+def run_advisor_brief(request: AdvisorBriefRequest | None = None):
+    request = request or AdvisorBriefRequest(run_light_analysis=True)
+    return AdvisorService(get_store(), paper_only=get_settings().is_paper).build_brief(request)
 
 
 @app.get("/api/watchlist")
@@ -726,6 +744,58 @@ DASHBOARD_HTML = """
       font-size: 15px;
       border-bottom: 1px solid var(--line);
     }
+    .panel-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 13px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+    .panel-title-row h2 {
+      padding: 0;
+      border-bottom: 0;
+    }
+    .advisor-shell {
+      display: grid;
+      grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.35fr);
+      gap: 0;
+    }
+    .advisor-summary {
+      padding: 16px;
+      border-right: 1px solid var(--line);
+      display: grid;
+      align-content: start;
+      gap: 12px;
+    }
+    .advisor-headline {
+      font-family: Georgia, "Times New Roman", "PingFang HK", serif;
+      font-size: 23px;
+      line-height: 1.22;
+    }
+    .advisor-list {
+      display: grid;
+      gap: 0;
+    }
+    .advisor-item {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      display: grid;
+      gap: 7px;
+    }
+    .advisor-item:last-child { border-bottom: 0; }
+    .advisor-meta {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .advisor-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
     .source-strip {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -793,6 +863,9 @@ DASHBOARD_HTML = """
     .INSUFFICIENT { color: var(--amber); border-color: #dfc68a; background: #fff7df; }
     .active { color: var(--mint); border-color: #9ad6c5; background: #eaf8f3; }
     .watch { color: var(--amber); border-color: #dfc68a; background: #fff7df; }
+    .info { color: var(--blue); border-color: #9ab3df; background: #eef4ff; }
+    .action { color: var(--amber); border-color: #dfc68a; background: #fff7df; }
+    .blocked { color: var(--coral); border-color: #e6aaa5; background: #fff0ee; }
     .invalidated, .archived { color: var(--coral); border-color: #e6aaa5; background: #fff0ee; }
     .upcoming { color: var(--blue); border-color: #9ab3df; background: #eef4ff; }
     .completed { color: var(--mint); border-color: #9ad6c5; background: #eaf8f3; }
@@ -874,6 +947,8 @@ DASHBOARD_HTML = """
     }
     @media (max-width: 980px) {
       .triple-grid { grid-template-columns: 1fr; }
+      .advisor-shell { grid-template-columns: 1fr; }
+      .advisor-summary { border-right: 0; border-bottom: 1px solid var(--line); }
       .source-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .source-cell:nth-child(2) { border-right: 0; }
       .source-cell:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
@@ -913,6 +988,20 @@ DASHBOARD_HTML = """
       <div class="metric"><div class="label">現金</div><div class="value" id="cash">$0</div></div>
       <div class="metric"><div class="label">持倉數</div><div class="value" id="positions">0</div></div>
       <div class="metric"><div class="label">待審批</div><div class="value" id="pending">0</div></div>
+    </section>
+    <section class="panel">
+      <div class="panel-title-row">
+        <h2>AI Advisor Brief</h2>
+        <div class="advisor-actions">
+          <span class="muted">Agent 自動整理研究、事件、行為與 proposal 風險</span>
+          <button class="primary" id="advisor-run" type="button">讓 Agent 自動分析</button>
+        </div>
+      </div>
+      <div class="advisor-shell" id="advisor-brief">
+        <div class="advisor-summary"><div class="muted">正在整理 advisor brief...</div></div>
+        <div class="advisor-list"></div>
+      </div>
+      <div class="toast" id="advisor-toast"></div>
     </section>
     <section class="panel">
       <h2>資料來源與刷新狀態</h2>
@@ -1279,6 +1368,22 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       post_event_review_missing: "缺少事件後 Review",
       contradicted_earnings_review: "與財報檢討相反"
     };
+    const advisorSeverityLabels = {
+      info: "資訊",
+      watch: "觀察",
+      action: "需要處理",
+      blocked: "暫停行動"
+    };
+    const advisorCategoryLabels = {
+      system: "系統",
+      proposal: "提案",
+      catalyst: "催化事件",
+      earnings: "財報",
+      behavior: "交易行為",
+      shadow: "影子帳戶",
+      thesis: "投資論點",
+      research: "研究證據"
+    };
     const verificationLabels = {
       unverified: "未驗證",
       source_verified: "來源驗證",
@@ -1372,7 +1477,41 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         return fallback(error);
       }
     };
-    const setToast = text => { document.querySelector("#toast").textContent = text; };
+    const setToast = text => {
+      document.querySelector("#toast").textContent = text;
+      const advisorToast = document.querySelector("#advisor-toast");
+      if (advisorToast) advisorToast.textContent = text;
+    };
+
+    function renderAdvisorBrief(brief) {
+      const shell = document.querySelector("#advisor-brief");
+      if (!brief) {
+        shell.innerHTML = `<div class="advisor-summary"><div class="muted">Advisor brief 尚未建立。</div></div><div class="advisor-list"></div>`;
+        return;
+      }
+      const summary = (brief.summary || []).map(item => `<div>${escapeHtml(item)}</div>`).join("");
+      const actions = (brief.automated_actions || []).map(item => `<div>${escapeHtml(item)}</div>`).join("");
+      const advice = (brief.advice || []).map(item => {
+        const ids = (item.related_ids || []).slice(0, 5).map(id => `<span class="muted">${escapeHtml(id)}</span>`).join(" ");
+        return `<div class="advisor-item">
+          <div class="advisor-meta">${pill(item.severity, advisorSeverityLabels[item.severity] || item.severity)} ${pill(item.category, advisorCategoryLabels[item.category] || item.category)}</div>
+          <div class="item-title">${escapeHtml(item.title)}</div>
+          <div>${escapeHtml(item.rationale)}</div>
+          <div class="muted">下一步：${escapeHtml(item.next_action)}</div>
+          ${ids ? `<div>${ids}</div>` : ""}
+        </div>`;
+      }).join("") || `<div class="advisor-item"><div class="muted">暫時沒有建議項目。</div></div>`;
+      shell.innerHTML = `
+        <div class="advisor-summary">
+          <div>${pill(brief.risk_level, advisorSeverityLabels[brief.risk_level] || brief.risk_level)} ${brief.paper_only ? pill("APPROVED", "paper-only") : pill("PENDING", "live requested")}</div>
+          <div class="advisor-headline">${escapeHtml(brief.headline)}</div>
+          <div class="muted">${summary || "暫時沒有摘要資料"}</div>
+          ${actions ? `<div><div class="label">Agent 已自動完成</div><div class="muted">${actions}</div></div>` : `<div class="muted">按「讓 Agent 自動分析」會建立可重播的輕量行為分析，不會批准或下單。</div>`}
+          <div class="muted">更新：${formatDate(brief.generated_at)}</div>
+        </div>
+        <div class="advisor-list">${advice}</div>
+      `;
+    }
 
     function renderSourceStrip(health, portfolio, quotes, futuStatus) {
       const quoteSources = quotes.reduce((acc, quote) => {
@@ -1668,7 +1807,8 @@ proposal 需要靠 manual override 才能成立</textarea></div>
     }
 
     async function loadAll() {
-      const [health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, researchGoals, theses, catalysts, earningsReviews, runCards, behaviorReports, tradeImports, tradeRoundtrips, shadowStrategies, shadowReports, shadowEvents] = await Promise.all([
+      const [advisorBrief, health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, researchGoals, theses, catalysts, earningsReviews, runCards, behaviorReports, tradeImports, tradeRoundtrips, shadowStrategies, shadowReports, shadowEvents] = await Promise.all([
+        api("/api/advisor/brief"),
         api("/health"),
         api("/api/portfolio"),
         api("/api/quotes"),
@@ -1698,6 +1838,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       document.querySelector("#cash").textContent = money(portfolio.cash_usd);
       document.querySelector("#positions").textContent = portfolio.positions.length;
       document.querySelector("#pending").textContent = proposals.filter(p => p.status === "PENDING").length;
+      renderAdvisorBrief(advisorBrief);
       renderSourceStrip(health, portfolio, quotes, futuStatus);
       renderAutonomy(autonomy);
       renderResearchGoals(researchGoals);
@@ -1741,6 +1882,25 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         }
       } catch (error) {
         setToast(error.message);
+      }
+    });
+    document.querySelector("#advisor-run").addEventListener("click", async event => {
+      event.target.disabled = true;
+      setToast("Advisor 正在自動整理研究、行為與風險，不會批准或下單...");
+      try {
+        const brief = await api("/api/advisor/brief", {
+          method: "POST",
+          body: JSON.stringify({ run_light_analysis: true, max_items: 8 })
+        });
+        renderAdvisorBrief(brief);
+        const actionNote = brief.automated_actions?.length ? `；已完成 ${brief.automated_actions.length} 個分析動作` : "";
+        setToast(`Advisor brief 已更新${actionNote}`);
+        await loadAll();
+        renderAdvisorBrief(brief);
+      } catch (error) {
+        setToast(error.message);
+      } finally {
+        event.target.disabled = false;
       }
     });
     document.querySelector("#futu-refresh").addEventListener("click", async event => {

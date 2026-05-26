@@ -4,6 +4,7 @@ from typing import Literal
 
 from mcp.server.fastmcp import FastMCP
 
+from .advisor import AdvisorService
 from .autonomy import SafeAutonomyRunner, autonomy_status
 from .catalysts import CatalystCalendarService, mcp_catalyst_request
 from .deps import get_service, get_store
@@ -14,6 +15,7 @@ from .futu_adapter import get_futu_status, refresh_futu_readonly
 from .ir_feeds import IrFeedIngestor
 from .market_news import MarketNewsIngestor, external_ticker, resolve_watchlist_symbols
 from .models import (
+    AdvisorBriefRequest,
     ProposalCreate,
     ProposalStatus,
     CatalystCompleteRequest,
@@ -77,6 +79,16 @@ def get_watchlist_quotes() -> list[dict]:
 def get_watchlist_symbols() -> list[str]:
     """Return configured watchlist symbols, including locally held and quoted symbols."""
     return resolve_watchlist_symbols(get_settings(), get_store())
+
+
+@mcp.tool()
+def get_advisor_brief(run_light_analysis: bool = False, max_items: int = 8) -> dict:
+    """Return an advisor-first research brief. It may update behavior analytics, but never approves or executes trades."""
+    return _json(
+        AdvisorService(get_store(), paper_only=get_settings().is_paper).build_brief(
+            AdvisorBriefRequest(run_light_analysis=run_light_analysis, max_items=max_items)
+        )
+    )
 
 
 @mcp.tool()

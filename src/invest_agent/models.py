@@ -286,6 +286,13 @@ class ShadowEventType(StrEnum):
     CONTRADICTED_EARNINGS_REVIEW = "contradicted_earnings_review"
 
 
+class AdvisorSeverity(StrEnum):
+    INFO = "info"
+    WATCH = "watch"
+    ACTION = "action"
+    BLOCKED = "blocked"
+
+
 class Position(BaseModel):
     symbol: str
     qty: float
@@ -1014,6 +1021,31 @@ class ShadowReportRunRequest(BaseModel):
         if not value:
             return None
         return [item.strip().upper() for item in value if item and item.strip()]
+
+
+class AdvisorBriefRequest(BaseModel):
+    run_light_analysis: bool = False
+    max_items: int = Field(default=8, ge=1, le=20)
+
+
+class AdvisorBriefItem(BaseModel):
+    severity: AdvisorSeverity = AdvisorSeverity.INFO
+    category: str
+    title: str
+    rationale: str
+    next_action: str
+    related_ids: list[str] = Field(default_factory=list)
+
+
+class AdvisorBrief(BaseModel):
+    generated_at: datetime = Field(default_factory=utc_now)
+    headline: str
+    risk_level: AdvisorSeverity = AdvisorSeverity.INFO
+    paper_only: bool = True
+    summary: list[str] = Field(default_factory=list)
+    advice: list[AdvisorBriefItem] = Field(default_factory=list)
+    automated_actions: list[str] = Field(default_factory=list)
+    data_status: dict[str, Any] = Field(default_factory=dict)
 
 
 class FundamentalsRefreshResult(BaseModel):
