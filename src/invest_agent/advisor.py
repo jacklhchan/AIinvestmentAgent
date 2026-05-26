@@ -4,6 +4,7 @@ from datetime import timedelta, timezone
 
 from .config import Settings, get_settings
 from .market_context import MarketContextService
+from .market_regime import MarketRegimeService
 from .models import (
     AdvisorBrief,
     AdvisorBriefItem,
@@ -16,6 +17,7 @@ from .models import (
     CatalystStatus,
     CatalystThesisDelta,
     ProposalStatus,
+    ProposalBias,
     RunCardActor,
     ShadowEventType,
     ThesisStatus,
@@ -54,9 +56,11 @@ class AdvisorService:
         active_theses = self.store.list_theses(status=ThesisStatus.ACTIVE, limit=100)
         active_thesis_symbols = {thesis.symbol for thesis in active_theses if thesis.human_confirmed}
         market_context = MarketContextService(self.settings, self.store).build_context()
+        market_regime = MarketRegimeService(self.settings, self.store).build_snapshot()
 
         advice: list[AdvisorBriefItem] = []
         advice.extend(_market_context_advice(market_context))
+        advice.extend(_market_regime_advice(market_regime))
         advice.extend(_pending_proposal_advice(pending))
         advice.extend(_catalyst_advice(catalysts))
         advice.extend(_earnings_advice(earnings_reviews))
@@ -83,6 +87,7 @@ class AdvisorService:
             f"{len(catalysts)} 個 catalyst 記錄",
             f"{len(shadow_reports)} 份 shadow report",
             f"市場全景：{market_context.coverage_summary.get('with_news', 0)}/{market_context.coverage_summary.get('symbol_count', 0)} 有新聞覆蓋",
+            f"市場狀態：{market_regime.risk_appetite.value} / {market_regime.proposal_bias.value}",
         ]
         if behavior_report:
             summary.append(f"最新 behavior report：{behavior_report.total_roundtrips} 個 roundtrip")
@@ -102,6 +107,7 @@ class AdvisorService:
                 "shadow_report_id": shadow_reports[0].id if shadow_reports else None,
                 "active_thesis_symbols": sorted(active_thesis_symbols),
                 "market_context": market_context.model_dump(mode="json"),
+                "market_regime": market_regime.model_dump(mode="json"),
                 "paper_only": self.paper_only,
             },
         )
@@ -156,6 +162,22 @@ def _market_context_advice(context) -> list[AdvisorBriefItem]:
             rationale="; ".join(notes[:2]),
             next_action="把大盤、波動率、利率、黃金與油價背景當成審批 proposal 前的檢查項，不要把它當成直接交易訊號。",
             related_ids=[item.symbol for item in context.items if not item.has_quote and not item.news_count][:5],
+        )
+    ]
+
+
+def _market_regime_advice(regime) -> list[AdvisorBriefItem]:
+    if regime.proposal_bias == ProposalBias.NORMAL and not regime.warnings:
+        return []
+    severity = AdvisorSeverity.ACTION if regime.proposal_bias == ProposalBias.DEFENSIVE_ONLY else AdvisorSeverity.WATCH
+    return [
+        AdvisorBriefItem(
+            severity=severity,
+            category="market_regime",
+            title=f"市場狀態：{regime.risk_appetite.value} / {regime.proposal_bias.value}",
+            rationale=" ".join([regime.summary, *regime.drivers[:3], *regime.warnings[:1]]).strip(),
+            next_action="把 regime 當成新 BUY proposal 的審批背景；它不會建立 proposal，也不會批准或下單。",
+            related_ids=regime.symbols[:8],
         )
     ]
 

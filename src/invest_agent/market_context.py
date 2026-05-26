@@ -90,6 +90,8 @@ class MarketContextService:
             label=label,
             has_quote=quote is not None,
             last_price=quote.last_price if quote else None,
+            previous_close=quote.previous_close if quote else None,
+            change_pct=quote.change_pct if quote else None,
             quote_source=quote.source if quote else None,
             quote_updated_at=quote.updated_at if quote else None,
             news_count=len(news),

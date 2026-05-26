@@ -274,6 +274,8 @@ def _quotes_from_records(records: list[dict[str, Any]]) -> list[Quote]:
             Quote(
                 symbol=symbol,
                 last_price=_float(row, "last_price", "cur_price", "price", "nominal_price"),
+                previous_close=_optional_float(row, "prev_close_price", "pre_close_price", "previous_close"),
+                change_pct=_quote_change_pct(row),
                 bid=_optional_float(row, "bid_price", "bid"),
                 ask=_optional_float(row, "ask_price", "ask"),
                 currency=_currency_from_symbol(symbol),
@@ -282,6 +284,17 @@ def _quotes_from_records(records: list[dict[str, Any]]) -> list[Quote]:
             )
         )
     return quotes
+
+
+def _quote_change_pct(row: dict[str, Any]) -> float | None:
+    direct = _optional_float(row, "change_rate", "change_pct", "change_ratio")
+    if direct is not None:
+        return direct
+    last_price = _optional_float(row, "last_price", "cur_price", "price", "nominal_price")
+    previous_close = _optional_float(row, "prev_close_price", "pre_close_price", "previous_close")
+    if last_price is None or previous_close in (None, 0):
+        return None
+    return ((last_price - previous_close) / previous_close) * 100
 
 
 def _currency_from_symbol(symbol: str) -> str:

@@ -14,6 +14,7 @@ from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event
 from .futu_adapter import get_futu_status, refresh_futu_readonly
 from .ir_feeds import IrFeedIngestor
 from .market_context import MarketContextService
+from .market_regime import MarketRegimeService
 from .market_news import MarketNewsIngestor, external_ticker, resolve_watchlist_symbols
 from .models import (
     AdvisorBriefRequest,
@@ -96,6 +97,12 @@ def get_advisor_brief(run_light_analysis: bool = False, max_items: int = 8) -> d
 def get_market_context() -> dict:
     """Return broad-market context symbols, quote/news coverage, and risk notes. Research-only."""
     return _json(MarketContextService(get_settings(), get_store()).build_context())
+
+
+@mcp.tool()
+def get_market_regime() -> dict:
+    """Return deterministic market regime and proposal-bias background. Research-only and no proposal creation."""
+    return _json(MarketRegimeService(get_settings(), get_store()).build_snapshot())
 
 
 @mcp.tool()

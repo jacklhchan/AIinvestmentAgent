@@ -88,7 +88,23 @@ curl -X POST http://127.0.0.1:8788/api/market-context/refresh \
   -d '{}'
 ```
 
-Hermes MCP exposes `get_market_context` and `refresh_market_context_news`，所以 conversational agent 可以先看市場全景，再解釋個別 proposal。
+Market Regime / Risk Budget Lens 會把 market context 轉成 deterministic summary：
+
+- `risk_appetite`: `risk_on | neutral | risk_off`
+- `growth_pressure`: `supportive | mixed | pressured`
+- `rates_pressure`: `falling_yields | neutral | rising_yields`
+- `volatility_regime`: `calm | elevated | stressed`
+- `inflation_pressure`: `benign | mixed | oil_gold_pressure`
+- `proposal_bias`: `normal | caution | defensive_only`
+
+Regime 使用 quote move、VIXY / TLT / GLD / USO proxy 和 news-only fallback 做規則判斷，並產生 `market_regime_v1` run card。它只影響 Advisor Brief 的審批背景，不會建立 proposal、不會 approve、不會下單。
+
+```bash
+curl http://127.0.0.1:8788/api/market-regime
+curl -X POST http://127.0.0.1:8788/api/market-regime/refresh
+```
+
+Hermes MCP exposes `get_market_context`、`get_market_regime` and `refresh_market_context_news`，所以 conversational agent 可以先看市場全景與 regime，再解釋個別 proposal。
 
 ## Futu OpenD Read-Only
 
@@ -457,6 +473,10 @@ mcp_servers:
         - get_portfolio_snapshot
         - get_watchlist_quotes
         - get_watchlist_symbols
+        - get_advisor_brief
+        - get_market_context
+        - get_market_regime
+        - refresh_market_context_news
         - get_news_digest
         - refresh_market_news
         - refresh_primary_source_filings

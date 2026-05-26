@@ -13,6 +13,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
 - FastAPI control plane on `127.0.0.1:8788`.
 - AI Advisor Brief first-screen workflow that automatically summarizes portfolio, proposal, thesis, catalyst, earnings, behavior, shadow, and research-goal state into research-only advice.
 - Market Context Lens with broad-market symbols for index, volatility, rates, gold, and oil context; it informs advice but does not create proposal candidates.
+- Market Regime / Risk Budget Lens that deterministically turns broad-market quote/news context into risk appetite, growth/rates/volatility/inflation pressure, and proposal-bias background.
 - SQLite-backed local store for portfolio snapshot, quotes, news, proposals, executions, and audit events.
 - Demo portfolio, quotes, and news seed data.
 - Watchlist resolver that merges configured symbols, held positions, and locally cached quotes.
@@ -38,6 +39,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - `get_watchlist_symbols`
   - `get_advisor_brief`
   - `get_market_context`
+  - `get_market_regime`
   - `refresh_market_context_news`
   - `get_news_digest`
   - `refresh_market_news`
@@ -84,7 +86,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - `reject_trade_proposal`
 - Hermes config snippet at `deploy/hermes/config.snippet.yaml`.
 - launchd example plists at `deploy/launchd/com.local.invest-agent-api.plist` and `deploy/launchd/com.local.invest-agent-scheduler.plist`.
-- Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, non-pending state handling, Futu adapter mapping, dashboard localization, news parsing, watchlist resolution, SEC/IR parsing, event replay, proposal draft creation, research evidence gates, thesis tracker behavior, catalyst calendar invariants, earnings review behavior, research run card artifacts, trade journal behavior analytics, shadow account counterfactual reports, and AI Advisor Brief behavior.
+- Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, non-pending state handling, Futu adapter mapping, dashboard localization, news parsing, watchlist resolution, market context/regime guardrails, SEC/IR parsing, event replay, proposal draft creation, research evidence gates, thesis tracker behavior, catalyst calendar invariants, earnings review behavior, research run card artifacts, trade journal behavior analytics, shadow account counterfactual reports, and AI Advisor Brief behavior.
 
 ## AI Advisor Brief
 
@@ -104,12 +106,16 @@ The app now separates broad-market context from trade proposal watchlists.
 - Default symbols: `SPY,QQQ,IWM,DIA,VIXY,TLT,GLD,USO`.
 - `GET /api/market-context` returns quote/news coverage and risk notes for market context symbols.
 - `POST /api/market-context/refresh` refreshes broad-market news without creating proposals.
+- `GET /api/market-regime` returns the current deterministic market regime without side effects.
+- `POST /api/market-regime/refresh` persists a `market_regime_v1` run card and snapshot.
 - Safe autonomy refreshes market-context news alongside watchlist news.
 - Dashboard has a `市場全景` panel and `刷新市場全景` action.
+- Dashboard has a `市場狀態 / 風險預算` panel with risk appetite, proposal bias, growth/rates pressure, and vol/inflation pressure.
 - Dashboard market summary now shows 24 latest news items instead of 8.
 - Futu read-only refresh attempts quote snapshots for market-context symbols in addition to held positions.
-- Hermes MCP exposes `get_market_context` and `refresh_market_context_news`.
+- Hermes MCP exposes `get_market_context`, `get_market_regime`, and `refresh_market_context_news`.
 - These symbols inform Advisor Brief but are not fed into proposal drafting unless explicitly added to `INVEST_AGENT_WATCHLIST`.
+- Market-context quote snapshots are explicitly excluded from proposal draft watchlist resolution unless the symbol is held or explicitly configured in `INVEST_AGENT_WATCHLIST`.
 
 ## Local Hermes/Codex Setup
 
@@ -124,7 +130,7 @@ The global Hermes config at `/Users/apple/.hermes/config.yaml` has been updated 
 
 `hermes auth status openai-codex` shows logged in.
 
-`/Users/apple/.hermes/hermes-agent/venv/bin/hermes mcp list` shows `invest_agent` enabled with 49 selected tools after adding the market context tools.
+`/Users/apple/.hermes/hermes-agent/venv/bin/hermes mcp list` shows `invest_agent` enabled with 50 selected tools after adding the market regime tool.
 
 ## Futu Setup
 

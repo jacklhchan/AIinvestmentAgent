@@ -26,15 +26,37 @@ COMPANY_NAMES = {
     "NFLX": "Netflix",
 }
 
+MARKET_CONTEXT_QUERIES = {
+    "SPY": "S&P 500 OR broad market OR US equities",
+    "QQQ": "Nasdaq 100 OR mega cap tech OR growth stocks",
+    "IWM": "Russell 2000 OR small caps",
+    "DIA": "Dow Jones Industrial Average OR blue chip stocks",
+    "VIX": "VIX OR volatility OR market fear",
+    "VIXY": "VIX OR volatility OR market fear",
+    "TLT": "Treasury yields OR long duration Treasuries OR bond market",
+    "GLD": "gold prices OR real yields OR safe haven",
+    "USO": "oil prices OR crude oil OR energy inflation",
+}
+
 
 def resolve_watchlist_symbols(settings: Settings, store: Store, symbols: list[str] | None = None) -> list[str]:
     candidates: list[str] = []
     if symbols:
         candidates.extend(symbols)
     else:
-        candidates.extend(_split_symbols(settings.watchlist_symbols))
-        candidates.extend(position.symbol for position in store.get_portfolio().positions)
-        candidates.extend(quote.symbol for quote in store.list_quotes())
+        configured = _split_symbols(settings.watchlist_symbols)
+        held = [position.symbol for position in store.get_portfolio().positions]
+        market_context_tickers = {external_ticker(symbol) for symbol in _split_symbols(settings.market_context_symbols)}
+        protected_tickers = {external_ticker(symbol) for symbol in [*configured, *held]}
+        quote_symbols = [
+            quote.symbol
+            for quote in store.list_quotes()
+            if external_ticker(quote.symbol) not in market_context_tickers
+            or external_ticker(quote.symbol) in protected_tickers
+        ]
+        candidates.extend(configured)
+        candidates.extend(held)
+        candidates.extend(quote_symbols)
 
     by_ticker: dict[str, str] = {}
     for candidate in candidates:
@@ -76,7 +98,7 @@ class MarketNewsIngestor:
         include_google_news: bool | None = None,
         include_finnhub: bool = True,
     ) -> NewsIngestResult:
-        watchlist = resolve_watchlist_symbols(self.settings, self.store, symbols)
+        watchlist = _resolve_explicit_symbols(symbols) if symbols is not None else resolve_watchlist_symbols(self.settings, self.store)
         watchlist = watchlist[: max_symbols or self.settings.news_max_symbols]
         lookback_days = days or self.settings.news_lookback_days
         limit = max_per_symbol or self.settings.news_max_per_symbol
@@ -147,7 +169,8 @@ class MarketNewsIngestor:
     def fetch_gdelt(self, client: httpx.Client, symbol: str, *, days: int, limit: int) -> list[NewsItem]:
         ticker = external_ticker(symbol)
         company = COMPANY_NAMES.get(ticker, ticker)
-        query = f'"{company}" ({ticker} OR stock OR shares OR earnings)'
+        concept_query = MARKET_CONTEXT_QUERIES.get(ticker)
+        query = f"({concept_query})" if concept_query else f'"{company}" ({ticker} OR stock OR shares OR earnings)'
         response = client.get(
             "https://api.gdeltproject.org/api/v2/doc/doc",
             params={
@@ -166,10 +189,11 @@ class MarketNewsIngestor:
     def fetch_google_news(self, client: httpx.Client, symbol: str, *, limit: int) -> list[NewsItem]:
         ticker = external_ticker(symbol)
         company = COMPANY_NAMES.get(ticker, ticker)
+        query = MARKET_CONTEXT_QUERIES.get(ticker) or f"{ticker} stock OR {company}"
         response = client.get(
             "https://news.google.com/rss/search",
             params={
-                "q": f"{ticker} stock OR {company}",
+                "q": query,
                 "hl": "en-US",
                 "gl": "US",
                 "ceid": "US:en",
@@ -283,6 +307,19 @@ def external_ticker(symbol: str) -> str:
 
 def _split_symbols(raw: str) -> list[str]:
     return [_normalize_symbol(item) for item in raw.replace(";", ",").split(",") if _normalize_symbol(item)]
+
+
+def _resolve_explicit_symbols(symbols: list[str]) -> list[str]:
+    by_ticker: dict[str, str] = {}
+    for candidate in symbols:
+        symbol = _normalize_symbol(candidate)
+        if not symbol:
+            continue
+        ticker = external_ticker(symbol)
+        current = by_ticker.get(ticker)
+        if current is None or _is_market_symbol(symbol):
+            by_ticker[ticker] = symbol
+    return list(by_ticker.values())
 
 
 def _normalize_symbol(symbol: str) -> str:

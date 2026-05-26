@@ -14,6 +14,7 @@ from .models import (
     EarningsReview,
     ExecutionRecord,
     FundamentalSnapshot,
+    MarketRegimeSnapshot,
     NewsItem,
     PortfolioSnapshot,
     Proposal,
@@ -206,6 +207,14 @@ class Store:
                     symbol TEXT,
                     started_at TEXT NOT NULL,
                     completed_at TEXT,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS market_regime_snapshots (
+                    id TEXT PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    risk_appetite TEXT NOT NULL,
+                    proposal_bias TEXT NOT NULL,
                     payload TEXT NOT NULL
                 );
 
@@ -581,6 +590,50 @@ class Store:
         with self.connect() as conn:
             rows = conn.execute(query, tuple(args)).fetchall()
         return [ResearchRunCard.model_validate_json(row["payload"]) for row in rows]
+
+    def create_market_regime_snapshot(self, snapshot: MarketRegimeSnapshot) -> MarketRegimeSnapshot:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_regime_snapshots(id, created_at, risk_appetite, proposal_bias, payload)
+                VALUES(?, ?, ?, ?, ?)
+                """,
+                (
+                    snapshot.id,
+                    snapshot.created_at.isoformat(),
+                    snapshot.risk_appetite.value,
+                    snapshot.proposal_bias.value,
+                    self._dump(snapshot),
+                ),
+            )
+        self.audit(
+            "market_regime_snapshot_created",
+            "market_regime",
+            snapshot.id,
+            {
+                "risk_appetite": snapshot.risk_appetite.value,
+                "proposal_bias": snapshot.proposal_bias.value,
+                "run_card_id": snapshot.run_card_id,
+            },
+        )
+        return snapshot
+
+    def get_market_regime_snapshot(self, snapshot_id: str) -> MarketRegimeSnapshot | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT payload FROM market_regime_snapshots WHERE id = ?", (snapshot_id,)).fetchone()
+        return MarketRegimeSnapshot.model_validate_json(row["payload"]) if row else None
+
+    def list_market_regime_snapshots(self, *, limit: int = 20) -> list[MarketRegimeSnapshot]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT payload FROM market_regime_snapshots ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [MarketRegimeSnapshot.model_validate_json(row["payload"]) for row in rows]
+
+    def get_latest_market_regime_snapshot(self) -> MarketRegimeSnapshot | None:
+        snapshots = self.list_market_regime_snapshots(limit=1)
+        return snapshots[0] if snapshots else None
 
     def get_trade_import(self, import_id: str) -> TradeImport | None:
         with self.connect() as conn:

@@ -16,6 +16,7 @@ from .futu_adapter import FutuIntegrationError, get_futu_status, refresh_futu_re
 from .ir_feeds import IrFeedIngestor
 from .market_news import MarketNewsIngestor, external_ticker, resolve_watchlist_symbols
 from .market_context import MarketContextService
+from .market_regime import MarketRegimeService
 from .models import (
     AdvisorBriefRequest,
     CatalystCompleteRequest,
@@ -167,6 +168,19 @@ def market_context():
     return MarketContextService(get_settings(), get_store()).build_context()
 
 
+@app.get("/api/market-regime")
+def market_regime():
+    return MarketRegimeService(get_settings(), get_store()).build_snapshot()
+
+
+@app.post("/api/market-regime/refresh")
+def refresh_market_regime():
+    return MarketRegimeService(get_settings(), get_store()).refresh(
+        actor=RunCardActor.API,
+        trigger_source=RunCardTriggerSource.MANUAL,
+    )
+
+
 @app.post("/api/market-context/refresh")
 def refresh_market_context(request: NewsRefreshRequest | None = None):
     request = request or NewsRefreshRequest()
@@ -177,7 +191,11 @@ def refresh_market_context(request: NewsRefreshRequest | None = None):
         include_google_news=request.include_google_news,
         include_finnhub=request.include_finnhub,
     )
-    return {"refresh": result, "context": service.build_context()}
+    regime = MarketRegimeService(get_settings(), get_store()).refresh(
+        actor=RunCardActor.API,
+        trigger_source=RunCardTriggerSource.MANUAL,
+    )
+    return {"refresh": result, "context": service.build_context(), "regime": regime}
 
 
 @app.get("/api/news")
@@ -885,6 +903,9 @@ DASHBOARD_HTML = """
     .info { color: var(--blue); border-color: #9ab3df; background: #eef4ff; }
     .action { color: var(--amber); border-color: #dfc68a; background: #fff7df; }
     .blocked { color: var(--coral); border-color: #e6aaa5; background: #fff0ee; }
+    .risk_on, .normal, .supportive, .falling_yields, .calm, .benign { color: var(--mint); border-color: #9ad6c5; background: #eaf8f3; }
+    .neutral, .mixed, .caution, .elevated { color: var(--amber); border-color: #dfc68a; background: #fff7df; }
+    .risk_off, .defensive_only, .pressured, .rising_yields, .stressed, .oil_gold_pressure { color: var(--coral); border-color: #e6aaa5; background: #fff0ee; }
     .invalidated, .archived { color: var(--coral); border-color: #e6aaa5; background: #fff0ee; }
     .upcoming { color: var(--blue); border-color: #9ab3df; background: #eef4ff; }
     .completed { color: var(--mint); border-color: #9ad6c5; background: #eaf8f3; }
@@ -993,6 +1014,7 @@ DASHBOARD_HTML = """
       <div class="bar-actions">
         <button class="secondary" id="news-refresh" type="button">刷新市場新聞</button>
         <button class="secondary" id="market-context-refresh" type="button">刷新市場全景</button>
+        <button class="secondary" id="market-regime-refresh" type="button">刷新市場狀態</button>
         <button class="secondary" id="primary-refresh" type="button">刷新 SEC/IR</button>
         <button class="secondary" id="fundamentals-refresh" type="button">刷新 SEC Fundamentals</button>
         <button class="secondary" id="autonomy-run" type="button">執行自治循環</button>
@@ -1022,6 +1044,11 @@ DASHBOARD_HTML = """
         <div class="advisor-list"></div>
       </div>
       <div class="toast" id="advisor-toast"></div>
+    </section>
+    <section class="panel">
+      <h2>市場狀態 / 風險預算</h2>
+      <div class="source-strip" id="market-regime"></div>
+      <div class="stack-list" id="market-regime-drivers"></div>
     </section>
     <section class="panel">
       <h2>市場全景</h2>
@@ -1347,6 +1374,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       shadow_report: "影子帳戶報告",
       safe_autonomy_cycle: "自治循環",
       proposal_draft: "提案草稿",
+      market_regime: "市場狀態",
       future_backtest_import: "Backtest 匯入",
       future_behavior_report: "交易行為報告"
     };
@@ -1410,8 +1438,15 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       shadow: "影子帳戶",
       thesis: "投資論點",
       research: "研究證據",
-      market: "市場全景"
+      market: "市場全景",
+      market_regime: "市場狀態"
     };
+    const riskAppetiteLabels = { risk_on: "Risk-on", neutral: "中性", risk_off: "Risk-off" };
+    const proposalBiasLabels = { normal: "正常", caution: "審慎", defensive_only: "防守優先" };
+    const growthPressureLabels = { supportive: "支持", mixed: "混合", pressured: "承壓" };
+    const ratesPressureLabels = { falling_yields: "利率壓力下降", neutral: "中性", rising_yields: "利率壓力上升" };
+    const volatilityRegimeLabels = { calm: "平靜", elevated: "偏高", stressed: "緊張" };
+    const inflationPressureLabels = { benign: "溫和", mixed: "混合", oil_gold_pressure: "油金壓力" };
     const marketRoleLabels = {
       "US broad equity": "美股大盤",
       "US growth / mega-cap tech": "成長 / 科技",
@@ -1474,6 +1509,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       ir_feeds_refreshed: "公司 IR 已刷新",
       event_replay_exported: "事件重播已匯出",
       events_replayed: "事件已重播",
+      market_regime_snapshot_created: "市場狀態快照已建立",
       research_goal_created: "研究目標已建立",
       research_evidence_added: "研究證據已加入",
       research_goal_completed: "研究 Gate 已通過",
@@ -1616,10 +1652,48 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       `;
     }
 
+    function renderMarketRegime(regime) {
+      const shell = document.querySelector("#market-regime");
+      const drivers = document.querySelector("#market-regime-drivers");
+      if (!regime) {
+        shell.innerHTML = `<div class="source-cell"><div class="muted">未有市場狀態快照。</div></div>`;
+        drivers.innerHTML = "";
+        return;
+      }
+      shell.innerHTML = `
+        <div class="source-cell">
+          <div class="label">Risk Appetite</div>
+          <div>${pill(regime.risk_appetite, riskAppetiteLabels[regime.risk_appetite] || regime.risk_appetite)}</div>
+          <div class="muted">${escapeHtml(regime.summary || "")}</div>
+        </div>
+        <div class="source-cell">
+          <div class="label">Proposal Bias</div>
+          <div>${pill(regime.proposal_bias, proposalBiasLabels[regime.proposal_bias] || regime.proposal_bias)}</div>
+          <div class="muted">只作審批背景，不會建立 proposal</div>
+        </div>
+        <div class="source-cell">
+          <div class="label">Growth / Rates</div>
+          <div>${pill(regime.growth_pressure, growthPressureLabels[regime.growth_pressure] || regime.growth_pressure)} ${pill(regime.rates_pressure, ratesPressureLabels[regime.rates_pressure] || regime.rates_pressure)}</div>
+          <div class="muted">成長股與長端利率壓力</div>
+        </div>
+        <div class="source-cell">
+          <div class="label">Vol / Inflation</div>
+          <div>${pill(regime.volatility_regime, volatilityRegimeLabels[regime.volatility_regime] || regime.volatility_regime)} ${pill(regime.inflation_pressure, inflationPressureLabels[regime.inflation_pressure] || regime.inflation_pressure)}</div>
+          <div class="muted">${escapeHtml(regime.quote_coverage)}/${escapeHtml(regime.symbols?.length || 0)} quote，${escapeHtml(regime.news_coverage)} 有新聞</div>
+        </div>
+      `;
+      const notes = [...(regime.drivers || []), ...(regime.warnings || [])].slice(0, 6);
+      drivers.innerHTML = notes.map(note => `<div class="stack-item"><div class="muted">${escapeHtml(note)}</div></div>`).join("")
+        || `<div class="empty">未有明顯 regime driver。</div>`;
+    }
+
     function renderMarketContext(context) {
       document.querySelector("#market-context").innerHTML = (context.items || []).map(item => {
+        const change = item.change_pct === null || item.change_pct === undefined
+          ? ""
+          : `<br><span class="muted">變化 ${Number(item.change_pct).toFixed(2)}%</span>`;
         const quote = item.has_quote
-          ? `${smallMoney(item.last_price)}<br>${sourceBadge(item.quote_source || "local")} <span class="muted">${formatDate(item.quote_updated_at)}</span>`
+          ? `${smallMoney(item.last_price)}${change}<br>${sourceBadge(item.quote_source || "local")} <span class="muted">${formatDate(item.quote_updated_at)}</span>`
           : '<span class="muted">未有 quote</span>';
         const news = item.news_count
           ? `<strong>${escapeHtml(item.news_count)} 篇</strong><br><span class="muted">${escapeHtml(item.latest_news_title || "")}</span><br><span class="muted">${escapeHtml(item.latest_news_source || "")} · ${formatDate(item.latest_news_at)}</span>`
@@ -1864,9 +1938,10 @@ proposal 需要靠 manual override 才能成立</textarea></div>
     }
 
     async function loadAll() {
-      const [advisorBrief, marketContext, health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, researchGoals, theses, catalysts, earningsReviews, runCards, behaviorReports, tradeImports, tradeRoundtrips, shadowStrategies, shadowReports, shadowEvents] = await Promise.all([
+      const [advisorBrief, marketContext, marketRegime, health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, researchGoals, theses, catalysts, earningsReviews, runCards, behaviorReports, tradeImports, tradeRoundtrips, shadowStrategies, shadowReports, shadowEvents] = await Promise.all([
         api("/api/advisor/brief"),
         api("/api/market-context"),
+        api("/api/market-regime"),
         api("/health"),
         api("/api/portfolio"),
         api("/api/quotes"),
@@ -1897,6 +1972,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       document.querySelector("#positions").textContent = portfolio.positions.length;
       document.querySelector("#pending").textContent = proposals.filter(p => p.status === "PENDING").length;
       renderAdvisorBrief(advisorBrief);
+      renderMarketRegime(marketRegime);
       renderMarketContext(marketContext);
       renderSourceStrip(health, portfolio, quotes, futuStatus);
       renderAutonomy(autonomy);
@@ -1995,7 +2071,20 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       try {
         const result = await api("/api/market-context/refresh", { method: "POST", body: JSON.stringify({}) });
         const errorNote = result.refresh.errors?.length ? `；${result.refresh.errors.length} 個來源有錯誤` : "";
-        setToast(`市場全景已更新：${result.refresh.stored_count} 筆，symbols ${result.refresh.symbols.length} 個${errorNote}`);
+        setToast(`市場全景已更新：${result.refresh.stored_count} 筆，symbols ${result.refresh.symbols.length} 個；regime ${result.regime?.proposal_bias || "已更新"}${errorNote}`);
+        await loadAll();
+      } catch (error) {
+        setToast(error.message);
+      } finally {
+        event.target.disabled = false;
+      }
+    });
+    document.querySelector("#market-regime-refresh").addEventListener("click", async event => {
+      event.target.disabled = true;
+      setToast("正在計算市場狀態 / 風險預算...");
+      try {
+        const result = await api("/api/market-regime/refresh", { method: "POST", body: JSON.stringify({}) });
+        setToast(`市場狀態已更新：${result.risk_appetite} / ${result.proposal_bias}`);
         await loadAll();
       } catch (error) {
         setToast(error.message);

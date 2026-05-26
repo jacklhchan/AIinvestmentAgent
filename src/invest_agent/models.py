@@ -203,6 +203,7 @@ class RunCardType(StrEnum):
     EARNINGS_REVIEW = "earnings_review"
     CATALYST_REVIEW = "catalyst_review"
     EVENT_REPLAY = "event_replay"
+    MARKET_REGIME = "market_regime"
     TRADE_JOURNAL_IMPORT = "trade_journal_import"
     BEHAVIOR_REPORT = "behavior_report"
     SHADOW_STRATEGY_EXTRACT = "shadow_strategy_extract"
@@ -293,6 +294,42 @@ class AdvisorSeverity(StrEnum):
     BLOCKED = "blocked"
 
 
+class RiskAppetite(StrEnum):
+    RISK_ON = "risk_on"
+    NEUTRAL = "neutral"
+    RISK_OFF = "risk_off"
+
+
+class GrowthPressure(StrEnum):
+    SUPPORTIVE = "supportive"
+    MIXED = "mixed"
+    PRESSURED = "pressured"
+
+
+class RatesPressure(StrEnum):
+    FALLING_YIELDS = "falling_yields"
+    NEUTRAL = "neutral"
+    RISING_YIELDS = "rising_yields"
+
+
+class VolatilityRegime(StrEnum):
+    CALM = "calm"
+    ELEVATED = "elevated"
+    STRESSED = "stressed"
+
+
+class InflationPressure(StrEnum):
+    BENIGN = "benign"
+    MIXED = "mixed"
+    OIL_GOLD_PRESSURE = "oil_gold_pressure"
+
+
+class ProposalBias(StrEnum):
+    NORMAL = "normal"
+    CAUTION = "caution"
+    DEFENSIVE_ONLY = "defensive_only"
+
+
 class Position(BaseModel):
     symbol: str
     qty: float
@@ -317,6 +354,8 @@ class Quote(BaseModel):
     last_price: float
     bid: float | None = None
     ask: float | None = None
+    previous_close: float | None = None
+    change_pct: float | None = None
     currency: str = "USD"
     updated_at: datetime = Field(default_factory=utc_now)
     source: str = "demo"
@@ -339,6 +378,8 @@ class MarketContextItem(BaseModel):
     label: str
     has_quote: bool = False
     last_price: float | None = None
+    previous_close: float | None = None
+    change_pct: float | None = None
     quote_source: str | None = None
     quote_updated_at: datetime | None = None
     news_count: int = 0
@@ -353,6 +394,26 @@ class MarketContextSnapshot(BaseModel):
     items: list[MarketContextItem] = Field(default_factory=list)
     coverage_summary: dict[str, Any] = Field(default_factory=dict)
     risk_notes: list[str] = Field(default_factory=list)
+
+
+class MarketRegimeSnapshot(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("regime"))
+    created_at: datetime = Field(default_factory=utc_now)
+    symbols: list[str] = Field(default_factory=list)
+    quote_coverage: int = 0
+    news_coverage: int = 0
+    risk_appetite: RiskAppetite = RiskAppetite.NEUTRAL
+    growth_pressure: GrowthPressure = GrowthPressure.MIXED
+    rates_pressure: RatesPressure = RatesPressure.NEUTRAL
+    volatility_regime: VolatilityRegime = VolatilityRegime.ELEVATED
+    inflation_pressure: InflationPressure = InflationPressure.MIXED
+    proposal_bias: ProposalBias = ProposalBias.CAUTION
+    summary: str = ""
+    warnings: list[str] = Field(default_factory=list)
+    drivers: list[str] = Field(default_factory=list)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    input_hash: str = ""
+    run_card_id: str | None = None
 
 
 class RiskCheck(BaseModel):

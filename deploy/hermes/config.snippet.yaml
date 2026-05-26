@@ -19,6 +19,7 @@ mcp_servers:
         - get_watchlist_symbols
         - get_advisor_brief
         - get_market_context
+        - get_market_regime
         - refresh_market_context_news
         - get_news_digest
         - refresh_market_news
