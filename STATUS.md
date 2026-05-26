@@ -106,6 +106,8 @@ The app now separates broad-market context from trade proposal watchlists.
 - `POST /api/market-context/refresh` refreshes broad-market news without creating proposals.
 - Safe autonomy refreshes market-context news alongside watchlist news.
 - Dashboard has a `市場全景` panel and `刷新市場全景` action.
+- Dashboard market summary now shows 24 latest news items instead of 8.
+- Futu read-only refresh attempts quote snapshots for market-context symbols in addition to held positions.
 - Hermes MCP exposes `get_market_context` and `refresh_market_context_news`.
 - These symbols inform Advisor Brief but are not fed into proposal drafting unless explicitly added to `INVEST_AGENT_WATCHLIST`.
 

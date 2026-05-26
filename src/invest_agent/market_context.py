@@ -74,11 +74,15 @@ class MarketContextService:
     def _item(self, symbol: str, quote: Quote | None) -> MarketContextItem:
         ticker = external_ticker(symbol)
         role, label = MARKET_CONTEXT_ROLES.get(ticker, ("market context", f"{ticker} market context"))
-        news = [
-            item
-            for item in self.store.list_news(symbol=symbol, limit=20)
+        news_candidates = self.store.list_news(symbol=symbol, limit=20)
+        if symbol != ticker:
+            news_candidates.extend(self.store.list_news(symbol=ticker, limit=20))
+        news_by_id = {
+            item.id: item
+            for item in news_candidates
             if item.symbol and external_ticker(item.symbol) == ticker
-        ]
+        }
+        news = sorted(news_by_id.values(), key=lambda item: item.published_at, reverse=True)
         latest = news[0] if news else None
         return MarketContextItem(
             symbol=symbol,

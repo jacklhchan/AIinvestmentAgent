@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .config import Settings
+from .market_news import external_ticker, resolve_market_context_symbols
 from .models import PortfolioSnapshot, Position, Quote, utc_now
 from .store import Store
 
@@ -126,7 +127,13 @@ def refresh_futu_readonly(settings: Settings, store: Store, refresh_cache: bool 
         fund_records = _records(funds_df)
         positions = _positions_from_records(position_records)
         portfolio = _portfolio_from_records(fund_records, positions)
-        quotes = _quotes_for_positions(ft, quote_ctx, positions)
+        quotes = _quotes_for_symbols(ft, quote_ctx, [position.symbol for position in positions if position.symbol])
+        market_quote_error = ""
+        try:
+            market_symbols = [_futu_symbol(symbol) for symbol in resolve_market_context_symbols(settings, store)]
+            quotes = _dedupe_quotes([*quotes, *_quotes_for_symbols(ft, quote_ctx, market_symbols)])
+        except FutuIntegrationError as exc:
+            market_quote_error = str(exc)
 
         # Prefer fresh snapshot prices when Futu returns them.
         quote_by_symbol = {quote.symbol: quote for quote in quotes}
@@ -148,6 +155,7 @@ def refresh_futu_readonly(settings: Settings, store: Store, refresh_cache: bool 
             {
                 "position_count": len(positions),
                 "quote_count": len(quotes),
+                "market_context_quote_error": market_quote_error,
                 "refresh_cache": refresh_cache,
                 "host": settings.futu_host,
                 "monitor_port": settings.futu_monitor_port,
@@ -220,8 +228,8 @@ def _portfolio_from_records(records: list[dict[str, Any]], positions: list[Posit
     )
 
 
-def _quotes_for_positions(ft: Any, quote_ctx: Any, positions: list[Position]) -> list[Quote]:
-    symbols = [position.symbol for position in positions if position.symbol]
+def _quotes_for_symbols(ft: Any, quote_ctx: Any, symbols: list[str]) -> list[Quote]:
+    symbols = _dedupe_symbols(symbols)
     if not symbols:
         return []
 
@@ -230,6 +238,30 @@ def _quotes_for_positions(ft: Any, quote_ctx: Any, positions: list[Position]) ->
         raise FutuIntegrationError(f"get_market_snapshot failed: {data}")
 
     return _quotes_from_records(_records(data))
+
+
+def _futu_symbol(symbol: str) -> str:
+    symbol = symbol.strip().upper()
+    return symbol if "." in symbol else f"US.{symbol}"
+
+
+def _dedupe_symbols(symbols: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for symbol in symbols:
+        normalized = symbol.strip().upper()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result
+
+
+def _dedupe_quotes(quotes: list[Quote]) -> list[Quote]:
+    by_ticker: dict[str, Quote] = {}
+    for quote in quotes:
+        by_ticker[external_ticker(quote.symbol)] = quote
+    return list(by_ticker.values())
 
 
 def _quotes_from_records(records: list[dict[str, Any]]) -> list[Quote]:

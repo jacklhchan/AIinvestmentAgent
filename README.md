@@ -77,6 +77,8 @@ INVEST_AGENT_MARKET_CONTEXT_SYMBOLS=SPY,QQQ,IWM,DIA,VIXY,TLT,GLD,USO
 
 這些 symbols 用來理解大盤、科技成長股、小型股、波動率、利率、黃金與油價環境。它們會進入 Advisor Brief 的背景檢查，但不會自動成為 proposal draft 候選。
 
+Dashboard 的 `市場摘要` 會顯示最近 24 條新聞；`市場全景` 則按 broad-market symbol 顯示 quote/news coverage。Futu read-only refresh 會嘗試為 market-context symbols 抓 quote snapshot；若該 symbol 沒有 quote 權限或 OpenD 無法返回，系統仍保留 news-only context。
+
 REST API：
 
 ```bash

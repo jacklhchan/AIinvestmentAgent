@@ -1871,7 +1871,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         api("/api/portfolio"),
         api("/api/quotes"),
         api("/api/proposals"),
-        api("/api/news?limit=8"),
+        api("/api/news?limit=24"),
         api("/api/audit?limit=6"),
         apiOptional("/api/futu/status", error => ({ connected: false, message: error.message })),
         api("/api/fundamentals"),
