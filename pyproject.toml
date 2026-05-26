@@ -38,6 +38,7 @@ invest-agent-event-replay = "invest_agent.cli:event_replay_main"
 invest-agent-autonomy-once = "invest_agent.cli:autonomy_once_main"
 invest-agent-autonomy-loop = "invest_agent.cli:autonomy_loop_main"
 invest-agent-autonomy-status = "invest_agent.cli:autonomy_status_main"
+invest-agent-schema-check = "invest_agent.cli:schema_check_main"
 
 [build-system]
 requires = ["setuptools>=70.0.0", "wheel"]

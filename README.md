@@ -459,6 +459,7 @@ The roadmap from `nextphaseplan.docx` is implemented as research-only control-pl
 - Data Bridge: safe CSV imports under `artifacts/imports` for local schemas such as symbol classification; MCP remains read-only.
 - Daily Briefs: morning/close/weekly research delivery artifacts based on Advisor Brief and Market Regime.
 - Sector / Peer / Correlation Lens, Options Implied Move Lens, Dividend Lens, Idea Inbox, Committee Review, Skill Validator, and Data Quality reports.
+- Stabilization guardrails: `docs/permissions.md` records the MCP permission matrix, and `schema-check` verifies the SQLite schema without clearing proposal, execution, research-goal, or run-card rows.
 
 Useful CLI examples:
 
@@ -480,6 +481,7 @@ python -m invest_agent.cli idea-screen
 python -m invest_agent.cli committee-review --topic "AAPL post-earnings thesis"
 python -m invest_agent.cli validate-skills
 python -m invest_agent.cli data-quality-run --target-type all
+python -m invest_agent.cli schema-check
 ```
 
 ## Hermes + Codex LLM 設定

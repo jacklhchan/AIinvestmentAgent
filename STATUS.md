@@ -476,20 +476,28 @@ http://127.0.0.1:8788
 
 ## Verification
 
-Latest verification completed:
+Latest verification completed after the research cockpit stabilization pass:
 
 ```bash
 .venv/bin/python -m pytest
-.venv/bin/python -m compileall -q src
-/Users/apple/.hermes/hermes-agent/venv/bin/hermes mcp list
-.venv/bin/python -m invest_agent.cli draft-proposals
-curl -s -X POST http://127.0.0.1:8788/api/proposals ...
+.venv/bin/python -m compileall src/invest_agent
+.venv/bin/python -m invest_agent.cli schema-check
+git diff --check
+curl -sS http://127.0.0.1:8788/health
+rg -n "unlock_trade\(|place_order\(|modify_order\(" src tests
 ```
 
 Result:
 
 ```text
-74 passed
+122 passed
+compileall passed
+schema-check ok: all expected tables and columns present; preserved counts unchanged
+git diff --check passed
+/health paper_only: true
+live-order call grep passed
+next-phase no-proposal-side-effect tests passed
+Playwright dashboard smoke passed after research cockpit merge
 ```
 
 HTTP checks were also verified:
@@ -557,7 +565,7 @@ HTTP checks were also verified:
 - `python -m invest_agent.cli list-shadow-strategies`
 - `python -m invest_agent.cli list-shadow-reports`
 - `python -m invest_agent.cli draft-proposals`
-- invariant tests for direct proposal creation, MCP-unverified evidence, symbol mismatch, stale primary-source evidence, contradictory evidence, proposal `evidence_hash`, active thesis draft attachment, invalidated/unconfirmed thesis proposal blocking, MCP-unverified catalysts, high-impact catalyst blocking, portfolio-wide macro catalyst blocking, medium-impact catalyst warnings, catalyst review thesis delta, earnings review thesis delta, run card artifact linkage/hash behavior, CSV import idempotency, FIFO roundtrip pairing, behavior diagnostics, read-only behavior MCP surface, draft shadow strategy gating, shadow rule violations, and read-only shadow MCP surface
+- invariant tests for direct proposal creation, MCP-unverified evidence, symbol mismatch, stale primary-source evidence, contradictory evidence, proposal `evidence_hash`, active thesis draft attachment, invalidated/unconfirmed thesis proposal blocking, MCP-unverified catalysts, high-impact catalyst blocking, portfolio-wide macro catalyst blocking, medium-impact catalyst warnings, catalyst review thesis delta, earnings review thesis delta, run card artifact linkage/hash behavior, CSV import idempotency, FIFO roundtrip pairing, behavior diagnostics, read-only behavior MCP surface, draft shadow strategy gating, shadow rule violations, read-only shadow MCP surface, MCP permission matrix coverage, schema integrity, no proposal/execution side effects for next-phase layers, run-card coverage, and severe-action MCP confirmation guards
 
 The dashboard was visually checked in the Codex in-app browser.
 
@@ -622,6 +630,7 @@ The following are local runtime artifacts and intentionally ignored:
 - `data/*.db`
 - `artifacts/`
 - `.pytest_cache/`
+- `.playwright-cli/`
 - `*.egg-info/`
 
 ## Next Steps

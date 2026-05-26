@@ -63,6 +63,7 @@ from .proposal_drafts import ProposalDraftEngine
 from .portfolio_studio import PortfolioStudioService
 from .quote_history import QuoteHistoryService
 from .run_cards import RunCardService
+from .schema_checks import run_schema_check
 from .sec_companyfacts import SecCompanyFactsIngestor
 from .sec_edgar import SecEdgarIngestor
 from .sector_lens import SectorLensService
@@ -383,6 +384,13 @@ def data_quality_main(target_type: str = "all") -> None:
     print(json.dumps(_json(result), indent=2, ensure_ascii=False))
 
 
+def schema_check_main() -> None:
+    result = run_schema_check(get_store())
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+    if not result["ok"]:
+        raise SystemExit(1)
+
+
 def list_data_quality_reports_main() -> None:
     print(json.dumps(_json(get_store().list_data_quality_reports()), indent=2, ensure_ascii=False))
 
@@ -573,6 +581,7 @@ def main() -> None:
             "committee-review",
             "validate-skills",
             "data-quality-run",
+            "schema-check",
             "list-data-quality-reports",
             "list-run-cards",
             "show-run-card",
@@ -752,6 +761,8 @@ def main() -> None:
         validate_skills_main()
     if args.command == "data-quality-run":
         data_quality_main(args.target_type)
+    if args.command == "schema-check":
+        schema_check_main()
     if args.command == "list-data-quality-reports":
         list_data_quality_reports_main()
     if args.command == "list-run-cards":
