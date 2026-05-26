@@ -25,6 +25,11 @@ from .models import (
     ResearchRunCard,
     RunCardStatus,
     RunCardType,
+    ShadowEvent,
+    ShadowReport,
+    ShadowRule,
+    ShadowStrategy,
+    ShadowStrategyStatus,
     Thesis,
     ThesisPillar,
     ThesisRisk,
@@ -239,12 +244,58 @@ class Store:
                     created_at TEXT NOT NULL,
                     payload TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS shadow_strategies (
+                    id TEXT PRIMARY KEY,
+                    source_behavior_report_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    FOREIGN KEY (source_behavior_report_id) REFERENCES behavior_reports(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS shadow_rules (
+                    id TEXT PRIMARY KEY,
+                    strategy_id TEXT NOT NULL,
+                    rule_type TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    FOREIGN KEY (strategy_id) REFERENCES shadow_strategies(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS shadow_reports (
+                    id TEXT PRIMARY KEY,
+                    strategy_id TEXT NOT NULL,
+                    behavior_report_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    FOREIGN KEY (strategy_id) REFERENCES shadow_strategies(id),
+                    FOREIGN KEY (behavior_report_id) REFERENCES behavior_reports(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS shadow_events (
+                    id TEXT PRIMARY KEY,
+                    shadow_report_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    FOREIGN KEY (shadow_report_id) REFERENCES shadow_reports(id)
+                );
                 """
             )
+            self._ensure_column(conn, "shadow_rules", "created_at", "TEXT")
 
     @staticmethod
     def _dump(model: Any) -> str:
         return model.model_dump_json()
+
+    @staticmethod
+    def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def upsert_portfolio(self, snapshot: PortfolioSnapshot) -> None:
         with self.connect() as conn:
@@ -721,6 +772,199 @@ class Store:
             symbol = symbol.upper()
             reports = [report for report in reports if symbol in report.symbols]
         return reports
+
+    def create_shadow_strategy(self, strategy: ShadowStrategy) -> ShadowStrategy:
+        stored_strategy = strategy.model_copy(update={"rules": []})
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO shadow_strategies(id, source_behavior_report_id, status, created_at, updated_at, payload)
+                VALUES(?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    stored_strategy.id,
+                    stored_strategy.source_behavior_report_id,
+                    stored_strategy.status.value,
+                    stored_strategy.created_at.isoformat(),
+                    stored_strategy.updated_at.isoformat(),
+                    self._dump(stored_strategy),
+                ),
+            )
+            for rule in strategy.rules:
+                conn.execute(
+                    """
+                    INSERT INTO shadow_rules(id, strategy_id, rule_type, created_at, payload)
+                    VALUES(?, ?, ?, ?, ?)
+                    """,
+                    (rule.id, strategy.id, rule.rule_type.value, rule.created_at.isoformat(), self._dump(rule)),
+                )
+        self.audit(
+            "shadow_strategy_created",
+            "shadow_strategy",
+            strategy.id,
+            {
+                "source_behavior_report_id": strategy.source_behavior_report_id,
+                "status": strategy.status.value,
+                "rule_count": len(strategy.rules),
+                "run_card_id": strategy.run_card_id,
+            },
+        )
+        return self.get_shadow_strategy(strategy.id) or strategy
+
+    def update_shadow_strategy(
+        self,
+        strategy: ShadowStrategy,
+        event_type: str = "shadow_strategy_updated",
+    ) -> ShadowStrategy:
+        stored_strategy = strategy.model_copy(update={"rules": []})
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE shadow_strategies
+                SET source_behavior_report_id = ?, status = ?, updated_at = ?, payload = ?
+                WHERE id = ?
+                """,
+                (
+                    stored_strategy.source_behavior_report_id,
+                    stored_strategy.status.value,
+                    stored_strategy.updated_at.isoformat(),
+                    self._dump(stored_strategy),
+                    stored_strategy.id,
+                ),
+            )
+        self.audit(
+            event_type,
+            "shadow_strategy",
+            strategy.id,
+            {"status": strategy.status.value, "human_confirmed": strategy.human_confirmed},
+        )
+        return self.get_shadow_strategy(strategy.id) or strategy
+
+    def get_shadow_strategy(self, strategy_id: str) -> ShadowStrategy | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT payload FROM shadow_strategies WHERE id = ?", (strategy_id,)).fetchone()
+        if not row:
+            return None
+        strategy = ShadowStrategy.model_validate_json(row["payload"])
+        strategy.rules = self.list_shadow_rules(strategy.id)
+        return strategy
+
+    def list_shadow_strategies(
+        self,
+        *,
+        status: ShadowStrategyStatus | None = None,
+        limit: int = 50,
+    ) -> list[ShadowStrategy]:
+        clauses: list[str] = []
+        args: list[Any] = []
+        if status:
+            clauses.append("status = ?")
+            args.append(status.value)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"SELECT payload FROM shadow_strategies {where} ORDER BY updated_at DESC LIMIT ?"
+        args.append(limit)
+        with self.connect() as conn:
+            rows = conn.execute(query, tuple(args)).fetchall()
+        strategies = [ShadowStrategy.model_validate_json(row["payload"]) for row in rows]
+        for strategy in strategies:
+            strategy.rules = self.list_shadow_rules(strategy.id)
+        return strategies
+
+    def list_shadow_rules(self, strategy_id: str) -> list[ShadowRule]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT payload FROM shadow_rules WHERE strategy_id = ? ORDER BY created_at ASC, id ASC",
+                (strategy_id,),
+            ).fetchall()
+        return [ShadowRule.model_validate_json(row["payload"]) for row in rows]
+
+    def create_shadow_report(self, report: ShadowReport, events: list[ShadowEvent]) -> ShadowReport:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO shadow_reports(id, strategy_id, behavior_report_id, created_at, payload)
+                VALUES(?, ?, ?, ?, ?)
+                """,
+                (
+                    report.id,
+                    report.strategy_id,
+                    report.behavior_report_id,
+                    report.created_at.isoformat(),
+                    self._dump(report),
+                ),
+            )
+            for event in events:
+                conn.execute(
+                    """
+                    INSERT INTO shadow_events(id, shadow_report_id, symbol, event_type, created_at, payload)
+                    VALUES(?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event.id,
+                        event.shadow_report_id,
+                        event.symbol,
+                        event.event_type.value,
+                        event.created_at.isoformat(),
+                        self._dump(event),
+                    ),
+                )
+        self.audit(
+            "shadow_report_created",
+            "shadow_report",
+            report.id,
+            {
+                "strategy_id": report.strategy_id,
+                "behavior_report_id": report.behavior_report_id,
+                "event_count": len(events),
+                "run_card_id": report.run_card_id,
+            },
+        )
+        return report
+
+    def get_shadow_report(self, report_id: str) -> ShadowReport | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT payload FROM shadow_reports WHERE id = ?", (report_id,)).fetchone()
+        return ShadowReport.model_validate_json(row["payload"]) if row else None
+
+    def list_shadow_reports(
+        self,
+        *,
+        strategy_id: str | None = None,
+        limit: int = 50,
+    ) -> list[ShadowReport]:
+        clauses: list[str] = []
+        args: list[Any] = []
+        if strategy_id:
+            clauses.append("strategy_id = ?")
+            args.append(strategy_id)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"SELECT payload FROM shadow_reports {where} ORDER BY created_at DESC LIMIT ?"
+        args.append(limit)
+        with self.connect() as conn:
+            rows = conn.execute(query, tuple(args)).fetchall()
+        return [ShadowReport.model_validate_json(row["payload"]) for row in rows]
+
+    def list_shadow_events(
+        self,
+        *,
+        shadow_report_id: str | None = None,
+        symbol: str | None = None,
+        limit: int = 100,
+    ) -> list[ShadowEvent]:
+        clauses: list[str] = []
+        args: list[Any] = []
+        if shadow_report_id:
+            clauses.append("shadow_report_id = ?")
+            args.append(shadow_report_id)
+        if symbol:
+            clauses.append("symbol = ?")
+            args.append(symbol.upper())
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"SELECT payload FROM shadow_events {where} ORDER BY created_at DESC LIMIT ?"
+        args.append(limit)
+        with self.connect() as conn:
+            rows = conn.execute(query, tuple(args)).fetchall()
+        return [ShadowEvent.model_validate_json(row["payload"]) for row in rows]
 
     def create_thesis(self, thesis: Thesis) -> Thesis:
         stored_thesis = thesis.model_copy(update={"updates": []})

@@ -28,4 +28,6 @@ def test_dashboard_is_traditional_chinese_with_data_provenance() -> None:
     assert "研究執行紀錄" in response.text
     assert "交易行為" in response.text
     assert "匯入交易日誌" in response.text
+    assert "影子帳戶" in response.text
+    assert "反事實報告" in response.text
     assert "操作紀錄" in response.text

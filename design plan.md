@@ -773,6 +773,63 @@ behavior_reports
 - diagnostics_json
 - run_card_id
 - created_at
+
+shadow_strategies
+- id
+- name
+- description
+- source_behavior_report_id
+- extraction_method
+- status: draft | active | archived
+- created_via
+- human_confirmed
+- confirmed_at nullable
+- confirmed_by nullable
+- run_card_id
+- created_at
+- updated_at
+
+shadow_rules
+- id
+- strategy_id
+- rule_type: entry | exit | sizing | cooldown | catalyst | thesis | stop_loss | take_profit
+- condition_json
+- action_json
+- confidence
+- support_count
+- violation_count
+- created_at
+
+shadow_reports
+- id
+- strategy_id
+- behavior_report_id
+- period_start nullable
+- period_end nullable
+- total_evaluated_trades
+- rule_violation_count
+- early_exit_count
+- late_exit_count
+- missed_signal_count
+- counterfactual_pnl nullable
+- actual_pnl
+- delta_pnl nullable
+- diagnostics_json
+- run_card_id
+- created_at
+
+shadow_events
+- id
+- shadow_report_id
+- symbol
+- event_type: rule_violation | early_exit | late_exit | oversized_trade | ignored_catalyst | thesis_mismatch | post_event_review_missing | contradicted_earnings_review
+- actual_fill_ids_json
+- roundtrip_id nullable
+- expected_action_json
+- actual_action_json
+- pnl_impact nullable
+- explanation
+- created_at
 ```
 
 **新的 proposal flow**
@@ -819,12 +876,14 @@ src/invest_agent/catalysts.py
 src/invest_agent/earnings_review.py
 src/invest_agent/run_cards.py
 src/invest_agent/trade_journal.py
+src/invest_agent/shadow_account.py
 tests/test_research_goals.py
 tests/test_thesis_tracker.py
 tests/test_catalysts.py
 tests/test_earnings_review.py
 tests/test_run_cards.py
 tests/test_trade_journal.py
+tests/test_shadow_account.py
 ```
 
 **下一步**
@@ -836,6 +895,6 @@ tests/test_trade_journal.py
 5. Earnings Review 已落地第一版：本機 SEC companyfacts → deterministic YoY scoring → catalyst review / thesis delta artifact，不產生 approval 或 execution。
 6. Run Card / Trust Layer artifact 已落地第一版：earnings review、catalyst review、event replay 會輸出可 hash、可讀、可掛 evidence 的 JSON/Markdown artifact；Hermes 只能 read-only 查詢。
 7. Trade Journal / Behavior Report 已落地第一版：Futu/generic CSV import、file-hash idempotency、FIFO roundtrip、win rate、PnL ratio、drawdown、disposition / overtrading / chasing / anchoring diagnostics；Hermes 只能 read-only 查詢。
-8. 下一步新增 Shadow Account / Counterfactual Report：從 imported fills 和 behavior reports 抽取隱含交易規則，但仍只輸出 research artifact。
+8. Shadow Account / Counterfactual Report 已落地第一版：從 behavior reports 抽取 deterministic draft rules，人工確認後檢查 early/late exits、thesis mismatch、ignored catalyst、earnings review mismatch；Hermes 只能 read-only 查詢。
 9. 將 Vibe / backtest sidecar 保持為 research-only adapter，輸出 run card 到 evidence ledger，不接 approval/execution。
 10. 最後才碰 live path：Keychain、雙 OpenD、atomic approval、idempotency、broker-side revalidation、order/deal reconciliation。

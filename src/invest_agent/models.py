@@ -205,6 +205,8 @@ class RunCardType(StrEnum):
     EVENT_REPLAY = "event_replay"
     TRADE_JOURNAL_IMPORT = "trade_journal_import"
     BEHAVIOR_REPORT = "behavior_report"
+    SHADOW_STRATEGY_EXTRACT = "shadow_strategy_extract"
+    SHADOW_REPORT = "shadow_report"
     SAFE_AUTONOMY_CYCLE = "safe_autonomy_cycle"
     PROPOSAL_DRAFT = "proposal_draft"
     FUTURE_BACKTEST_IMPORT = "future_backtest_import"
@@ -252,6 +254,36 @@ class BehaviorSeverity(StrEnum):
     MEDIUM = "medium"
     HIGH = "high"
     UNKNOWN = "unknown"
+
+
+class ShadowStrategyStatus(StrEnum):
+    DRAFT = "draft"
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
+class ShadowRuleType(StrEnum):
+    ENTRY = "entry"
+    EXIT = "exit"
+    SIZING = "sizing"
+    COOLDOWN = "cooldown"
+    CATALYST = "catalyst"
+    THESIS = "thesis"
+    STOP_LOSS = "stop_loss"
+    TAKE_PROFIT = "take_profit"
+
+
+class ShadowEventType(StrEnum):
+    RULE_FOLLOWED = "rule_followed"
+    RULE_VIOLATION = "rule_violation"
+    EARLY_EXIT = "early_exit"
+    LATE_EXIT = "late_exit"
+    MISSED_ENTRY = "missed_entry"
+    OVERSIZED_TRADE = "oversized_trade"
+    IGNORED_CATALYST = "ignored_catalyst"
+    THESIS_MISMATCH = "thesis_mismatch"
+    POST_EVENT_REVIEW_MISSING = "post_event_review_missing"
+    CONTRADICTED_EARNINGS_REVIEW = "contradicted_earnings_review"
 
 
 class Position(BaseModel):
@@ -886,6 +918,99 @@ class BehaviorReportRunRequest(BaseModel):
     @field_validator("symbols")
     @classmethod
     def normalize_run_symbols(cls, value: list[str] | None) -> list[str] | None:
+        if not value:
+            return None
+        return [item.strip().upper() for item in value if item and item.strip()]
+
+
+class ShadowRule(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("shrule"))
+    strategy_id: str = ""
+    rule_type: ShadowRuleType
+    condition_json: dict[str, Any] = Field(default_factory=dict)
+    action_json: dict[str, Any] = Field(default_factory=dict)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    support_count: int = Field(default=0, ge=0)
+    violation_count: int = Field(default=0, ge=0)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class ShadowStrategy(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("shadow"))
+    name: str
+    description: str = ""
+    source_behavior_report_id: str
+    extraction_method: str = "deterministic_v1"
+    status: ShadowStrategyStatus = ShadowStrategyStatus.DRAFT
+    created_via: CreatedVia = CreatedVia.CLI
+    human_confirmed: bool = False
+    confirmed_at: datetime | None = None
+    confirmed_by: str | None = None
+    run_card_id: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+    rules: list[ShadowRule] = Field(default_factory=list)
+
+
+class ShadowReport(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("shrep"))
+    strategy_id: str
+    behavior_report_id: str
+    period_start: datetime | None = None
+    period_end: datetime | None = None
+    total_evaluated_trades: int = 0
+    rule_violation_count: int = 0
+    early_exit_count: int = 0
+    late_exit_count: int = 0
+    missed_signal_count: int = 0
+    counterfactual_pnl: float | None = None
+    actual_pnl: float = 0.0
+    delta_pnl: float | None = None
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
+    run_card_id: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class ShadowEvent(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("shev"))
+    shadow_report_id: str
+    symbol: str
+    event_type: ShadowEventType
+    actual_fill_ids: list[str] = Field(default_factory=list)
+    roundtrip_id: str | None = None
+    expected_action: dict[str, Any] = Field(default_factory=dict)
+    actual_action: dict[str, Any] = Field(default_factory=dict)
+    pnl_impact: float | None = None
+    explanation: str = ""
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_shadow_event_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+
+class ShadowStrategyExtractRequest(BaseModel):
+    behavior_report_id: str
+    name: str | None = None
+    description: str | None = None
+
+
+class ShadowStrategyConfirmRequest(BaseModel):
+    human_confirmed: bool = True
+    confirmed_by: str = "local-user"
+
+
+class ShadowReportRunRequest(BaseModel):
+    strategy_id: str
+    behavior_report_id: str | None = None
+    period_start: datetime | None = None
+    period_end: datetime | None = None
+    symbols: list[str] | None = None
+
+    @field_validator("symbols")
+    @classmethod
+    def normalize_shadow_symbols(cls, value: list[str] | None) -> list[str] | None:
         if not value:
             return None
         return [item.strip().upper() for item in value if item and item.strip()]

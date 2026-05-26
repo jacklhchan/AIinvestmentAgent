@@ -21,6 +21,9 @@ from .models import (
     RunCardActor,
     RunCardTriggerSource,
     RunCardType,
+    ShadowReportRunRequest,
+    ShadowStrategyConfirmRequest,
+    ShadowStrategyExtractRequest,
     Side,
     TradeJournalImportRequest,
     TradeJournalSource,
@@ -30,6 +33,7 @@ from .proposal_drafts import ProposalDraftEngine
 from .run_cards import RunCardService
 from .sec_companyfacts import SecCompanyFactsIngestor
 from .sec_edgar import SecEdgarIngestor
+from .shadow_account import ShadowAccountService
 from .trade_journal import TradeJournalService
 
 
@@ -223,6 +227,57 @@ def list_trade_roundtrips_main(symbol: str | None = None, limit: int = 20) -> No
     print(json.dumps(_json(get_store().list_trade_roundtrips(symbol=symbol, limit=limit)), indent=2, ensure_ascii=False))
 
 
+def extract_shadow_strategy_main(report_id: str, name: str | None = None) -> None:
+    result = ShadowAccountService(get_store()).extract_strategy(
+        ShadowStrategyExtractRequest(behavior_report_id=report_id, name=name),
+        actor=RunCardActor.CLI,
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def confirm_shadow_strategy_main(strategy_id: str, confirmed_by: str | None = None) -> None:
+    result = ShadowAccountService(get_store()).confirm_strategy(
+        strategy_id,
+        ShadowStrategyConfirmRequest(human_confirmed=True, confirmed_by=confirmed_by or "local-user"),
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def run_shadow_report_main(
+    strategy_id: str,
+    behavior_report_id: str | None = None,
+    period_start: str | None = None,
+    period_end: str | None = None,
+    symbols: str | None = None,
+) -> None:
+    result = ShadowAccountService(get_store()).run_report(
+        ShadowReportRunRequest(
+            strategy_id=strategy_id,
+            behavior_report_id=behavior_report_id,
+            period_start=_parse_cli_datetime(period_start),
+            period_end=_parse_cli_datetime(period_end),
+            symbols=_parse_symbols(symbols),
+        ),
+        actor=RunCardActor.CLI,
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def list_shadow_strategies_main(limit: int = 20) -> None:
+    print(json.dumps(_json(get_store().list_shadow_strategies(limit=limit)), indent=2, ensure_ascii=False))
+
+
+def list_shadow_reports_main(strategy_id: str | None = None, limit: int = 20) -> None:
+    print(json.dumps(_json(get_store().list_shadow_reports(strategy_id=strategy_id, limit=limit)), indent=2, ensure_ascii=False))
+
+
+def show_shadow_report_main(report_id: str) -> None:
+    report = get_store().get_shadow_report(report_id)
+    if not report:
+        raise SystemExit(f"shadow report not found: {report_id}")
+    print(json.dumps(_json(report), indent=2, ensure_ascii=False))
+
+
 def _parse_cli_datetime(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -276,6 +331,12 @@ def main() -> None:
             "list-behavior-reports",
             "show-behavior-report",
             "list-trade-roundtrips",
+            "extract-shadow-strategy",
+            "confirm-shadow-strategy",
+            "run-shadow-report",
+            "list-shadow-strategies",
+            "list-shadow-reports",
+            "show-shadow-report",
         ],
     )
     parser.add_argument("--path", default=None)
@@ -291,6 +352,10 @@ def main() -> None:
     parser.add_argument("--period-end", default=None)
     parser.add_argument("--symbols", default=None)
     parser.add_argument("--report-id", default=None)
+    parser.add_argument("--strategy-id", default=None)
+    parser.add_argument("--behavior-report-id", default=None)
+    parser.add_argument("--name", default=None)
+    parser.add_argument("--confirmed-by", default=None)
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--kind", default=None)
     args = parser.parse_args()
@@ -352,6 +417,27 @@ def main() -> None:
         show_behavior_report_main(args.report_id)
     if args.command == "list-trade-roundtrips":
         list_trade_roundtrips_main(args.symbol, args.limit)
+    if args.command == "extract-shadow-strategy":
+        report_id = args.behavior_report_id or args.report_id
+        if not report_id:
+            parser.error("--behavior-report-id is required for extract-shadow-strategy")
+        extract_shadow_strategy_main(report_id, args.name)
+    if args.command == "confirm-shadow-strategy":
+        if not args.strategy_id:
+            parser.error("--strategy-id is required for confirm-shadow-strategy")
+        confirm_shadow_strategy_main(args.strategy_id, args.confirmed_by)
+    if args.command == "run-shadow-report":
+        if not args.strategy_id:
+            parser.error("--strategy-id is required for run-shadow-report")
+        run_shadow_report_main(args.strategy_id, args.behavior_report_id, args.period_start, args.period_end, args.symbols)
+    if args.command == "list-shadow-strategies":
+        list_shadow_strategies_main(args.limit)
+    if args.command == "list-shadow-reports":
+        list_shadow_reports_main(args.strategy_id, args.limit)
+    if args.command == "show-shadow-report":
+        if not args.report_id:
+            parser.error("--report-id is required for show-shadow-report")
+        show_shadow_report_main(args.report_id)
 
 
 if __name__ == "__main__":

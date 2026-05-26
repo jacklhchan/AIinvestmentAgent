@@ -44,6 +44,11 @@ mcp_servers:
         - list_behavior_reports
         - get_behavior_report
         - list_trade_roundtrips
+        - list_shadow_strategies
+        - get_shadow_strategy
+        - list_shadow_reports
+        - get_shadow_report
+        - list_shadow_events
         - get_safe_autonomy_status
         - run_safe_autonomy_cycle
         - export_event_replay_file

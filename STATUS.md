@@ -23,6 +23,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
 - Earnings Review layer with SEC companyfacts-based YoY scoring, cashflow quality, research evidence, catalyst reviews, and thesis-delta artifacts.
 - Research Run Card layer with versioned rule metadata, input/output/dataset hashes, evidence links, and JSON/Markdown artifacts for earnings reviews, catalyst reviews, and event replay exports.
 - Trade Journal / Behavior Report layer with Futu/generic CSV import, file-hash idempotency, FIFO roundtrip pairing, behavior diagnostics, and behavior-report run cards.
+- Shadow Account / Counterfactual Report layer with deterministic draft rule extraction, human-confirmed strategy activation, journal-internal counterfactual events, and shadow-report run cards.
 - Event replay export/import for portfolio, quotes, news/evidence, and fundamental snapshot JSONL.
 - Proposal draft engine that turns recent symbol-specific watchlist news into structured draft proposals, records a research goal for each draft, and only creates policy-checked proposals when evidence gate passes.
 - Safe autonomy loop that refreshes read-only data, drafts watchlist proposals, applies evidence gate and proposal cooldown, and creates only paper-mode pending proposals for human approval.
@@ -60,6 +61,11 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - `list_behavior_reports`
   - `get_behavior_report`
   - `list_trade_roundtrips`
+  - `list_shadow_strategies`
+  - `get_shadow_strategy`
+  - `list_shadow_reports`
+  - `get_shadow_report`
+  - `list_shadow_events`
   - `get_safe_autonomy_status`
   - `run_safe_autonomy_cycle`
   - `export_event_replay_file`
@@ -73,7 +79,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - `reject_trade_proposal`
 - Hermes config snippet at `deploy/hermes/config.snippet.yaml`.
 - launchd example plists at `deploy/launchd/com.local.invest-agent-api.plist` and `deploy/launchd/com.local.invest-agent-scheduler.plist`.
-- Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, non-pending state handling, Futu adapter mapping, dashboard localization, news parsing, watchlist resolution, SEC/IR parsing, event replay, proposal draft creation, research evidence gates, thesis tracker behavior, catalyst calendar invariants, earnings review behavior, research run card artifacts, and trade journal behavior analytics.
+- Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, non-pending state handling, Futu adapter mapping, dashboard localization, news parsing, watchlist resolution, SEC/IR parsing, event replay, proposal draft creation, research evidence gates, thesis tracker behavior, catalyst calendar invariants, earnings review behavior, research run card artifacts, trade journal behavior analytics, and shadow account counterfactual reports.
 
 ## Local Hermes/Codex Setup
 
@@ -88,7 +94,7 @@ The global Hermes config at `/Users/apple/.hermes/config.yaml` has been updated 
 
 `hermes auth status openai-codex` shows logged in.
 
-`hermes mcp list` shows `invest_agent` enabled with 41 selected tools after adding the 3 read-only behavior report tools.
+`/Users/apple/.hermes/hermes-agent/venv/bin/hermes mcp list` shows `invest_agent` enabled with 46 selected tools after adding the 5 read-only shadow account tools.
 
 ## Futu Setup
 
@@ -333,6 +339,42 @@ The app now adds a research-only trade behavior analytics layer inspired by Vibe
 
 This phase still does not unlock Futu OpenD and does not place live orders.
 
+## Shadow Account / Counterfactual Report
+
+The app now adds a research-only shadow account layer on top of imported fills, FIFO roundtrips, and behavior reports. It studies whether historical trades followed the user's own observed discipline; it does not create proposals, approve proposals, unlock Futu, or place broker orders.
+
+- SQLite now has `shadow_strategies`, `shadow_rules`, `shadow_reports`, and `shadow_events` tables.
+- `ShadowAccountService.extract_strategy` reads a behavior report plus local fills/roundtrips and creates deterministic draft rules such as median holding days, median winner/loser PnL %, median entry notional, same-symbol cooldown, thesis requirement, and high-impact catalyst guardrail.
+- Extracted strategies default to `draft`, `human_confirmed=false`; they must be confirmed through CLI/REST/dashboard before a shadow report can run.
+- Shadow report v1 is journal-internal only. It can flag `early_exit`, `late_exit`, `oversized_trade`, `ignored_catalyst`, `thesis_mismatch`, `post_event_review_missing`, and `contradicted_earnings_review`, but it does not run full OHLCV backtests.
+- Missing quote history is explicit: `counterfactual_pnl` and `delta_pnl` remain `null` instead of being fabricated.
+- Shadow strategy extraction creates `shadow_strategy_extract` run cards; shadow reports create `shadow_report` run cards with strategy inputs, roundtrip dataset hash, event counts, warnings, and outputs.
+- REST endpoints:
+  - `POST /api/shadow-strategies/extract`
+  - `GET /api/shadow-strategies`
+  - `GET /api/shadow-strategies/{strategy_id}`
+  - `POST /api/shadow-strategies/{strategy_id}/confirm`
+  - `POST /api/shadow-reports/run`
+  - `GET /api/shadow-reports`
+  - `GET /api/shadow-reports/{report_id}`
+  - `GET /api/shadow-events`
+- Hermes MCP shadow tools are read-only:
+  - `list_shadow_strategies`
+  - `get_shadow_strategy`
+  - `list_shadow_reports`
+  - `get_shadow_report`
+  - `list_shadow_events`
+- CLI:
+  - `python -m invest_agent.cli extract-shadow-strategy --behavior-report-id beh_...`
+  - `python -m invest_agent.cli confirm-shadow-strategy --strategy-id shadow_...`
+  - `python -m invest_agent.cli run-shadow-report --strategy-id shadow_...`
+  - `python -m invest_agent.cli list-shadow-strategies --limit 5`
+  - `python -m invest_agent.cli list-shadow-reports --limit 5`
+  - `python -m invest_agent.cli show-shadow-report --report-id shrep_...`
+- Dashboard has `影子帳戶` and `反事實報告` panels showing draft/active strategies, extracted rules, shadow reports, rule-violation events, and run card linkage.
+
+This phase still does not unlock Futu OpenD and does not place live orders.
+
 ## Safe Autonomy Loop
 
 The app now has a safe autonomous scheduler.
@@ -458,8 +500,13 @@ HTTP checks were also verified:
 - `python -m invest_agent.cli behavior-report`
 - `python -m invest_agent.cli list-behavior-reports`
 - `python -m invest_agent.cli list-trade-roundtrips`
+- `python -m invest_agent.cli extract-shadow-strategy`
+- `python -m invest_agent.cli confirm-shadow-strategy`
+- `python -m invest_agent.cli run-shadow-report`
+- `python -m invest_agent.cli list-shadow-strategies`
+- `python -m invest_agent.cli list-shadow-reports`
 - `python -m invest_agent.cli draft-proposals`
-- invariant tests for direct proposal creation, MCP-unverified evidence, symbol mismatch, stale primary-source evidence, contradictory evidence, proposal `evidence_hash`, active thesis draft attachment, invalidated/unconfirmed thesis proposal blocking, MCP-unverified catalysts, high-impact catalyst blocking, portfolio-wide macro catalyst blocking, medium-impact catalyst warnings, catalyst review thesis delta, earnings review thesis delta, run card artifact linkage/hash behavior, CSV import idempotency, FIFO roundtrip pairing, behavior diagnostics, and read-only behavior MCP surface
+- invariant tests for direct proposal creation, MCP-unverified evidence, symbol mismatch, stale primary-source evidence, contradictory evidence, proposal `evidence_hash`, active thesis draft attachment, invalidated/unconfirmed thesis proposal blocking, MCP-unverified catalysts, high-impact catalyst blocking, portfolio-wide macro catalyst blocking, medium-impact catalyst warnings, catalyst review thesis delta, earnings review thesis delta, run card artifact linkage/hash behavior, CSV import idempotency, FIFO roundtrip pairing, behavior diagnostics, read-only behavior MCP surface, draft shadow strategy gating, shadow rule violations, and read-only shadow MCP surface
 
 The dashboard was visually checked in the Codex in-app browser.
 
@@ -493,6 +540,12 @@ Latest dashboard screenshot after adding Trade Journal / Behavior Report:
 artifacts/dashboard-behavior-report.png
 ```
 
+Latest dashboard screenshot after adding Shadow Account / Counterfactual Report:
+
+```text
+artifacts/dashboard-shadow-account.png
+```
+
 Futu OpenD read-only refresh was validated against the local OpenD on port `11111`; it refreshed 7 positions and 7 quote snapshots.
 
 SEC companyfacts live smoke was validated against the configured watchlist. It refreshed 5 company snapshots; `US.VOO` was skipped because SEC companyfacts has no company CIK for the ETF.
@@ -502,6 +555,8 @@ Safe autonomy smoke was validated locally. It runs without live trading, records
 Research/evidence smoke was validated locally. `draft-proposals` created research goals for evidence-gated AAPL/MSFT drafts and did not create proposals because the command was run in draft-only mode.
 
 Trade journal smoke was validated locally with a sample CSV import, FIFO behavior report generation, behavior report API reads, and behavior report run card reads. The sample import artifact remains under ignored `artifacts/`.
+
+Shadow account smoke was validated locally with draft strategy extraction, human confirmation, shadow report generation, shadow event reads, and shadow run card reads. The sample import artifact remains under ignored `artifacts/`.
 
 Legacy local pending proposals created before this invariant were marked `RISK_REJECTED` with an audit event, because they lacked both `research_goal_id` and `manual_override_reason`.
 
@@ -523,6 +578,6 @@ The following are local runtime artifacts and intentionally ignored:
 - Keep proposal invariant locked: no `PENDING` proposal without `research_goal_id` or explicit `manual_override_reason`.
 - Keep verified provenance locked: MCP/user-submitted text cannot become source-verified evidence.
 - Extend Run Card / Trust Layer artifacts to safe autonomy cycles, proposal draft batches, and later Vibe sidecar imports.
-- Add Shadow Account / Counterfactual Report on top of imported fills and behavior reports.
+- Extend Shadow Account with optional quote-history-backed counterfactual PnL, while keeping it research-only.
 - Add valuation ratios and filing-period normalization on top of SEC companyfacts.
 - Keep live execution disabled until Keychain secret loading, two-OpenD separation, atomic approval, idempotency keys, broker-side revalidation, order/deal reconciliation, and a small live smoke-test plan are implemented.

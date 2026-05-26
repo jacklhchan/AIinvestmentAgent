@@ -408,6 +408,8 @@ def list_run_cards(
         "event_replay",
         "trade_journal_import",
         "behavior_report",
+        "shadow_strategy_extract",
+        "shadow_report",
         "safe_autonomy_cycle",
         "proposal_draft",
         "future_backtest_import",
@@ -457,6 +459,41 @@ def get_behavior_report(report_id: str) -> dict:
 def list_trade_roundtrips(symbol: str | None = None, limit: int = 20) -> list[dict]:
     """List FIFO-paired closed trade roundtrips from imported trade journals."""
     return _json(get_store().list_trade_roundtrips(symbol=symbol, limit=limit))
+
+
+@mcp.tool()
+def list_shadow_strategies(status: Literal["draft", "active", "archived"] | None = None, limit: int = 20) -> list[dict]:
+    """List research-only shadow account strategies. MCP can read strategies but cannot confirm or activate them."""
+    from .models import ShadowStrategyStatus
+
+    parsed_status = ShadowStrategyStatus(status) if status else None
+    return _json(get_store().list_shadow_strategies(status=parsed_status, limit=limit))
+
+
+@mcp.tool()
+def get_shadow_strategy(strategy_id: str) -> dict:
+    """Return one shadow strategy with deterministic rules."""
+    strategy = get_store().get_shadow_strategy(strategy_id)
+    return _json(strategy) if strategy else {"error": f"shadow strategy not found: {strategy_id}"}
+
+
+@mcp.tool()
+def list_shadow_reports(strategy_id: str | None = None, limit: int = 20) -> list[dict]:
+    """List research-only shadow account counterfactual reports."""
+    return _json(get_store().list_shadow_reports(strategy_id=strategy_id, limit=limit))
+
+
+@mcp.tool()
+def get_shadow_report(report_id: str) -> dict:
+    """Return one shadow report. Reports are research artifacts and never create proposals."""
+    report = get_store().get_shadow_report(report_id)
+    return _json(report) if report else {"error": f"shadow report not found: {report_id}"}
+
+
+@mcp.tool()
+def list_shadow_events(report_id: str | None = None, symbol: str | None = None, limit: int = 50) -> list[dict]:
+    """List shadow account rule violations and journal-internal counterfactual events."""
+    return _json(get_store().list_shadow_events(shadow_report_id=report_id, symbol=symbol, limit=limit))
 
 
 @mcp.tool()

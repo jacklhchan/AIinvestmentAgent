@@ -33,6 +33,10 @@ from .models import (
     RunCardStatus,
     RunCardTriggerSource,
     RunCardType,
+    ShadowReportRunRequest,
+    ShadowStrategyConfirmRequest,
+    ShadowStrategyExtractRequest,
+    ShadowStrategyStatus,
     ThesisCreate,
     ThesisStatus,
     ThesisUpdateCreate,
@@ -44,6 +48,7 @@ from .primary_sources import refresh_primary_sources
 from .proposal_drafts import ProposalDraftEngine
 from .research_goals import ResearchGoalService
 from .run_cards import RunCardService
+from .shadow_account import ShadowAccountService
 from .sec_companyfacts import SecCompanyFactsIngestor
 from .sec_edgar import SecEdgarIngestor
 from .thesis_tracker import ThesisTrackerService
@@ -418,6 +423,64 @@ def behavior_report(report_id: str):
     if not item:
         raise HTTPException(status_code=404, detail="behavior report not found")
     return item
+
+
+@app.post("/api/shadow-strategies/extract")
+def extract_shadow_strategy(request: ShadowStrategyExtractRequest):
+    try:
+        return ShadowAccountService(get_store()).extract_strategy(request, actor=RunCardActor.API)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/shadow-strategies")
+def shadow_strategies(status: ShadowStrategyStatus | None = None, limit: int = 50):
+    return get_store().list_shadow_strategies(status=status, limit=limit)
+
+
+@app.get("/api/shadow-strategies/{strategy_id}")
+def shadow_strategy(strategy_id: str):
+    item = get_store().get_shadow_strategy(strategy_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="shadow strategy not found")
+    return item
+
+
+@app.post("/api/shadow-strategies/{strategy_id}/confirm")
+def confirm_shadow_strategy(strategy_id: str, request: ShadowStrategyConfirmRequest | None = None):
+    try:
+        return ShadowAccountService(get_store()).confirm_strategy(
+            strategy_id,
+            request or ShadowStrategyConfirmRequest(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/shadow-reports/run")
+def run_shadow_report(request: ShadowReportRunRequest):
+    try:
+        return ShadowAccountService(get_store()).run_report(request, actor=RunCardActor.API)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/shadow-reports")
+def shadow_reports(strategy_id: str | None = None, limit: int = 50):
+    return get_store().list_shadow_reports(strategy_id=strategy_id, limit=limit)
+
+
+@app.get("/api/shadow-reports/{report_id}")
+def shadow_report(report_id: str):
+    item = get_store().get_shadow_report(report_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="shadow report not found")
+    return item
+
+
+@app.get("/api/shadow-events")
+def shadow_events(report_id: str | None = None, symbol: str | None = None, limit: int = 100):
+    return get_store().list_shadow_events(shadow_report_id=report_id, symbol=symbol, limit=limit)
 
 
 @app.get("/api/autonomy/status")
@@ -975,6 +1038,36 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         </table>
       </div>
     </section>
+    <section class="grid">
+      <div class="panel">
+        <h2>影子帳戶</h2>
+        <table>
+          <thead><tr><th>狀態</th><th>策略 / 規則</th><th>來源</th><th>操作</th></tr></thead>
+          <tbody id="shadow-strategies"></tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <h2>反事實報告</h2>
+        <form id="shadow-extract-form">
+          <div class="form-grid">
+            <div class="field"><label for="shadow_behavior_report_id">Behavior Report ID</label><input id="shadow_behavior_report_id" name="behavior_report_id" placeholder="beh_..." required /></div>
+            <div class="field"><label for="shadow_strategy_name">策略名稱</label><input id="shadow_strategy_name" name="name" placeholder="可留空" /></div>
+          </div>
+          <button class="primary" type="submit">抽取影子規則</button>
+        </form>
+        <form id="shadow-report-form">
+          <div class="form-grid">
+            <div class="field"><label for="shadow_strategy_id">Strategy ID</label><input id="shadow_strategy_id" name="strategy_id" placeholder="shadow_..." required /></div>
+            <div class="field"><label for="shadow_report_behavior_id">Behavior Report ID</label><input id="shadow_report_behavior_id" name="behavior_report_id" placeholder="可留空" /></div>
+          </div>
+          <button class="primary" type="submit">建立反事實報告</button>
+        </form>
+        <table>
+          <thead><tr><th>報告</th><th>事件</th></tr></thead>
+          <tbody id="shadow-reports"></tbody>
+        </table>
+      </div>
+    </section>
     <section class="panel">
       <h2>SEC 基本面快照</h2>
       <table>
@@ -1134,6 +1227,8 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       event_replay: "事件重播",
       trade_journal_import: "交易日誌匯入",
       behavior_report: "交易行為報告",
+      shadow_strategy_extract: "影子規則抽取",
+      shadow_report: "影子帳戶報告",
       safe_autonomy_cycle: "自治循環",
       proposal_draft: "提案草稿",
       future_backtest_import: "Backtest 匯入",
@@ -1156,6 +1251,33 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       overtrading: "過度交易",
       chasing_momentum: "追高",
       anchoring: "錨定"
+    };
+    const shadowStrategyStatusLabels = {
+      draft: "草稿",
+      active: "已確認",
+      archived: "封存"
+    };
+    const shadowRuleLabels = {
+      entry: "進場",
+      exit: "出場",
+      sizing: "倉位",
+      cooldown: "冷卻",
+      catalyst: "事件",
+      thesis: "論點",
+      stop_loss: "止損",
+      take_profit: "停利"
+    };
+    const shadowEventLabels = {
+      rule_followed: "規則符合",
+      rule_violation: "規則偏離",
+      early_exit: "太早退出",
+      late_exit: "太晚退出",
+      missed_entry: "錯失進場",
+      oversized_trade: "倉位偏大",
+      ignored_catalyst: "忽略催化事件",
+      thesis_mismatch: "論點不符",
+      post_event_review_missing: "缺少事件後 Review",
+      contradicted_earnings_review: "與財報檢討相反"
     };
     const verificationLabels = {
       unverified: "未驗證",
@@ -1198,6 +1320,10 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       trade_fills_imported: "交易成交已匯入",
       trade_roundtrips_rebuilt: "交易 roundtrip 已重建",
       behavior_report_created: "交易行為報告已建立",
+      shadow_strategy_created: "影子策略已建立",
+      shadow_strategy_updated: "影子策略已更新",
+      shadow_strategy_confirmed: "影子策略已確認",
+      shadow_report_created: "影子報告已建立",
       autonomy_cycle_started: "自治循環已開始",
       autonomy_cycle_completed: "自治循環已完成",
       ir_feeds_refreshed: "公司 IR 已刷新",
@@ -1471,6 +1597,40 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         </tr>`;
     }
 
+    function renderShadowStrategies(strategies) {
+      document.querySelector("#shadow-strategies").innerHTML = strategies.map(strategy => {
+        const rules = (strategy.rules || []).slice(0, 4).map(rule =>
+          `${pill(rule.rule_type, shadowRuleLabels[rule.rule_type] || rule.rule_type)} <span class="muted">${escapeHtml(rule.support_count)} 筆</span>`
+        ).join(" ");
+        const action = strategy.status === "draft"
+          ? `<button class="secondary" data-confirm-shadow="${escapeHtml(strategy.id)}">確認</button>`
+          : `<span class="muted">read-only</span>`;
+        return `<tr>
+          <td>${pill(strategy.status, shadowStrategyStatusLabels[strategy.status] || strategy.status)}<br><span class="muted">${strategy.human_confirmed ? "human confirmed" : "等待人工確認"}</span></td>
+          <td><strong>${escapeHtml(strategy.name)}</strong><br>${rules || '<span class="muted">未有規則</span>'}</td>
+          <td><span class="muted">${escapeHtml(strategy.source_behavior_report_id)}</span><br><span class="muted">${formatDate(strategy.created_at)}</span></td>
+          <td>${action}</td>
+        </tr>`;
+      }).join("") || `<tr><td colspan="4" class="muted">尚未抽取影子策略；先建立 behavior report，再抽取 draft rules。</td></tr>`;
+    }
+
+    function renderShadowReports(reports, events) {
+      const eventsByReport = events.reduce((acc, event) => {
+        (acc[event.shadow_report_id] ||= []).push(event);
+        return acc;
+      }, {});
+      document.querySelector("#shadow-reports").innerHTML = reports.map(report => {
+        const linkedEvents = eventsByReport[report.id] || [];
+        const eventSummary = linkedEvents.slice(0, 4).map(event =>
+          `${pill(event.event_type, shadowEventLabels[event.event_type] || event.event_type)} <span class="muted">${escapeHtml(event.symbol)}</span>`
+        ).join(" ") || '<span class="muted">未有事件</span>';
+        return `<tr>
+          <td><strong>${escapeHtml(report.id)}</strong><br><span class="muted">策略 ${escapeHtml(report.strategy_id)} · 交易 ${escapeHtml(report.total_evaluated_trades)}</span><br><span class="muted">實際 PnL ${smallMoney(report.actual_pnl || 0)} · CF ${report.counterfactual_pnl === null || report.counterfactual_pnl === undefined ? "n/a" : smallMoney(report.counterfactual_pnl)}</span></td>
+          <td>${eventSummary}<br><span class="muted">偏離 ${escapeHtml(report.rule_violation_count)} · 早退 ${escapeHtml(report.early_exit_count)} · 晚退 ${escapeHtml(report.late_exit_count)}</span></td>
+        </tr>`;
+      }).join("") || `<tr><td colspan="2" class="muted">尚未建立反事實報告；確認 shadow strategy 後再執行。</td></tr>`;
+    }
+
     function renderProposals(proposals) {
       document.querySelector("#proposals").innerHTML = proposals.map(p => {
         const risk = p.risk_check.passed ? "通過" : (p.risk_check.reasons || []).map(escapeHtml).join("; ");
@@ -1508,7 +1668,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
     }
 
     async function loadAll() {
-      const [health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, researchGoals, theses, catalysts, earningsReviews, runCards, behaviorReports, tradeImports, tradeRoundtrips] = await Promise.all([
+      const [health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, researchGoals, theses, catalysts, earningsReviews, runCards, behaviorReports, tradeImports, tradeRoundtrips, shadowStrategies, shadowReports, shadowEvents] = await Promise.all([
         api("/health"),
         api("/api/portfolio"),
         api("/api/quotes"),
@@ -1525,7 +1685,10 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         api("/api/run-cards?limit=8"),
         api("/api/behavior-reports?limit=5"),
         api("/api/trade-imports?limit=5"),
-        api("/api/trade-roundtrips?limit=5")
+        api("/api/trade-roundtrips?limit=5"),
+        api("/api/shadow-strategies?limit=5"),
+        api("/api/shadow-reports?limit=5"),
+        api("/api/shadow-events?limit=20")
       ]);
       document.querySelector("#mode").textContent = health.paper_only ? "紙上交易模式" : "已要求實盤模式";
       const futuButton = document.querySelector("#futu-refresh");
@@ -1544,6 +1707,8 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       renderRunCards(runCards);
       renderBehaviorReports(behaviorReports);
       renderTradeJournalSummary(tradeImports, tradeRoundtrips);
+      renderShadowStrategies(shadowStrategies);
+      renderShadowReports(shadowReports, shadowEvents);
       renderFundamentals(fundamentals);
       renderPositions(portfolio, quotes);
       renderProposals(proposals);
@@ -1554,6 +1719,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
     document.addEventListener("click", async event => {
       const approveId = event.target.dataset.approve;
       const rejectId = event.target.dataset.reject;
+      const confirmShadowId = event.target.dataset.confirmShadow;
       try {
         if (approveId) {
           await api(`/api/proposals/${approveId}/approve`, { method: "POST" });
@@ -1563,6 +1729,14 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         if (rejectId) {
           await api(`/api/proposals/${rejectId}/reject`, { method: "POST", body: JSON.stringify({ reason: "在中文 Dashboard 拒絕" }) });
           setToast(`已拒絕 ${rejectId}`);
+          await loadAll();
+        }
+        if (confirmShadowId) {
+          await api(`/api/shadow-strategies/${confirmShadowId}/confirm`, {
+            method: "POST",
+            body: JSON.stringify({ human_confirmed: true, confirmed_by: "dashboard" })
+          });
+          setToast(`已確認影子策略 ${confirmShadowId}`);
           await loadAll();
         }
       } catch (error) {
@@ -1776,6 +1950,36 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       try {
         const created = await api("/api/behavior-reports/run", { method: "POST", body: JSON.stringify(body) });
         setToast(`已建立交易行為報告 ${created.id}，roundtrips：${created.total_roundtrips}`);
+        await loadAll();
+      } catch (error) {
+        setToast(error.message);
+      }
+    });
+    document.querySelector("#shadow-extract-form").addEventListener("submit", async event => {
+      event.preventDefault();
+      const form = new FormData(event.target);
+      const body = {
+        behavior_report_id: form.get("behavior_report_id"),
+        name: form.get("name") || null
+      };
+      try {
+        const created = await api("/api/shadow-strategies/extract", { method: "POST", body: JSON.stringify(body) });
+        setToast(`已抽取影子策略 ${created.id}，狀態：${shadowStrategyStatusLabels[created.status] || created.status}`);
+        await loadAll();
+      } catch (error) {
+        setToast(error.message);
+      }
+    });
+    document.querySelector("#shadow-report-form").addEventListener("submit", async event => {
+      event.preventDefault();
+      const form = new FormData(event.target);
+      const body = {
+        strategy_id: form.get("strategy_id"),
+        behavior_report_id: form.get("behavior_report_id") || null
+      };
+      try {
+        const created = await api("/api/shadow-reports/run", { method: "POST", body: JSON.stringify(body) });
+        setToast(`已建立反事實報告 ${created.id}，偏離：${created.rule_violation_count}`);
         await loadAll();
       } catch (error) {
         setToast(error.message);
