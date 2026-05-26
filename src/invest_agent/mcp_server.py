@@ -406,6 +406,8 @@ def list_run_cards(
         "earnings_review",
         "catalyst_review",
         "event_replay",
+        "trade_journal_import",
+        "behavior_report",
         "safe_autonomy_cycle",
         "proposal_draft",
         "future_backtest_import",
@@ -436,6 +438,25 @@ def get_run_card_artifact(run_card_id: str, kind: Literal["json", "markdown"] = 
         return {"run_card_id": run_card_id, "kind": kind, "text": RunCardService(get_store()).get_artifact_text(run_card_id, kind=kind)}
     except ValueError as exc:
         return {"error": str(exc)}
+
+
+@mcp.tool()
+def list_behavior_reports(symbol: str | None = None, limit: int = 20) -> list[dict]:
+    """List local trade behavior reports. MCP can read reports but cannot import local trade files."""
+    return _json(get_store().list_behavior_reports(symbol=symbol, limit=limit))
+
+
+@mcp.tool()
+def get_behavior_report(report_id: str) -> dict:
+    """Return one local trade behavior report."""
+    report = get_store().get_behavior_report(report_id)
+    return _json(report) if report else {"error": f"behavior report not found: {report_id}"}
+
+
+@mcp.tool()
+def list_trade_roundtrips(symbol: str | None = None, limit: int = 20) -> list[dict]:
+    """List FIFO-paired closed trade roundtrips from imported trade journals."""
+    return _json(get_store().list_trade_roundtrips(symbol=symbol, limit=limit))
 
 
 @mcp.tool()

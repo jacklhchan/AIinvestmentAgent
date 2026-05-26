@@ -203,6 +203,8 @@ class RunCardType(StrEnum):
     EARNINGS_REVIEW = "earnings_review"
     CATALYST_REVIEW = "catalyst_review"
     EVENT_REPLAY = "event_replay"
+    TRADE_JOURNAL_IMPORT = "trade_journal_import"
+    BEHAVIOR_REPORT = "behavior_report"
     SAFE_AUTONOMY_CYCLE = "safe_autonomy_cycle"
     PROPOSAL_DRAFT = "proposal_draft"
     FUTURE_BACKTEST_IMPORT = "future_backtest_import"
@@ -233,6 +235,23 @@ class RunCardTriggerSource(StrEnum):
     REPLAY = "replay"
     SMOKE = "smoke"
     SYSTEM = "system"
+
+
+class TradeJournalSource(StrEnum):
+    FUTU_CSV = "futu_csv"
+    GENERIC_CSV = "generic_csv"
+
+
+class TradeFillSide(StrEnum):
+    BUY = "buy"
+    SELL = "sell"
+
+
+class BehaviorSeverity(StrEnum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    UNKNOWN = "unknown"
 
 
 class Position(BaseModel):
@@ -743,6 +762,133 @@ class ResearchRunCard(BaseModel):
     @classmethod
     def normalize_run_card_symbol(cls, value: str | None) -> str | None:
         return value.strip().upper() if value else None
+
+
+class TradeImport(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("imp"))
+    source: TradeJournalSource = TradeJournalSource.GENERIC_CSV
+    filename: str
+    file_hash: str
+    imported_at: datetime = Field(default_factory=utc_now)
+    imported_by: RunCardActor = RunCardActor.CLI
+    row_count: int = 0
+    parse_warnings: list[str] = Field(default_factory=list)
+    run_card_id: str | None = None
+
+
+class TradeFill(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("fill"))
+    import_id: str
+    broker: str = "generic"
+    broker_order_id: str | None = None
+    broker_trade_id: str | None = None
+    symbol: str
+    broker_symbol: str | None = None
+    side: TradeFillSide
+    qty: float = Field(gt=0)
+    price: float = Field(gt=0)
+    fees: float = Field(default=0.0, ge=0.0)
+    currency: str = "USD"
+    market: str = ""
+    traded_at: datetime
+    raw_row_hash: str
+    raw: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_trade_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+    @field_validator("currency")
+    @classmethod
+    def normalize_currency(cls, value: str) -> str:
+        return (value or "USD").strip().upper()
+
+    @field_validator("market")
+    @classmethod
+    def normalize_market(cls, value: str) -> str:
+        return (value or "").strip().upper()
+
+
+class TradeRoundTrip(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("rt"))
+    import_id: str | None = None
+    symbol: str
+    opened_at: datetime
+    closed_at: datetime
+    qty: float = Field(gt=0)
+    buy_price: float = Field(gt=0)
+    sell_price: float = Field(gt=0)
+    buy_fees: float = Field(default=0.0, ge=0.0)
+    sell_fees: float = Field(default=0.0, ge=0.0)
+    holding_days: float = Field(default=0.0, ge=0.0)
+    realized_pnl: float = 0.0
+    realized_pnl_pct: float = 0.0
+    currency: str = "USD"
+    pairing_method: str = "fifo"
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_roundtrip_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+    @field_validator("currency")
+    @classmethod
+    def normalize_roundtrip_currency(cls, value: str) -> str:
+        return (value or "USD").strip().upper()
+
+
+class BehaviorDiagnostic(BaseModel):
+    severity: BehaviorSeverity = BehaviorSeverity.UNKNOWN
+    score: float = 0.0
+    summary: str = ""
+    metrics: dict[str, Any] = Field(default_factory=dict)
+
+
+class BehaviorReport(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("beh"))
+    period_start: datetime | None = None
+    period_end: datetime | None = None
+    symbols: list[str] = Field(default_factory=list)
+    total_trades: int = 0
+    total_roundtrips: int = 0
+    win_rate: float = 0.0
+    profit_loss_ratio: float = 0.0
+    avg_holding_days: float = 0.0
+    trade_frequency_per_week: float = 0.0
+    total_realized_pnl: float = 0.0
+    max_drawdown: float = 0.0
+    top_symbols: dict[str, int] = Field(default_factory=dict)
+    hourly_distribution: dict[str, int] = Field(default_factory=dict)
+    market_distribution: dict[str, int] = Field(default_factory=dict)
+    diagnostics: dict[str, BehaviorDiagnostic] = Field(default_factory=dict)
+    run_card_id: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("symbols")
+    @classmethod
+    def normalize_report_symbols(cls, value: list[str]) -> list[str]:
+        return [item.strip().upper() for item in value if item and item.strip()]
+
+
+class TradeJournalImportRequest(BaseModel):
+    path: str
+    source: TradeJournalSource = TradeJournalSource.FUTU_CSV
+
+
+class BehaviorReportRunRequest(BaseModel):
+    period_start: datetime | None = None
+    period_end: datetime | None = None
+    symbols: list[str] | None = None
+
+    @field_validator("symbols")
+    @classmethod
+    def normalize_run_symbols(cls, value: list[str] | None) -> list[str] | None:
+        if not value:
+            return None
+        return [item.strip().upper() for item in value if item and item.strip()]
 
 
 class FundamentalsRefreshResult(BaseModel):

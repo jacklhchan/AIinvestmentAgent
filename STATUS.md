@@ -22,6 +22,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
 - Catalyst Calendar layer with upcoming/completed events, source/human verification, post-event reviews, and proposal-time catalyst invariants.
 - Earnings Review layer with SEC companyfacts-based YoY scoring, cashflow quality, research evidence, catalyst reviews, and thesis-delta artifacts.
 - Research Run Card layer with versioned rule metadata, input/output/dataset hashes, evidence links, and JSON/Markdown artifacts for earnings reviews, catalyst reviews, and event replay exports.
+- Trade Journal / Behavior Report layer with Futu/generic CSV import, file-hash idempotency, FIFO roundtrip pairing, behavior diagnostics, and behavior-report run cards.
 - Event replay export/import for portfolio, quotes, news/evidence, and fundamental snapshot JSONL.
 - Proposal draft engine that turns recent symbol-specific watchlist news into structured draft proposals, records a research goal for each draft, and only creates policy-checked proposals when evidence gate passes.
 - Safe autonomy loop that refreshes read-only data, drafts watchlist proposals, applies evidence gate and proposal cooldown, and creates only paper-mode pending proposals for human approval.
@@ -56,6 +57,9 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - `list_run_cards`
   - `get_run_card`
   - `get_run_card_artifact`
+  - `list_behavior_reports`
+  - `get_behavior_report`
+  - `list_trade_roundtrips`
   - `get_safe_autonomy_status`
   - `run_safe_autonomy_cycle`
   - `export_event_replay_file`
@@ -69,7 +73,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - `reject_trade_proposal`
 - Hermes config snippet at `deploy/hermes/config.snippet.yaml`.
 - launchd example plists at `deploy/launchd/com.local.invest-agent-api.plist` and `deploy/launchd/com.local.invest-agent-scheduler.plist`.
-- Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, non-pending state handling, Futu adapter mapping, dashboard localization, news parsing, watchlist resolution, SEC/IR parsing, event replay, proposal draft creation, research evidence gates, thesis tracker behavior, catalyst calendar invariants, earnings review behavior, and research run card artifacts.
+- Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, non-pending state handling, Futu adapter mapping, dashboard localization, news parsing, watchlist resolution, SEC/IR parsing, event replay, proposal draft creation, research evidence gates, thesis tracker behavior, catalyst calendar invariants, earnings review behavior, research run card artifacts, and trade journal behavior analytics.
 
 ## Local Hermes/Codex Setup
 
@@ -84,7 +88,7 @@ The global Hermes config at `/Users/apple/.hermes/config.yaml` has been updated 
 
 `hermes auth status openai-codex` shows logged in.
 
-`hermes mcp list` shows `invest_agent` enabled with 38 selected tools after adding the 3 read-only run card tools.
+`hermes mcp list` shows `invest_agent` enabled with 41 selected tools after adding the 3 read-only behavior report tools.
 
 ## Futu Setup
 
@@ -292,6 +296,43 @@ The app now adds a local Trust Layer-style artifact spine for important research
 
 This phase still does not unlock Futu OpenD and does not place live orders.
 
+## Trade Journal / Behavior Report
+
+The app now adds a research-only trade behavior analytics layer inspired by Vibe-style journal analysis, implemented locally without giving Hermes file-import or execution authority.
+
+- SQLite now has `trade_imports`, `trade_fills`, `trade_roundtrips`, and `behavior_reports` tables.
+- Futu CSV and generic CSV imports normalize fills into symbol, side, qty, price, fees, currency, market, traded time, broker IDs, raw row hash, and raw JSON.
+- Import is idempotent by CSV `file_hash`; importing the same file again returns the existing import and does not duplicate fills.
+- `TradeJournalService.run_behavior_report` rebuilds FIFO closed roundtrips and computes total trades, total roundtrips, win rate, profit/loss ratio, average holding days, trade frequency per week, total realized PnL, max drawdown, top symbols, hourly distribution, and market distribution.
+- Deterministic diagnostics v1 covers:
+  - disposition effect: loser holding days vs winner holding days
+  - overtrading: busy-day PnL vs quiet-day PnL
+  - chasing momentum: buys after the trader's own same-symbol trade prices already ran up
+  - anchoring: repeated trades clustered in a narrow same-symbol price band
+- Trade journal imports create `trade_journal_import` run cards. Behavior reports create `behavior_report` run cards with normalized fill dataset hashes, roundtrip metrics, diagnostics, warnings, and report IDs.
+- Behavior analytics is research-only. It does not create proposals, approve proposals, unlock Futu, or place live broker orders.
+- REST endpoints:
+  - `GET /api/trade-imports`
+  - `POST /api/trade-journal/import`
+  - `GET /api/trade-fills`
+  - `GET /api/trade-roundtrips`
+  - `GET /api/behavior-reports`
+  - `POST /api/behavior-reports/run`
+  - `GET /api/behavior-reports/{report_id}`
+- Hermes MCP behavior tools are read-only:
+  - `list_behavior_reports`
+  - `get_behavior_report`
+  - `list_trade_roundtrips`
+- CLI:
+  - `python -m invest_agent.cli import-trade-journal --source futu_csv --path ~/Downloads/futu_trades.csv`
+  - `python -m invest_agent.cli behavior-report --period-start 2026-01-01 --period-end 2026-05-26`
+  - `python -m invest_agent.cli list-behavior-reports --limit 5`
+  - `python -m invest_agent.cli show-behavior-report --report-id beh_...`
+  - `python -m invest_agent.cli list-trade-roundtrips --symbol AAPL`
+- Dashboard has `交易行為` and `匯入交易日誌` panels showing report metrics, diagnostics, latest import, latest roundtrip, and run card IDs.
+
+This phase still does not unlock Futu OpenD and does not place live orders.
+
 ## Safe Autonomy Loop
 
 The app now has a safe autonomous scheduler.
@@ -322,6 +363,7 @@ The dashboard is now localized in Traditional Chinese and includes:
 - Portfolio, quote, news, and audit refresh timestamps.
 - Futu OpenD connection status for the configured host/port.
 - Safe autonomy status and a manual `執行自治循環` action.
+- Trade behavior panels for behavior diagnostics, latest trade import, latest FIFO roundtrip, and behavior report run card IDs.
 - A recent audit trail panel so proposal, approval, paper execution, and Futu refresh events are visible without leaving the browser.
 
 ## Run Commands
@@ -354,7 +396,7 @@ curl -s -X POST http://127.0.0.1:8788/api/proposals ...
 Result:
 
 ```text
-64 passed
+74 passed
 ```
 
 HTTP checks were also verified:
@@ -386,6 +428,13 @@ HTTP checks were also verified:
 - `GET /api/run-cards`
 - `GET /api/run-cards/{run_card_id}`
 - `GET /api/run-cards/{run_card_id}/artifact?kind=markdown`
+- `GET /api/trade-imports`
+- `POST /api/trade-journal/import`
+- `GET /api/trade-fills`
+- `GET /api/trade-roundtrips`
+- `GET /api/behavior-reports`
+- `POST /api/behavior-reports/run`
+- `GET /api/behavior-reports/{report_id}`
 - `GET /api/autonomy/status`
 - `POST /api/autonomy/run`
 - `POST /api/events/export`
@@ -405,8 +454,12 @@ HTTP checks were also verified:
 - `python -m invest_agent.cli autonomy-status`
 - `python -m invest_agent.cli event-export`
 - `python -m invest_agent.cli event-replay`
+- `python -m invest_agent.cli import-trade-journal`
+- `python -m invest_agent.cli behavior-report`
+- `python -m invest_agent.cli list-behavior-reports`
+- `python -m invest_agent.cli list-trade-roundtrips`
 - `python -m invest_agent.cli draft-proposals`
-- invariant tests for direct proposal creation, MCP-unverified evidence, symbol mismatch, stale primary-source evidence, contradictory evidence, proposal `evidence_hash`, active thesis draft attachment, invalidated/unconfirmed thesis proposal blocking, MCP-unverified catalysts, high-impact catalyst blocking, portfolio-wide macro catalyst blocking, medium-impact catalyst warnings, catalyst review thesis delta, earnings review thesis delta, and run card artifact linkage/hash behavior
+- invariant tests for direct proposal creation, MCP-unverified evidence, symbol mismatch, stale primary-source evidence, contradictory evidence, proposal `evidence_hash`, active thesis draft attachment, invalidated/unconfirmed thesis proposal blocking, MCP-unverified catalysts, high-impact catalyst blocking, portfolio-wide macro catalyst blocking, medium-impact catalyst warnings, catalyst review thesis delta, earnings review thesis delta, run card artifact linkage/hash behavior, CSV import idempotency, FIFO roundtrip pairing, behavior diagnostics, and read-only behavior MCP surface
 
 The dashboard was visually checked in the Codex in-app browser.
 
@@ -434,6 +487,12 @@ Latest dashboard screenshot after adding Research Run Cards:
 artifacts/dashboard-run-cards.png
 ```
 
+Latest dashboard screenshot after adding Trade Journal / Behavior Report:
+
+```text
+artifacts/dashboard-behavior-report.png
+```
+
 Futu OpenD read-only refresh was validated against the local OpenD on port `11111`; it refreshed 7 positions and 7 quote snapshots.
 
 SEC companyfacts live smoke was validated against the configured watchlist. It refreshed 5 company snapshots; `US.VOO` was skipped because SEC companyfacts has no company CIK for the ETF.
@@ -441,6 +500,8 @@ SEC companyfacts live smoke was validated against the configured watchlist. It r
 Safe autonomy smoke was validated locally. It runs without live trading, records audit events, and creates only paper-mode pending proposals when evidence gate and cooldown allow.
 
 Research/evidence smoke was validated locally. `draft-proposals` created research goals for evidence-gated AAPL/MSFT drafts and did not create proposals because the command was run in draft-only mode.
+
+Trade journal smoke was validated locally with a sample CSV import, FIFO behavior report generation, behavior report API reads, and behavior report run card reads. The sample import artifact remains under ignored `artifacts/`.
 
 Legacy local pending proposals created before this invariant were marked `RISK_REJECTED` with an audit event, because they lacked both `research_goal_id` and `manual_override_reason`.
 
@@ -462,6 +523,6 @@ The following are local runtime artifacts and intentionally ignored:
 - Keep proposal invariant locked: no `PENDING` proposal without `research_goal_id` or explicit `manual_override_reason`.
 - Keep verified provenance locked: MCP/user-submitted text cannot become source-verified evidence.
 - Extend Run Card / Trust Layer artifacts to safe autonomy cycles, proposal draft batches, and later Vibe sidecar imports.
-- Add Trade Journal / Behavior Report: Futu CSV import, FIFO roundtrip, win rate, PnL ratio, drawdown, and overtrading checks.
+- Add Shadow Account / Counterfactual Report on top of imported fills and behavior reports.
 - Add valuation ratios and filing-period normalization on top of SEC companyfacts.
 - Keep live execution disabled until Keychain secret loading, two-OpenD separation, atomic approval, idempotency keys, broker-side revalidation, order/deal reconciliation, and a small live smoke-test plan are implemented.

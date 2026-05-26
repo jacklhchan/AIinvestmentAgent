@@ -19,6 +19,7 @@ from .models import (
     CatalystCreate,
     CatalystReviewCreate,
     CatalystStatus,
+    BehaviorReportRunRequest,
     CreatedBy,
     CreatedVia,
     EarningsReviewApplyRequest,
@@ -35,6 +36,9 @@ from .models import (
     ThesisCreate,
     ThesisStatus,
     ThesisUpdateCreate,
+    TradeFillSide,
+    TradeJournalImportRequest,
+    TradeJournalSource,
 )
 from .primary_sources import refresh_primary_sources
 from .proposal_drafts import ProposalDraftEngine
@@ -43,6 +47,7 @@ from .run_cards import RunCardService
 from .sec_companyfacts import SecCompanyFactsIngestor
 from .sec_edgar import SecEdgarIngestor
 from .thesis_tracker import ThesisTrackerService
+from .trade_journal import TradeJournalService
 
 
 class RejectRequest(BaseModel):
@@ -369,6 +374,50 @@ def run_card_artifact(run_card_id: str, kind: str = "json"):
         return RunCardService(get_store()).get_artifact_text(run_card_id, kind=kind)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/trade-imports")
+def trade_imports(source: TradeJournalSource | None = None, limit: int = 50):
+    return get_store().list_trade_imports(source=source, limit=limit)
+
+
+@app.post("/api/trade-journal/import")
+def import_trade_journal(request: TradeJournalImportRequest):
+    try:
+        return TradeJournalService(get_store()).import_csv(request, actor=RunCardActor.API)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/trade-fills")
+def trade_fills(symbol: str | None = None, side: TradeFillSide | None = None, limit: int = 100):
+    return get_store().list_trade_fills(symbol=symbol, side=side, limit=limit)
+
+
+@app.get("/api/trade-roundtrips")
+def trade_roundtrips(symbol: str | None = None, limit: int = 100):
+    return get_store().list_trade_roundtrips(symbol=symbol, limit=limit)
+
+
+@app.get("/api/behavior-reports")
+def behavior_reports(symbol: str | None = None, limit: int = 50):
+    return get_store().list_behavior_reports(symbol=symbol, limit=limit)
+
+
+@app.post("/api/behavior-reports/run")
+def run_behavior_report(request: BehaviorReportRunRequest | None = None):
+    try:
+        return TradeJournalService(get_store()).run_behavior_report(request or BehaviorReportRunRequest(), actor=RunCardActor.API)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/behavior-reports/{report_id}")
+def behavior_report(report_id: str):
+    item = get_store().get_behavior_report(report_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="behavior report not found")
+    return item
 
 
 @app.get("/api/autonomy/status")
@@ -897,6 +946,35 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         <tbody id="run-cards"></tbody>
       </table>
     </section>
+    <section class="grid">
+      <div class="panel">
+        <h2>交易行為</h2>
+        <table>
+          <thead><tr><th>期間</th><th>績效輪廓</th><th>行為診斷</th><th>Run Card</th></tr></thead>
+          <tbody id="behavior-reports"></tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <h2>匯入交易日誌</h2>
+        <form id="trade-import-form">
+          <div class="field"><label for="trade_import_path">CSV 路徑</label><input id="trade_import_path" name="path" placeholder="/Users/apple/Downloads/futu_trades.csv" required /></div>
+          <div class="field"><label for="trade_import_source">來源格式</label><select id="trade_import_source" name="source"><option value="futu_csv">Futu CSV</option><option value="generic_csv">Generic CSV</option></select></div>
+          <button class="primary" type="submit">匯入交易紀錄</button>
+        </form>
+        <form id="behavior-report-form">
+          <div class="form-grid">
+            <div class="field"><label for="behavior_period_start">開始日期</label><input id="behavior_period_start" name="period_start" type="date" /></div>
+            <div class="field"><label for="behavior_period_end">結束日期</label><input id="behavior_period_end" name="period_end" type="date" /></div>
+            <div class="field"><label for="behavior_symbols">標的，可逗號分隔</label><input id="behavior_symbols" name="symbols" placeholder="AAPL,MSFT" /></div>
+          </div>
+          <button class="primary" type="submit">建立行為報告</button>
+        </form>
+        <table>
+          <thead><tr><th>匯入</th><th>最近 Roundtrip</th></tr></thead>
+          <tbody id="trade-journal-summary"></tbody>
+        </table>
+      </div>
+    </section>
     <section class="panel">
       <h2>SEC 基本面快照</h2>
       <table>
@@ -1054,6 +1132,8 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       earnings_review: "財報檢討",
       catalyst_review: "催化事件 Review",
       event_replay: "事件重播",
+      trade_journal_import: "交易日誌匯入",
+      behavior_report: "交易行為報告",
       safe_autonomy_cycle: "自治循環",
       proposal_draft: "提案草稿",
       future_backtest_import: "Backtest 匯入",
@@ -1064,6 +1144,18 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       completed: "完成",
       failed: "失敗",
       cancelled: "取消"
+    };
+    const behaviorSeverityLabels = {
+      low: "低",
+      medium: "中",
+      high: "高",
+      unknown: "未知"
+    };
+    const behaviorDiagnosticLabels = {
+      disposition_effect: "處分效應",
+      overtrading: "過度交易",
+      chasing_momentum: "追高",
+      anchoring: "錨定"
     };
     const verificationLabels = {
       unverified: "未驗證",
@@ -1102,6 +1194,10 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       sec_filings_refreshed: "SEC filings 已刷新",
       sec_companyfacts_refreshed: "SEC 基本面已刷新",
       fundamentals_upserted: "基本面快照已更新",
+      trade_journal_import_created: "交易日誌匯入已建立",
+      trade_fills_imported: "交易成交已匯入",
+      trade_roundtrips_rebuilt: "交易 roundtrip 已重建",
+      behavior_report_created: "交易行為報告已建立",
       autonomy_cycle_started: "自治循環已開始",
       autonomy_cycle_completed: "自治循環已完成",
       ir_feeds_refreshed: "公司 IR 已刷新",
@@ -1350,6 +1446,31 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       }).join("") || `<tr><td colspan="4" class="muted">尚未有 run card；財報檢討和 event replay 會自動建立。</td></tr>`;
     }
 
+    function renderBehaviorReports(reports) {
+      document.querySelector("#behavior-reports").innerHTML = reports.map(report => {
+        const diagnostics = Object.entries(report.diagnostics || {}).map(([key, diagnostic]) =>
+          `${pill(diagnostic.severity, `${behaviorDiagnosticLabels[key] || key} ${behaviorSeverityLabels[diagnostic.severity] || diagnostic.severity}`)}`
+        ).join(" ");
+        const period = `${report.period_start ? formatDate(report.period_start) : "全部"} → ${report.period_end ? formatDate(report.period_end) : "現在"}`;
+        return `<tr>
+          <td><strong>${escapeHtml((report.symbols || []).join(", ") || "全部標的")}</strong><br><span class="muted">${period}</span></td>
+          <td>交易 ${escapeHtml(report.total_trades)} · Roundtrip ${escapeHtml(report.total_roundtrips)}<br><span class="muted">勝率 ${Math.round((report.win_rate || 0) * 100)}% · 盈虧比 ${Number(report.profit_loss_ratio || 0).toFixed(2)} · 回撤 ${smallMoney(report.max_drawdown || 0)}</span></td>
+          <td>${diagnostics || '<span class="muted">未有診斷</span>'}</td>
+          <td><span class="muted">${escapeHtml(report.run_card_id || "n/a")}</span><br><span class="muted">PnL ${smallMoney(report.total_realized_pnl || 0)}</span></td>
+        </tr>`;
+      }).join("") || `<tr><td colspan="4" class="muted">尚未建立交易行為報告；先匯入 Futu / generic CSV，再建立 behavior report。</td></tr>`;
+    }
+
+    function renderTradeJournalSummary(imports, roundtrips) {
+      const latestImport = imports[0];
+      const latestRoundtrip = roundtrips[0];
+      document.querySelector("#trade-journal-summary").innerHTML = `
+        <tr>
+          <td>${latestImport ? `<strong>${escapeHtml(latestImport.filename)}</strong><br><span class="muted">${escapeHtml(latestImport.source)} · ${escapeHtml(latestImport.row_count)} rows · ${formatDate(latestImport.imported_at)}</span>` : '<span class="muted">未匯入</span>'}</td>
+          <td>${latestRoundtrip ? `<strong>${escapeHtml(latestRoundtrip.symbol)}</strong> ${escapeHtml(latestRoundtrip.qty)}<br><span class="muted">PnL ${smallMoney(latestRoundtrip.realized_pnl)} · ${Number(latestRoundtrip.holding_days || 0).toFixed(1)} 天</span>` : '<span class="muted">未有 closed roundtrip</span>'}</td>
+        </tr>`;
+    }
+
     function renderProposals(proposals) {
       document.querySelector("#proposals").innerHTML = proposals.map(p => {
         const risk = p.risk_check.passed ? "通過" : (p.risk_check.reasons || []).map(escapeHtml).join("; ");
@@ -1387,7 +1508,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
     }
 
     async function loadAll() {
-      const [health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, researchGoals, theses, catalysts, earningsReviews, runCards] = await Promise.all([
+      const [health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, researchGoals, theses, catalysts, earningsReviews, runCards, behaviorReports, tradeImports, tradeRoundtrips] = await Promise.all([
         api("/health"),
         api("/api/portfolio"),
         api("/api/quotes"),
@@ -1401,7 +1522,10 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         api("/api/theses?limit=8"),
         api("/api/catalysts/upcoming?days=14&limit=8"),
         api("/api/earnings-reviews?limit=8"),
-        api("/api/run-cards?limit=8")
+        api("/api/run-cards?limit=8"),
+        api("/api/behavior-reports?limit=5"),
+        api("/api/trade-imports?limit=5"),
+        api("/api/trade-roundtrips?limit=5")
       ]);
       document.querySelector("#mode").textContent = health.paper_only ? "紙上交易模式" : "已要求實盤模式";
       const futuButton = document.querySelector("#futu-refresh");
@@ -1418,6 +1542,8 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       renderCatalysts(catalysts);
       renderEarningsReviews(earningsReviews);
       renderRunCards(runCards);
+      renderBehaviorReports(behaviorReports);
+      renderTradeJournalSummary(tradeImports, tradeRoundtrips);
       renderFundamentals(fundamentals);
       renderPositions(portfolio, quotes);
       renderProposals(proposals);
@@ -1617,6 +1743,39 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       try {
         const created = await api("/api/earnings-reviews/run", { method: "POST", body: JSON.stringify(body) });
         setToast(`已建立財報檢討 ${created.id}，delta：${thesisDeltaLabels[created.thesis_delta] || created.thesis_delta}`);
+        await loadAll();
+      } catch (error) {
+        setToast(error.message);
+      }
+    });
+    document.querySelector("#trade-import-form").addEventListener("submit", async event => {
+      event.preventDefault();
+      const form = new FormData(event.target);
+      try {
+        const created = await api("/api/trade-journal/import", {
+          method: "POST",
+          body: JSON.stringify({ path: form.get("path"), source: form.get("source") })
+        });
+        setToast(`已匯入交易日誌 ${created.id}，rows：${created.row_count}`);
+        await loadAll();
+      } catch (error) {
+        setToast(error.message);
+      }
+    });
+    document.querySelector("#behavior-report-form").addEventListener("submit", async event => {
+      event.preventDefault();
+      const form = new FormData(event.target);
+      const start = form.get("period_start");
+      const end = form.get("period_end");
+      const symbols = String(form.get("symbols") || "").split(",").map(item => item.trim()).filter(Boolean);
+      const body = {
+        period_start: start ? `${start}T00:00:00Z` : null,
+        period_end: end ? `${end}T23:59:59Z` : null,
+        symbols: symbols.length ? symbols : null
+      };
+      try {
+        const created = await api("/api/behavior-reports/run", { method: "POST", body: JSON.stringify(body) });
+        setToast(`已建立交易行為報告 ${created.id}，roundtrips：${created.total_roundtrips}`);
         await loadAll();
       } catch (error) {
         setToast(error.message);

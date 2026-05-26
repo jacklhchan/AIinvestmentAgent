@@ -7,6 +7,7 @@ from typing import Any
 
 from .models import (
     AuditEvent,
+    BehaviorReport,
     Catalyst,
     CatalystReview,
     CatalystStatus,
@@ -29,6 +30,11 @@ from .models import (
     ThesisRisk,
     ThesisStatus,
     ThesisUpdate,
+    TradeFill,
+    TradeFillSide,
+    TradeImport,
+    TradeJournalSource,
+    TradeRoundTrip,
 )
 
 
@@ -195,6 +201,42 @@ class Store:
                     symbol TEXT,
                     started_at TEXT NOT NULL,
                     completed_at TEXT,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS trade_imports (
+                    id TEXT PRIMARY KEY,
+                    source TEXT NOT NULL,
+                    file_hash TEXT NOT NULL UNIQUE,
+                    imported_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS trade_fills (
+                    id TEXT PRIMARY KEY,
+                    import_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    traded_at TEXT NOT NULL,
+                    raw_row_hash TEXT NOT NULL UNIQUE,
+                    payload TEXT NOT NULL,
+                    FOREIGN KEY (import_id) REFERENCES trade_imports(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS trade_roundtrips (
+                    id TEXT PRIMARY KEY,
+                    import_id TEXT,
+                    symbol TEXT NOT NULL,
+                    opened_at TEXT NOT NULL,
+                    closed_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS behavior_reports (
+                    id TEXT PRIMARY KEY,
+                    period_start TEXT,
+                    period_end TEXT,
+                    created_at TEXT NOT NULL,
                     payload TEXT NOT NULL
                 );
                 """
@@ -488,6 +530,197 @@ class Store:
         with self.connect() as conn:
             rows = conn.execute(query, tuple(args)).fetchall()
         return [ResearchRunCard.model_validate_json(row["payload"]) for row in rows]
+
+    def get_trade_import(self, import_id: str) -> TradeImport | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT payload FROM trade_imports WHERE id = ?", (import_id,)).fetchone()
+        return TradeImport.model_validate_json(row["payload"]) if row else None
+
+    def get_trade_import_by_hash(self, file_hash: str) -> TradeImport | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT payload FROM trade_imports WHERE file_hash = ?", (file_hash,)).fetchone()
+        return TradeImport.model_validate_json(row["payload"]) if row else None
+
+    def create_trade_import(self, item: TradeImport) -> TradeImport:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO trade_imports(id, source, file_hash, imported_at, payload)
+                VALUES(?, ?, ?, ?, ?)
+                """,
+                (
+                    item.id,
+                    item.source.value,
+                    item.file_hash,
+                    item.imported_at.isoformat(),
+                    self._dump(item),
+                ),
+            )
+        self.audit(
+            "trade_journal_import_created",
+            "trade_import",
+            item.id,
+            {"source": item.source.value, "row_count": item.row_count, "run_card_id": item.run_card_id},
+        )
+        return item
+
+    def list_trade_imports(
+        self,
+        *,
+        source: TradeJournalSource | None = None,
+        limit: int = 50,
+    ) -> list[TradeImport]:
+        clauses: list[str] = []
+        args: list[Any] = []
+        if source:
+            clauses.append("source = ?")
+            args.append(source.value)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"SELECT payload FROM trade_imports {where} ORDER BY imported_at DESC LIMIT ?"
+        args.append(limit)
+        with self.connect() as conn:
+            rows = conn.execute(query, tuple(args)).fetchall()
+        return [TradeImport.model_validate_json(row["payload"]) for row in rows]
+
+    def add_trade_fills(self, fills: list[TradeFill]) -> list[TradeFill]:
+        inserted: list[TradeFill] = []
+        with self.connect() as conn:
+            for fill in fills:
+                cursor = conn.execute(
+                    """
+                    INSERT OR IGNORE INTO trade_fills(id, import_id, symbol, side, traded_at, raw_row_hash, payload)
+                    VALUES(?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        fill.id,
+                        fill.import_id,
+                        fill.symbol,
+                        fill.side.value,
+                        fill.traded_at.isoformat(),
+                        fill.raw_row_hash,
+                        self._dump(fill),
+                    ),
+                )
+                if cursor.rowcount:
+                    inserted.append(fill)
+        if fills:
+            self.audit(
+                "trade_fills_imported",
+                "trade_import",
+                fills[0].import_id,
+                {"submitted_count": len(fills), "inserted_count": len(inserted)},
+            )
+        return inserted
+
+    def list_trade_fills(
+        self,
+        *,
+        symbol: str | None = None,
+        side: TradeFillSide | None = None,
+        limit: int = 500,
+        ascending: bool = False,
+    ) -> list[TradeFill]:
+        clauses: list[str] = []
+        args: list[Any] = []
+        if symbol:
+            clauses.append("symbol = ?")
+            args.append(symbol.upper())
+        if side:
+            clauses.append("side = ?")
+            args.append(side.value)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        order = "ASC" if ascending else "DESC"
+        query = f"SELECT payload FROM trade_fills {where} ORDER BY traded_at {order}, id {order} LIMIT ?"
+        args.append(limit)
+        with self.connect() as conn:
+            rows = conn.execute(query, tuple(args)).fetchall()
+        return [TradeFill.model_validate_json(row["payload"]) for row in rows]
+
+    def replace_trade_roundtrips(self, roundtrips: list[TradeRoundTrip]) -> list[TradeRoundTrip]:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM trade_roundtrips")
+            for roundtrip in roundtrips:
+                conn.execute(
+                    """
+                    INSERT INTO trade_roundtrips(id, import_id, symbol, opened_at, closed_at, payload)
+                    VALUES(?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        roundtrip.id,
+                        roundtrip.import_id,
+                        roundtrip.symbol,
+                        roundtrip.opened_at.isoformat(),
+                        roundtrip.closed_at.isoformat(),
+                        self._dump(roundtrip),
+                    ),
+                )
+        self.audit(
+            "trade_roundtrips_rebuilt",
+            "trade_roundtrip",
+            "fifo",
+            {"roundtrip_count": len(roundtrips), "pairing_method": "fifo"},
+        )
+        return roundtrips
+
+    def list_trade_roundtrips(self, *, symbol: str | None = None, limit: int = 500) -> list[TradeRoundTrip]:
+        clauses: list[str] = []
+        args: list[Any] = []
+        if symbol:
+            clauses.append("symbol = ?")
+            args.append(symbol.upper())
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"SELECT payload FROM trade_roundtrips {where} ORDER BY closed_at DESC LIMIT ?"
+        args.append(limit)
+        with self.connect() as conn:
+            rows = conn.execute(query, tuple(args)).fetchall()
+        return [TradeRoundTrip.model_validate_json(row["payload"]) for row in rows]
+
+    def create_behavior_report(self, report: BehaviorReport) -> BehaviorReport:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO behavior_reports(id, period_start, period_end, created_at, payload)
+                VALUES(?, ?, ?, ?, ?)
+                """,
+                (
+                    report.id,
+                    report.period_start.isoformat() if report.period_start else None,
+                    report.period_end.isoformat() if report.period_end else None,
+                    report.created_at.isoformat(),
+                    self._dump(report),
+                ),
+            )
+        self.audit(
+            "behavior_report_created",
+            "behavior_report",
+            report.id,
+            {
+                "total_trades": report.total_trades,
+                "total_roundtrips": report.total_roundtrips,
+                "run_card_id": report.run_card_id,
+            },
+        )
+        return report
+
+    def get_behavior_report(self, report_id: str) -> BehaviorReport | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT payload FROM behavior_reports WHERE id = ?", (report_id,)).fetchone()
+        return BehaviorReport.model_validate_json(row["payload"]) if row else None
+
+    def list_behavior_reports(
+        self,
+        *,
+        symbol: str | None = None,
+        limit: int = 50,
+    ) -> list[BehaviorReport]:
+        query = "SELECT payload FROM behavior_reports ORDER BY created_at DESC LIMIT ?"
+        with self.connect() as conn:
+            rows = conn.execute(query, (limit,)).fetchall()
+        reports = [BehaviorReport.model_validate_json(row["payload"]) for row in rows]
+        if symbol:
+            symbol = symbol.upper()
+            reports = [report for report in reports if symbol in report.symbols]
+        return reports
 
     def create_thesis(self, thesis: Thesis) -> Thesis:
         stored_thesis = thesis.model_copy(update={"updates": []})

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime, timezone
 
 from .autonomy import SafeAutonomyRunner, autonomy_status
 from .catalysts import CatalystCalendarService
@@ -15,17 +16,21 @@ from .ir_feeds import IrFeedIngestor
 from .market_news import MarketNewsIngestor
 from .models import (
     EarningsReviewRunRequest,
+    BehaviorReportRunRequest,
     ProposalCreate,
     RunCardActor,
     RunCardTriggerSource,
     RunCardType,
     Side,
+    TradeJournalImportRequest,
+    TradeJournalSource,
 )
 from .primary_sources import refresh_primary_sources
 from .proposal_drafts import ProposalDraftEngine
 from .run_cards import RunCardService
 from .sec_companyfacts import SecCompanyFactsIngestor
 from .sec_edgar import SecEdgarIngestor
+from .trade_journal import TradeJournalService
 
 
 def seed_main() -> None:
@@ -179,6 +184,58 @@ def show_run_card_main(run_card_id: str, kind: str | None = None) -> None:
     print(json.dumps(_json(RunCardService(get_store()).require_run_card(run_card_id)), indent=2, ensure_ascii=False))
 
 
+def import_trade_journal_main(path: str, source: str) -> None:
+    result = TradeJournalService(get_store()).import_csv(
+        TradeJournalImportRequest(path=path, source=TradeJournalSource(source)),
+        actor=RunCardActor.CLI,
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def behavior_report_main(
+    period_start: str | None = None,
+    period_end: str | None = None,
+    symbols: str | None = None,
+) -> None:
+    result = TradeJournalService(get_store()).run_behavior_report(
+        BehaviorReportRunRequest(
+            period_start=_parse_cli_datetime(period_start),
+            period_end=_parse_cli_datetime(period_end),
+            symbols=_parse_symbols(symbols),
+        ),
+        actor=RunCardActor.CLI,
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def list_behavior_reports_main(symbol: str | None = None, limit: int = 20) -> None:
+    print(json.dumps(_json(get_store().list_behavior_reports(symbol=symbol, limit=limit)), indent=2, ensure_ascii=False))
+
+
+def show_behavior_report_main(report_id: str) -> None:
+    item = get_store().get_behavior_report(report_id)
+    if not item:
+        raise SystemExit(f"behavior report not found: {report_id}")
+    print(json.dumps(_json(item), indent=2, ensure_ascii=False))
+
+
+def list_trade_roundtrips_main(symbol: str | None = None, limit: int = 20) -> None:
+    print(json.dumps(_json(get_store().list_trade_roundtrips(symbol=symbol, limit=limit)), indent=2, ensure_ascii=False))
+
+
+def _parse_cli_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    parsed = datetime.fromisoformat(value)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _parse_symbols(value: str | None) -> list[str] | None:
+    if not value:
+        return None
+    return [item.strip().upper() for item in value.split(",") if item.strip()]
+
+
 def _json(value):
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
@@ -214,9 +271,14 @@ def main() -> None:
             "list-earnings-reviews",
             "list-run-cards",
             "show-run-card",
+            "import-trade-journal",
+            "behavior-report",
+            "list-behavior-reports",
+            "show-behavior-report",
+            "list-trade-roundtrips",
         ],
     )
-    parser.add_argument("--path", default=str(DEFAULT_REPLAY_PATH))
+    parser.add_argument("--path", default=None)
     parser.add_argument("--days", type=int, default=None)
     parser.add_argument("--symbol", default=None)
     parser.add_argument("--catalyst-id", default=None)
@@ -224,6 +286,11 @@ def main() -> None:
     parser.add_argument("--thesis-id", default=None)
     parser.add_argument("--run-type", default=None)
     parser.add_argument("--run-card-id", default=None)
+    parser.add_argument("--source", default="futu_csv")
+    parser.add_argument("--period-start", default=None)
+    parser.add_argument("--period-end", default=None)
+    parser.add_argument("--symbols", default=None)
+    parser.add_argument("--report-id", default=None)
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--kind", default=None)
     args = parser.parse_args()
@@ -271,6 +338,20 @@ def main() -> None:
         if not args.run_card_id:
             parser.error("--run-card-id is required for show-run-card")
         show_run_card_main(args.run_card_id, args.kind)
+    if args.command == "import-trade-journal":
+        if not args.path:
+            parser.error("--path is required for import-trade-journal")
+        import_trade_journal_main(args.path, args.source)
+    if args.command == "behavior-report":
+        behavior_report_main(args.period_start, args.period_end, args.symbols)
+    if args.command == "list-behavior-reports":
+        list_behavior_reports_main(args.symbol, args.limit)
+    if args.command == "show-behavior-report":
+        if not args.report_id:
+            parser.error("--report-id is required for show-behavior-report")
+        show_behavior_report_main(args.report_id)
+    if args.command == "list-trade-roundtrips":
+        list_trade_roundtrips_main(args.symbol, args.limit)
 
 
 if __name__ == "__main__":

@@ -705,6 +705,74 @@ research_run_cards
 - artifacts_json
 - started_at
 - completed_at
+
+trade_imports
+- id
+- source: futu_csv | generic_csv
+- filename
+- file_hash
+- imported_at
+- imported_by
+- row_count
+- parse_warnings_json
+- run_card_id
+
+trade_fills
+- id
+- import_id
+- broker
+- broker_order_id nullable
+- broker_trade_id nullable
+- symbol
+- broker_symbol
+- side: buy | sell
+- qty
+- price
+- fees
+- currency
+- market
+- traded_at
+- raw_row_hash
+- raw_json
+- created_at
+
+trade_roundtrips
+- id
+- import_id nullable
+- symbol
+- opened_at
+- closed_at
+- qty
+- buy_price
+- sell_price
+- buy_fees
+- sell_fees
+- holding_days
+- realized_pnl
+- realized_pnl_pct
+- currency
+- pairing_method
+- created_at
+
+behavior_reports
+- id
+- period_start nullable
+- period_end nullable
+- symbols_json
+- total_trades
+- total_roundtrips
+- win_rate
+- profit_loss_ratio
+- avg_holding_days
+- trade_frequency_per_week
+- total_realized_pnl
+- max_drawdown
+- top_symbols_json
+- hourly_distribution_json
+- market_distribution_json
+- diagnostics_json
+- run_card_id
+- created_at
 ```
 
 **新的 proposal flow**
@@ -750,11 +818,13 @@ src/invest_agent/thesis_tracker.py
 src/invest_agent/catalysts.py
 src/invest_agent/earnings_review.py
 src/invest_agent/run_cards.py
+src/invest_agent/trade_journal.py
 tests/test_research_goals.py
 tests/test_thesis_tracker.py
 tests/test_catalysts.py
 tests/test_earnings_review.py
 tests/test_run_cards.py
+tests/test_trade_journal.py
 ```
 
 **下一步**
@@ -765,6 +835,7 @@ tests/test_run_cards.py
 4. Catalyst Calendar 已落地第一版：earnings、investor day、product、regulatory、macro、conference、expected impact、post-event review，並在 proposal creation 前做 catalyst invariant。
 5. Earnings Review 已落地第一版：本機 SEC companyfacts → deterministic YoY scoring → catalyst review / thesis delta artifact，不產生 approval 或 execution。
 6. Run Card / Trust Layer artifact 已落地第一版：earnings review、catalyst review、event replay 會輸出可 hash、可讀、可掛 evidence 的 JSON/Markdown artifact；Hermes 只能 read-only 查詢。
-7. 下一步新增 Trade Journal / Behavior Report：先支援 Futu CSV export 的 FIFO roundtrip、win rate、PnL ratio、drawdown、overtrading。
-8. 將 Vibe / backtest sidecar 保持為 research-only adapter，輸出 run card 到 evidence ledger，不接 approval/execution。
-9. 最後才碰 live path：Keychain、雙 OpenD、atomic approval、idempotency、broker-side revalidation、order/deal reconciliation。
+7. Trade Journal / Behavior Report 已落地第一版：Futu/generic CSV import、file-hash idempotency、FIFO roundtrip、win rate、PnL ratio、drawdown、disposition / overtrading / chasing / anchoring diagnostics；Hermes 只能 read-only 查詢。
+8. 下一步新增 Shadow Account / Counterfactual Report：從 imported fills 和 behavior reports 抽取隱含交易規則，但仍只輸出 research artifact。
+9. 將 Vibe / backtest sidecar 保持為 research-only adapter，輸出 run card 到 evidence ledger，不接 approval/execution。
+10. 最後才碰 live path：Keychain、雙 OpenD、atomic approval、idempotency、broker-side revalidation、order/deal reconciliation。
