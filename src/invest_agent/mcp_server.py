@@ -6,18 +6,40 @@ from mcp.server.fastmcp import FastMCP
 
 from .advisor import AdvisorService
 from .autonomy import SafeAutonomyRunner, autonomy_status
+from .committee_reviews import CommitteeReviewService
+from .daily_briefs import DailyBriefService
+from .data_quality import DataQualityService
+from .dividend_lens import DividendLensService
 from .catalysts import CatalystCalendarService, mcp_catalyst_request
 from .deps import get_service, get_store
 from .config import get_settings
+from .earnings_preview import EarningsPreviewService
 from .earnings_review import EarningsReviewService
 from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event_file as replay_events_from_file
 from .futu_adapter import get_futu_status, refresh_futu_readonly
+from .hypotheses import HypothesisRegistryService
+from .idea_inbox import IdeaInboxService
 from .ir_feeds import IrFeedIngestor
 from .market_context import MarketContextService
 from .market_regime import MarketRegimeService
 from .market_news import MarketNewsIngestor, external_ticker, resolve_watchlist_symbols
+from .options_lens import OptionsLensService
+from .portfolio_studio import PortfolioStudioService
+from .quote_history import QuoteHistoryService
+from .sector_lens import SectorLensService
 from .models import (
     AdvisorBriefRequest,
+    CommitteeReviewRunRequest,
+    CorrelationRunRequest,
+    DailyBriefRunRequest,
+    DataQualityRunRequest,
+    DividendReviewRunRequest,
+    EarningsPreviewRunRequest,
+    HypothesisCreate,
+    HypothesisInvalidateRequest,
+    HypothesisLinkCreate,
+    HypothesisLinkType,
+    HypothesisScope,
     ProposalCreate,
     ProposalStatus,
     CatalystCompleteRequest,
@@ -45,6 +67,11 @@ from .models import (
     ThesisSide,
     ThesisStatus,
     ThesisUpdateCreate,
+    OptionsSnapshotCreate,
+    PeerGroupCreate,
+    SectorSnapshotRunRequest,
+    IdeaCandidateCreate,
+    IdeaScreenRunRequest,
 )
 from .primary_sources import refresh_primary_sources
 from .proposal_drafts import ProposalDraftEngine
@@ -260,6 +287,84 @@ def get_research_goal_snapshot(goal_id: str) -> dict:
 
 
 @mcp.tool()
+def list_hypotheses(symbol: str | None = None, limit: int = 20) -> list[dict]:
+    """List durable research hypotheses. Read-only; hypotheses cannot create proposals."""
+    return _json(get_store().list_hypotheses(symbol=symbol, limit=limit))
+
+
+@mcp.tool()
+def get_hypothesis(hypothesis_id: str) -> dict:
+    """Return one research hypothesis with links."""
+    item = get_store().get_hypothesis(hypothesis_id)
+    return _json(item) if item else {"error": f"hypothesis not found: {hypothesis_id}"}
+
+
+@mcp.tool()
+def create_hypothesis_draft(
+    title: str,
+    statement: str,
+    scope: Literal["symbol", "sector", "portfolio", "macro", "behavior", "strategy"] = "symbol",
+    symbols: list[str] | None = None,
+    confidence: float = 0.5,
+) -> dict:
+    """Create an unconfirmed research hypothesis draft. It cannot create or approve proposals."""
+    return _json(
+        HypothesisRegistryService(get_store()).create(
+            HypothesisCreate(
+                title=title,
+                statement=statement,
+                scope=HypothesisScope(scope),
+                symbols=symbols or [],
+                confidence=confidence,
+            ),
+            actor=RunCardActor.MCP,
+        )
+    )
+
+
+@mcp.tool()
+def link_run_card_to_hypothesis(hypothesis_id: str, run_card_id: str) -> dict:
+    """Link an existing run card to a hypothesis as supplementary research evidence."""
+    try:
+        return _json(
+            HypothesisRegistryService(get_store()).link(
+                hypothesis_id,
+                HypothesisLinkCreate(linked_type=HypothesisLinkType.RUN_CARD, linked_id=run_card_id),
+            )
+        )
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def invalidate_hypothesis(hypothesis_id: str, invalidation_note: str) -> dict:
+    """Invalidate a research hypothesis. This is research state only and cannot approve trades."""
+    try:
+        return _json(HypothesisRegistryService(get_store()).invalidate(hypothesis_id, HypothesisInvalidateRequest(invalidation_note=invalidation_note)))
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def get_portfolio_risk_snapshot(limit: int = 1) -> list[dict]:
+    """Return recent portfolio risk snapshots. Read-only and not a proposal source."""
+    return _json(get_store().list_portfolio_risk_snapshots(limit=limit))
+
+
+@mcp.tool()
+def list_rebalance_reviews(limit: int = 10) -> list[dict]:
+    """List rebalance reviews and candidates. Candidates are not proposals."""
+    return _json(get_store().list_rebalance_reviews(limit=limit))
+
+
+@mcp.tool()
+def get_rebalance_review(review_id: str) -> dict:
+    """Return one rebalance review."""
+    item = get_store().get_rebalance_review(review_id)
+    return _json(item) if item else {"error": f"rebalance review not found: {review_id}"}
+
+
+@mcp.tool()
 def create_thesis(
     symbol: str,
     thesis_statement: str,
@@ -388,6 +493,43 @@ def complete_catalyst_with_research_goal(catalyst_id: str, actual_outcome_summar
 
 
 @mcp.tool()
+def run_earnings_preview(
+    symbol: str,
+    catalyst_id: str | None = None,
+    thesis_id: str | None = None,
+    implied_move_pct: float | None = None,
+) -> dict:
+    """Run a research-only pre-earnings preview. It cannot create proposals."""
+    try:
+        return _json(
+            EarningsPreviewService(get_store()).run_preview(
+                EarningsPreviewRunRequest(
+                    symbol=symbol,
+                    catalyst_id=catalyst_id,
+                    thesis_id=thesis_id,
+                    implied_move_pct=implied_move_pct,
+                ),
+                actor=RunCardActor.MCP,
+            )
+        )
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def list_earnings_previews(symbol: str | None = None, limit: int = 20) -> list[dict]:
+    """List pre-earnings preview artifacts."""
+    return _json(get_store().list_earnings_previews(symbol=symbol, limit=limit))
+
+
+@mcp.tool()
+def get_earnings_preview(preview_id: str) -> dict:
+    """Return one earnings preview artifact."""
+    item = get_store().get_earnings_preview(preview_id)
+    return _json(item) if item else {"error": f"earnings preview not found: {preview_id}"}
+
+
+@mcp.tool()
 def run_earnings_review(
     symbol: str,
     catalyst_id: str | None = None,
@@ -440,6 +582,23 @@ def list_run_cards(
         "earnings_review",
         "catalyst_review",
         "event_replay",
+        "market_regime",
+        "hypothesis_review",
+        "portfolio_risk",
+        "rebalance_review",
+        "earnings_preview",
+        "quote_history_import",
+        "external_backtest_import",
+        "data_import",
+        "daily_brief",
+        "correlation_snapshot",
+        "sector_snapshot",
+        "options_snapshot",
+        "dividend_review",
+        "idea_screen",
+        "committee_review",
+        "skill_validation",
+        "data_quality_report",
         "trade_journal_import",
         "behavior_report",
         "shadow_strategy_extract",
@@ -474,6 +633,217 @@ def get_run_card_artifact(run_card_id: str, kind: Literal["json", "markdown"] = 
         return {"run_card_id": run_card_id, "kind": kind, "text": RunCardService(get_store()).get_artifact_text(run_card_id, kind=kind)}
     except ValueError as exc:
         return {"error": str(exc)}
+
+
+@mcp.tool()
+def list_quote_history(symbol: str | None = None, limit: int = 20) -> list[dict]:
+    """List quote-history imports. Read-only; MCP cannot refresh local files."""
+    return _json(get_store().list_quote_history_imports(symbol=symbol, limit=limit))
+
+
+@mcp.tool()
+def get_quote_history_summary(symbol: str | None = None) -> dict:
+    """Return cached quote-history coverage summary. It is diagnostic only."""
+    return QuoteHistoryService(get_store()).summary(symbol=symbol)
+
+
+@mcp.tool()
+def list_backtest_imports(limit: int = 20) -> list[dict]:
+    """List external backtest imports. Imported backtests are supplementary evidence only."""
+    return _json(get_store().list_external_backtest_imports(limit=limit))
+
+
+@mcp.tool()
+def get_backtest_import(import_id: str) -> dict:
+    """Return one external backtest import."""
+    item = get_store().get_external_backtest_import(import_id)
+    return _json(item) if item else {"error": f"backtest import not found: {import_id}"}
+
+
+@mcp.tool()
+def list_data_imports(limit: int = 20) -> list[dict]:
+    """List safe local data imports. MCP cannot import arbitrary files."""
+    return _json(get_store().list_data_imports(limit=limit))
+
+
+@mcp.tool()
+def get_data_import_summary(import_id: str) -> dict:
+    """Return one data import summary."""
+    item = get_store().get_data_import(import_id)
+    return _json(item) if item else {"error": f"data import not found: {import_id}"}
+
+
+@mcp.tool()
+def get_latest_daily_brief() -> dict:
+    """Return the latest daily brief. Briefs do not create proposals."""
+    items = get_store().list_daily_briefs(limit=1)
+    return _json(items[0]) if items else {"error": "daily brief not found"}
+
+
+@mcp.tool()
+def list_daily_briefs(limit: int = 20) -> list[dict]:
+    """List daily research delivery briefs."""
+    return _json(get_store().list_daily_briefs(limit=limit))
+
+
+@mcp.tool()
+def list_peer_groups(sector: str | None = None, limit: int = 20) -> list[dict]:
+    """List peer groups used for sector/correlation context."""
+    return _json(get_store().list_peer_groups(sector=sector, limit=limit))
+
+
+@mcp.tool()
+def get_correlation_snapshot(snapshot_id: str | None = None) -> dict:
+    """Return a correlation snapshot. Correlation only adds context/warnings."""
+    if snapshot_id:
+        item = get_store().get_correlation_snapshot(snapshot_id)
+    else:
+        items = get_store().list_correlation_snapshots(limit=1)
+        item = items[0] if items else None
+    return _json(item) if item else {"error": "correlation snapshot not found"}
+
+
+@mcp.tool()
+def get_sector_snapshot(snapshot_id: str | None = None) -> dict:
+    """Return a sector snapshot. Sector data cannot create proposals."""
+    if snapshot_id:
+        item = get_store().get_sector_snapshot(snapshot_id)
+    else:
+        items = get_store().list_sector_snapshots(limit=1)
+        item = items[0] if items else None
+    return _json(item) if item else {"error": "sector snapshot not found"}
+
+
+@mcp.tool()
+def list_options_snapshots(symbol: str | None = None, limit: int = 20) -> list[dict]:
+    """List options implied-move snapshots. MCP reads context but does not trade options."""
+    return _json(get_store().list_options_snapshots(symbol=symbol, limit=limit))
+
+
+@mcp.tool()
+def get_options_snapshot(symbol: str) -> dict:
+    """Return the latest options snapshot for a symbol."""
+    items = get_store().list_options_snapshots(symbol=symbol, limit=1)
+    return _json(items[0]) if items else {"error": f"options snapshot not found for {symbol.upper()}"}
+
+
+@mcp.tool()
+def run_dividend_review(
+    symbol: str,
+    dividend_yield: float | None = None,
+    payout_ratio: float | None = None,
+    dividend_growth_3y: float | None = None,
+    fcf_coverage: float | None = None,
+    thesis_id: str | None = None,
+) -> dict:
+    """Run a research-only dividend review. High yield alone cannot create a BUY proposal."""
+    return _json(
+        DividendLensService(get_store()).run_review(
+            DividendReviewRunRequest(
+                symbol=symbol,
+                dividend_yield=dividend_yield,
+                payout_ratio=payout_ratio,
+                dividend_growth_3y=dividend_growth_3y,
+                fcf_coverage=fcf_coverage,
+                thesis_id=thesis_id,
+            ),
+            actor=RunCardActor.MCP,
+        )
+    )
+
+
+@mcp.tool()
+def list_dividend_reviews(symbol: str | None = None, limit: int = 20) -> list[dict]:
+    """List dividend review artifacts."""
+    return _json(get_store().list_dividend_reviews(symbol=symbol, limit=limit))
+
+
+@mcp.tool()
+def get_dividend_review(review_id: str) -> dict:
+    """Return one dividend review artifact."""
+    items = [item for item in get_store().list_dividend_reviews(limit=200) if item.id == review_id]
+    return _json(items[0]) if items else {"error": f"dividend review not found: {review_id}"}
+
+
+@mcp.tool()
+def list_idea_candidates(symbol: str | None = None, limit: int = 20) -> list[dict]:
+    """List idea inbox candidates. Ideas cannot create proposals directly."""
+    return _json(get_store().list_idea_candidates(symbol=symbol, limit=limit))
+
+
+@mcp.tool()
+def get_idea_candidate(candidate_id: str) -> dict:
+    """Return one idea candidate."""
+    item = get_store().get_idea_candidate(candidate_id)
+    return _json(item) if item else {"error": f"idea candidate not found: {candidate_id}"}
+
+
+@mcp.tool()
+def create_idea_candidate_draft(
+    symbol: str,
+    one_line_thesis: str,
+    direction: Literal["long", "short", "neutral_watch"] = "neutral_watch",
+    score: float = 0.0,
+) -> dict:
+    """Create a draft idea candidate. It cannot become a proposal without research-goal and evidence-gate flow."""
+    from .models import IdeaDirection
+
+    return _json(
+        IdeaInboxService(get_settings(), get_store()).create_candidate(
+            IdeaCandidateCreate(symbol=symbol, one_line_thesis=one_line_thesis, direction=IdeaDirection(direction), score=score)
+        )
+    )
+
+
+@mcp.tool()
+def run_committee_review(
+    topic: str,
+    research_goal_id: str | None = None,
+    hypothesis_id: str | None = None,
+    bull_case: str = "",
+    bear_case: str = "",
+    risk_memo: str = "",
+) -> dict:
+    """Create a committee-style research memo. It cannot approve or create pending proposals."""
+    return _json(
+        CommitteeReviewService(get_store()).run_review(
+            CommitteeReviewRunRequest(
+                topic=topic,
+                research_goal_id=research_goal_id,
+                hypothesis_id=hypothesis_id,
+                bull_case=bull_case,
+                bear_case=bear_case,
+                risk_memo=risk_memo,
+            ),
+            actor=RunCardActor.MCP,
+        )
+    )
+
+
+@mcp.tool()
+def list_committee_reviews(limit: int = 20) -> list[dict]:
+    """List committee review memos."""
+    return _json(get_store().list_committee_reviews(limit=limit))
+
+
+@mcp.tool()
+def get_committee_review(review_id: str) -> dict:
+    """Return one committee review memo."""
+    item = get_store().get_committee_review(review_id)
+    return _json(item) if item else {"error": f"committee review not found: {review_id}"}
+
+
+@mcp.tool()
+def list_data_quality_reports(limit: int = 20) -> list[dict]:
+    """List data quality reports. QA only raises warnings and cannot create proposals."""
+    return _json(get_store().list_data_quality_reports(limit=limit))
+
+
+@mcp.tool()
+def get_data_quality_report(report_id: str) -> dict:
+    """Return one data quality report."""
+    item = get_store().get_data_quality_report(report_id)
+    return _json(item) if item else {"error": f"data quality report not found: {report_id}"}
 
 
 @mcp.tool()

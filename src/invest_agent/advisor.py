@@ -61,6 +61,7 @@ class AdvisorService:
         advice: list[AdvisorBriefItem] = []
         advice.extend(_market_context_advice(market_context))
         advice.extend(_market_regime_advice(market_regime))
+        advice.extend(_correlation_advice(self.store.list_correlation_snapshots(limit=1)))
         advice.extend(_pending_proposal_advice(pending))
         advice.extend(_catalyst_advice(catalysts))
         advice.extend(_earnings_advice(earnings_reviews))
@@ -178,6 +179,24 @@ def _market_regime_advice(regime) -> list[AdvisorBriefItem]:
             rationale=" ".join([regime.summary, *regime.drivers[:3], *regime.warnings[:1]]).strip(),
             next_action="把 regime 當成新 BUY proposal 的審批背景；它不會建立 proposal，也不會批准或下單。",
             related_ids=regime.symbols[:8],
+        )
+    ]
+
+
+def _correlation_advice(snapshots) -> list[AdvisorBriefItem]:
+    if not snapshots:
+        return []
+    snapshot = snapshots[0]
+    if not snapshot.warnings:
+        return []
+    return [
+        AdvisorBriefItem(
+            severity=AdvisorSeverity.WATCH,
+            category="correlation",
+            title="同業 / 相關性風險偏高",
+            rationale=" ".join(snapshot.warnings[:2]),
+            next_action="把高相關性視為集中度警示；它不會建立 proposal，也不會放寬 evidence gate。",
+            related_ids=snapshot.symbols[:8],
         )
     ]
 

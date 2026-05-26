@@ -7,30 +7,61 @@ from typing import Any
 
 from .models import (
     AuditEvent,
+    BacktestImportRequest,
     BehaviorReport,
     Catalyst,
     CatalystReview,
     CatalystStatus,
+    CommitteeReview,
+    CorrelationSnapshot,
+    DailyBrief,
+    DataImport,
+    DataQualityReport,
+    DataQualityTargetType,
+    DataSchema,
+    DividendReview,
     EarningsReview,
+    EarningsPreview,
     ExecutionRecord,
+    ExternalBacktestImport,
+    ExternalBacktestValidationStatus,
     FundamentalSnapshot,
+    HypothesisLink,
+    HypothesisLinkType,
+    HypothesisStatus,
+    IdeaCandidate,
+    IdeaCandidateStatus,
+    IdeaScreen,
     MarketRegimeSnapshot,
     NewsItem,
+    OptionsSnapshot,
+    PeerGroup,
     PortfolioSnapshot,
+    PortfolioRiskSnapshot,
+    PortfolioTarget,
+    PriceBar,
     Proposal,
     ProposalStatus,
+    QuoteHistoryImport,
+    QuoteHistorySource,
     Quote,
+    RebalanceCandidate,
+    RebalanceCandidateStatus,
+    RebalanceReview,
     ResearchEvidence,
     ResearchGoal,
     ResearchGoalStatus,
+    ResearchHypothesis,
     ResearchRunCard,
     RunCardStatus,
     RunCardType,
+    SectorSnapshot,
     ShadowEvent,
     ShadowReport,
     ShadowRule,
     ShadowStrategy,
     ShadowStrategyStatus,
+    SymbolClassification,
     Thesis,
     ThesisPillar,
     ThesisRisk,
@@ -218,6 +249,177 @@ class Store:
                     payload TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS research_hypotheses (
+                    id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS hypothesis_links (
+                    id TEXT PRIMARY KEY,
+                    hypothesis_id TEXT NOT NULL,
+                    linked_type TEXT NOT NULL,
+                    linked_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    FOREIGN KEY (hypothesis_id) REFERENCES research_hypotheses(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS portfolio_targets (
+                    id TEXT PRIMARY KEY,
+                    asset_class TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS symbol_classifications (
+                    symbol TEXT PRIMARY KEY,
+                    asset_class TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS portfolio_risk_snapshots (
+                    id TEXT PRIMARY KEY,
+                    as_of TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS rebalance_reviews (
+                    id TEXT PRIMARY KEY,
+                    as_of TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS rebalance_candidates (
+                    id TEXT PRIMARY KEY,
+                    review_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    FOREIGN KEY (review_id) REFERENCES rebalance_reviews(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS earnings_previews (
+                    id TEXT PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    catalyst_id TEXT,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS quote_history_imports (
+                    id TEXT PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    input_hash TEXT NOT NULL,
+                    dataset_hash TEXT NOT NULL,
+                    imported_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS price_bars (
+                    id TEXT PRIMARY KEY,
+                    import_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    ts TEXT NOT NULL,
+                    row_hash TEXT NOT NULL UNIQUE,
+                    payload TEXT NOT NULL,
+                    FOREIGN KEY (import_id) REFERENCES quote_history_imports(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS external_backtest_imports (
+                    id TEXT PRIMARY KEY,
+                    run_card_hash TEXT NOT NULL,
+                    validation_status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS data_schemas (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS data_imports (
+                    id TEXT PRIMARY KEY,
+                    file_hash TEXT NOT NULL,
+                    schema_name TEXT NOT NULL,
+                    imported_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS daily_briefs (
+                    id TEXT PRIMARY KEY,
+                    date TEXT NOT NULL,
+                    brief_type TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS peer_groups (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    sector TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS correlation_snapshots (
+                    id TEXT PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS sector_snapshots (
+                    id TEXT PRIMARY KEY,
+                    sector TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS options_snapshots (
+                    id TEXT PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    expiry TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS dividend_reviews (
+                    id TEXT PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS idea_screens (
+                    id TEXT PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS idea_candidates (
+                    id TEXT PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS committee_reviews (
+                    id TEXT PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS data_quality_reports (
+                    id TEXT PRIMARY KEY,
+                    target_type TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS trade_imports (
                     id TEXT PRIMARY KEY,
                     source TEXT NOT NULL,
@@ -305,6 +507,66 @@ class Store:
         columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in columns:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    def _insert_payload(
+        self,
+        table: str,
+        columns: list[str],
+        values: list[Any],
+        model: Any,
+        *,
+        audit_event: str,
+        entity_type: str,
+        entity_id: str,
+        audit_payload: dict[str, Any] | None = None,
+        or_ignore: bool = False,
+    ) -> None:
+        names = [*columns, "payload"]
+        placeholders = ", ".join("?" for _ in names)
+        verb = "INSERT OR IGNORE" if or_ignore else "INSERT"
+        with self.connect() as conn:
+            conn.execute(
+                f"{verb} INTO {table}({', '.join(names)}) VALUES({placeholders})",
+                (*values, self._dump(model)),
+            )
+        self.audit(audit_event, entity_type, entity_id, audit_payload or {})
+
+    def _update_payload(
+        self,
+        table: str,
+        key_column: str,
+        key_value: Any,
+        columns: list[str],
+        values: list[Any],
+        model: Any,
+    ) -> None:
+        assignments = ", ".join([*(f"{column} = ?" for column in columns), "payload = ?"])
+        with self.connect() as conn:
+            conn.execute(
+                f"UPDATE {table} SET {assignments} WHERE {key_column} = ?",
+                (*values, self._dump(model), key_value),
+            )
+
+    def _get_payload(self, table: str, model_type: type[Any], key_column: str, key_value: Any) -> Any | None:
+        with self.connect() as conn:
+            row = conn.execute(f"SELECT payload FROM {table} WHERE {key_column} = ?", (key_value,)).fetchone()
+        return model_type.model_validate_json(row["payload"]) if row else None
+
+    def _list_payloads(
+        self,
+        table: str,
+        model_type: type[Any],
+        *,
+        where: str = "",
+        args: tuple[Any, ...] = (),
+        order_by: str = "id DESC",
+        limit: int = 50,
+    ) -> list[Any]:
+        prefix = f"WHERE {where}" if where else ""
+        query = f"SELECT payload FROM {table} {prefix} ORDER BY {order_by} LIMIT ?"
+        with self.connect() as conn:
+            rows = conn.execute(query, (*args, limit)).fetchall()
+        return [model_type.model_validate_json(row["payload"]) for row in rows]
 
     def upsert_portfolio(self, snapshot: PortfolioSnapshot) -> None:
         with self.connect() as conn:
@@ -634,6 +896,629 @@ class Store:
     def get_latest_market_regime_snapshot(self) -> MarketRegimeSnapshot | None:
         snapshots = self.list_market_regime_snapshots(limit=1)
         return snapshots[0] if snapshots else None
+
+    def create_hypothesis(self, item: ResearchHypothesis) -> ResearchHypothesis:
+        stored = item.model_copy(update={"links": []})
+        self._insert_payload(
+            "research_hypotheses",
+            ["id", "status", "updated_at"],
+            [stored.id, stored.status.value, stored.updated_at.isoformat()],
+            stored,
+            audit_event="research_hypothesis_created",
+            entity_type="research_hypothesis",
+            entity_id=stored.id,
+            audit_payload={"status": stored.status.value, "symbols": stored.symbols},
+        )
+        return self.get_hypothesis(stored.id) or item
+
+    def update_hypothesis(self, item: ResearchHypothesis, event_type: str = "research_hypothesis_updated") -> ResearchHypothesis:
+        stored = item.model_copy(update={"links": []})
+        self._update_payload(
+            "research_hypotheses",
+            "id",
+            stored.id,
+            ["status", "updated_at"],
+            [stored.status.value, stored.updated_at.isoformat()],
+            stored,
+        )
+        self.audit(event_type, "research_hypothesis", stored.id, {"status": stored.status.value})
+        return self.get_hypothesis(stored.id) or item
+
+    def get_hypothesis(self, hypothesis_id: str) -> ResearchHypothesis | None:
+        item = self._get_payload("research_hypotheses", ResearchHypothesis, "id", hypothesis_id)
+        if item:
+            item.links = self.list_hypothesis_links(hypothesis_id)
+        return item
+
+    def list_hypotheses(
+        self,
+        *,
+        status: HypothesisStatus | None = None,
+        symbol: str | None = None,
+        limit: int = 50,
+    ) -> list[ResearchHypothesis]:
+        clauses: list[str] = []
+        args: list[Any] = []
+        if status:
+            clauses.append("status = ?")
+            args.append(status.value)
+        items = self._list_payloads(
+            "research_hypotheses",
+            ResearchHypothesis,
+            where=" AND ".join(clauses),
+            args=tuple(args),
+            order_by="updated_at DESC",
+            limit=limit,
+        )
+        if symbol:
+            ticker = symbol.upper()
+            items = [item for item in items if ticker in item.symbols]
+        for item in items:
+            item.links = self.list_hypothesis_links(item.id)
+        return items
+
+    def add_hypothesis_link(self, item: HypothesisLink) -> HypothesisLink:
+        if not self.get_hypothesis(item.hypothesis_id):
+            raise ValueError(f"hypothesis not found: {item.hypothesis_id}")
+        self._insert_payload(
+            "hypothesis_links",
+            ["id", "hypothesis_id", "linked_type", "linked_id", "created_at"],
+            [item.id, item.hypothesis_id, item.linked_type.value, item.linked_id, item.created_at.isoformat()],
+            item,
+            audit_event="hypothesis_link_created",
+            entity_type="research_hypothesis",
+            entity_id=item.hypothesis_id,
+            audit_payload={"linked_type": item.linked_type.value, "linked_id": item.linked_id},
+        )
+        return item
+
+    def list_hypothesis_links(
+        self,
+        hypothesis_id: str | None = None,
+        *,
+        linked_type: HypothesisLinkType | None = None,
+        limit: int = 100,
+    ) -> list[HypothesisLink]:
+        clauses: list[str] = []
+        args: list[Any] = []
+        if hypothesis_id:
+            clauses.append("hypothesis_id = ?")
+            args.append(hypothesis_id)
+        if linked_type:
+            clauses.append("linked_type = ?")
+            args.append(linked_type.value)
+        return self._list_payloads(
+            "hypothesis_links",
+            HypothesisLink,
+            where=" AND ".join(clauses),
+            args=tuple(args),
+            order_by="created_at DESC",
+            limit=limit,
+        )
+
+    def upsert_portfolio_target(self, item: PortfolioTarget) -> PortfolioTarget:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO portfolio_targets(id, asset_class, payload) VALUES(?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET asset_class=excluded.asset_class, payload=excluded.payload
+                """,
+                (item.id, item.asset_class, self._dump(item)),
+            )
+        self.audit("portfolio_target_upserted", "portfolio_target", item.id, {"asset_class": item.asset_class})
+        return item
+
+    def list_portfolio_targets(self, limit: int = 100) -> list[PortfolioTarget]:
+        return self._list_payloads("portfolio_targets", PortfolioTarget, order_by="asset_class ASC", limit=limit)
+
+    def upsert_symbol_classification(self, item: SymbolClassification) -> SymbolClassification:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO symbol_classifications(symbol, asset_class, payload) VALUES(?, ?, ?)
+                ON CONFLICT(symbol) DO UPDATE SET asset_class=excluded.asset_class, payload=excluded.payload
+                """,
+                (item.symbol, item.asset_class, self._dump(item)),
+            )
+        self.audit("symbol_classification_upserted", "symbol_classification", item.symbol, {"asset_class": item.asset_class})
+        return item
+
+    def get_symbol_classification(self, symbol: str) -> SymbolClassification | None:
+        return self._get_payload("symbol_classifications", SymbolClassification, "symbol", symbol.upper())
+
+    def list_symbol_classifications(self, limit: int = 500) -> list[SymbolClassification]:
+        return self._list_payloads("symbol_classifications", SymbolClassification, order_by="symbol ASC", limit=limit)
+
+    def create_portfolio_risk_snapshot(self, item: PortfolioRiskSnapshot) -> PortfolioRiskSnapshot:
+        self._insert_payload(
+            "portfolio_risk_snapshots",
+            ["id", "as_of"],
+            [item.id, item.as_of.isoformat()],
+            item,
+            audit_event="portfolio_risk_snapshot_created",
+            entity_type="portfolio_risk",
+            entity_id=item.id,
+            audit_payload={"run_card_id": item.run_card_id, "top_5_weight": item.top_5_weight},
+        )
+        return item
+
+    def get_portfolio_risk_snapshot(self, snapshot_id: str) -> PortfolioRiskSnapshot | None:
+        return self._get_payload("portfolio_risk_snapshots", PortfolioRiskSnapshot, "id", snapshot_id)
+
+    def list_portfolio_risk_snapshots(self, limit: int = 20) -> list[PortfolioRiskSnapshot]:
+        return self._list_payloads("portfolio_risk_snapshots", PortfolioRiskSnapshot, order_by="as_of DESC", limit=limit)
+
+    def create_rebalance_review(self, review: RebalanceReview, candidates: list[RebalanceCandidate]) -> RebalanceReview:
+        stored = review.model_copy(update={"candidates": []})
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO rebalance_reviews(id, as_of, payload) VALUES(?, ?, ?)",
+                (stored.id, stored.as_of.isoformat(), self._dump(stored)),
+            )
+            for candidate in candidates:
+                conn.execute(
+                    "INSERT INTO rebalance_candidates(id, review_id, symbol, status, payload) VALUES(?, ?, ?, ?, ?)",
+                    (candidate.id, candidate.review_id, candidate.symbol, candidate.status.value, self._dump(candidate)),
+                )
+        self.audit(
+            "rebalance_review_created",
+            "rebalance_review",
+            review.id,
+            {"candidate_count": len(candidates), "action_bias": review.action_bias.value},
+        )
+        return self.get_rebalance_review(review.id) or review
+
+    def get_rebalance_review(self, review_id: str) -> RebalanceReview | None:
+        item = self._get_payload("rebalance_reviews", RebalanceReview, "id", review_id)
+        if item:
+            item.candidates = self.list_rebalance_candidates(review_id=review_id)
+        return item
+
+    def list_rebalance_reviews(self, limit: int = 20) -> list[RebalanceReview]:
+        items = self._list_payloads("rebalance_reviews", RebalanceReview, order_by="as_of DESC", limit=limit)
+        for item in items:
+            item.candidates = self.list_rebalance_candidates(review_id=item.id)
+        return items
+
+    def update_rebalance_candidate(self, item: RebalanceCandidate) -> RebalanceCandidate:
+        self._update_payload(
+            "rebalance_candidates",
+            "id",
+            item.id,
+            ["review_id", "symbol", "status"],
+            [item.review_id, item.symbol, item.status.value],
+            item,
+        )
+        self.audit("rebalance_candidate_updated", "rebalance_candidate", item.id, {"status": item.status.value})
+        return item
+
+    def get_rebalance_candidate(self, candidate_id: str) -> RebalanceCandidate | None:
+        return self._get_payload("rebalance_candidates", RebalanceCandidate, "id", candidate_id)
+
+    def list_rebalance_candidates(
+        self,
+        *,
+        review_id: str | None = None,
+        status: RebalanceCandidateStatus | None = None,
+        limit: int = 100,
+    ) -> list[RebalanceCandidate]:
+        clauses: list[str] = []
+        args: list[Any] = []
+        if review_id:
+            clauses.append("review_id = ?")
+            args.append(review_id)
+        if status:
+            clauses.append("status = ?")
+            args.append(status.value)
+        return self._list_payloads(
+            "rebalance_candidates",
+            RebalanceCandidate,
+            where=" AND ".join(clauses),
+            args=tuple(args),
+            order_by="id ASC",
+            limit=limit,
+        )
+
+    def create_earnings_preview(self, item: EarningsPreview) -> EarningsPreview:
+        self._insert_payload(
+            "earnings_previews",
+            ["id", "symbol", "catalyst_id", "created_at"],
+            [item.id, item.symbol, item.catalyst_id, item.created_at.isoformat()],
+            item,
+            audit_event="earnings_preview_created",
+            entity_type="earnings_preview",
+            entity_id=item.id,
+            audit_payload={"symbol": item.symbol, "catalyst_id": item.catalyst_id},
+        )
+        return item
+
+    def get_earnings_preview(self, preview_id: str) -> EarningsPreview | None:
+        return self._get_payload("earnings_previews", EarningsPreview, "id", preview_id)
+
+    def list_earnings_previews(self, *, symbol: str | None = None, catalyst_id: str | None = None, limit: int = 50) -> list[EarningsPreview]:
+        clauses: list[str] = []
+        args: list[Any] = []
+        if symbol:
+            clauses.append("symbol = ?")
+            args.append(symbol.upper())
+        if catalyst_id:
+            clauses.append("catalyst_id = ?")
+            args.append(catalyst_id)
+        return self._list_payloads(
+            "earnings_previews",
+            EarningsPreview,
+            where=" AND ".join(clauses),
+            args=tuple(args),
+            order_by="created_at DESC",
+            limit=limit,
+        )
+
+    def create_quote_history_import(self, item: QuoteHistoryImport, bars: list[PriceBar]) -> QuoteHistoryImport:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO quote_history_imports(id, symbol, input_hash, dataset_hash, imported_at, payload)
+                VALUES(?, ?, ?, ?, ?, ?)
+                """,
+                (item.id, item.symbol, item.input_hash, item.dataset_hash, item.imported_at.isoformat(), self._dump(item)),
+            )
+            for bar in bars:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO price_bars(id, import_id, symbol, ts, row_hash, payload)
+                    VALUES(?, ?, ?, ?, ?, ?)
+                    """,
+                    (bar.id, bar.import_id, bar.symbol, bar.ts.isoformat(), bar.row_hash, self._dump(bar)),
+                )
+        self.audit(
+            "quote_history_import_created",
+            "quote_history_import",
+            item.id,
+            {"symbol": item.symbol, "row_count": len(bars), "run_card_id": item.run_card_id},
+        )
+        return item
+
+    def list_quote_history_imports(self, *, symbol: str | None = None, limit: int = 50) -> list[QuoteHistoryImport]:
+        where = "symbol = ?" if symbol else ""
+        args: tuple[Any, ...] = (symbol.upper(),) if symbol else ()
+        return self._list_payloads(
+            "quote_history_imports",
+            QuoteHistoryImport,
+            where=where,
+            args=args,
+            order_by="imported_at DESC",
+            limit=limit,
+        )
+
+    def list_price_bars(
+        self,
+        *,
+        symbol: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
+        limit: int = 1000,
+        ascending: bool = True,
+    ) -> list[PriceBar]:
+        clauses: list[str] = []
+        args: list[Any] = []
+        if symbol:
+            clauses.append("symbol = ?")
+            args.append(symbol.upper())
+        if start:
+            clauses.append("ts >= ?")
+            args.append(start)
+        if end:
+            clauses.append("ts <= ?")
+            args.append(end)
+        order = "ASC" if ascending else "DESC"
+        return self._list_payloads(
+            "price_bars",
+            PriceBar,
+            where=" AND ".join(clauses),
+            args=tuple(args),
+            order_by=f"ts {order}",
+            limit=limit,
+        )
+
+    def create_external_backtest_import(self, item: ExternalBacktestImport) -> ExternalBacktestImport:
+        self._insert_payload(
+            "external_backtest_imports",
+            ["id", "run_card_hash", "validation_status", "created_at"],
+            [item.id, item.run_card_hash, item.validation_status.value, item.created_at.isoformat()],
+            item,
+            audit_event="external_backtest_import_created",
+            entity_type="external_backtest_import",
+            entity_id=item.id,
+            audit_payload={"source": item.source.value, "strategy_name": item.strategy_name},
+        )
+        return item
+
+    def get_external_backtest_import(self, import_id: str) -> ExternalBacktestImport | None:
+        return self._get_payload("external_backtest_imports", ExternalBacktestImport, "id", import_id)
+
+    def list_external_backtest_imports(
+        self,
+        *,
+        validation_status: ExternalBacktestValidationStatus | None = None,
+        limit: int = 50,
+    ) -> list[ExternalBacktestImport]:
+        where = "validation_status = ?" if validation_status else ""
+        args: tuple[Any, ...] = (validation_status.value,) if validation_status else ()
+        return self._list_payloads(
+            "external_backtest_imports",
+            ExternalBacktestImport,
+            where=where,
+            args=args,
+            order_by="created_at DESC",
+            limit=limit,
+        )
+
+    def upsert_data_schema(self, item: DataSchema) -> DataSchema:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO data_schemas(id, name, version, payload) VALUES(?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET name=excluded.name, version=excluded.version, payload=excluded.payload
+                """,
+                (item.id, item.name, item.version, self._dump(item)),
+            )
+        self.audit("data_schema_upserted", "data_schema", item.id, {"name": item.name, "version": item.version})
+        return item
+
+    def list_data_schemas(self, limit: int = 100) -> list[DataSchema]:
+        return self._list_payloads("data_schemas", DataSchema, order_by="name ASC, version ASC", limit=limit)
+
+    def create_data_import(self, item: DataImport) -> DataImport:
+        self._insert_payload(
+            "data_imports",
+            ["id", "file_hash", "schema_name", "imported_at"],
+            [item.id, item.file_hash, item.schema_name, item.imported_at.isoformat()],
+            item,
+            audit_event="data_import_created",
+            entity_type="data_import",
+            entity_id=item.id,
+            audit_payload={"schema_name": item.schema_name, "row_count": item.row_count},
+        )
+        return item
+
+    def get_data_import(self, import_id: str) -> DataImport | None:
+        return self._get_payload("data_imports", DataImport, "id", import_id)
+
+    def list_data_imports(self, *, schema_name: str | None = None, limit: int = 50) -> list[DataImport]:
+        where = "schema_name = ?" if schema_name else ""
+        args: tuple[Any, ...] = (schema_name,) if schema_name else ()
+        return self._list_payloads("data_imports", DataImport, where=where, args=args, order_by="imported_at DESC", limit=limit)
+
+    def create_daily_brief(self, item: DailyBrief) -> DailyBrief:
+        self._insert_payload(
+            "daily_briefs",
+            ["id", "date", "brief_type", "created_at"],
+            [item.id, item.date, item.brief_type.value, item.created_at.isoformat()],
+            item,
+            audit_event="daily_brief_created",
+            entity_type="daily_brief",
+            entity_id=item.id,
+            audit_payload={"brief_type": item.brief_type.value, "run_card_id": item.run_card_id},
+        )
+        return item
+
+    def get_daily_brief(self, brief_id: str) -> DailyBrief | None:
+        return self._get_payload("daily_briefs", DailyBrief, "id", brief_id)
+
+    def list_daily_briefs(self, limit: int = 50) -> list[DailyBrief]:
+        return self._list_payloads("daily_briefs", DailyBrief, order_by="created_at DESC", limit=limit)
+
+    def create_peer_group(self, item: PeerGroup) -> PeerGroup:
+        self._insert_payload(
+            "peer_groups",
+            ["id", "name", "sector", "created_at"],
+            [item.id, item.name, item.sector, item.created_at.isoformat()],
+            item,
+            audit_event="peer_group_created",
+            entity_type="peer_group",
+            entity_id=item.id,
+            audit_payload={"sector": item.sector, "symbols": item.symbols},
+        )
+        return item
+
+    def list_peer_groups(self, *, sector: str | None = None, limit: int = 50) -> list[PeerGroup]:
+        where = "sector = ?" if sector else ""
+        args: tuple[Any, ...] = (sector,) if sector else ()
+        return self._list_payloads("peer_groups", PeerGroup, where=where, args=args, order_by="created_at DESC", limit=limit)
+
+    def create_correlation_snapshot(self, item: CorrelationSnapshot) -> CorrelationSnapshot:
+        self._insert_payload(
+            "correlation_snapshots",
+            ["id", "created_at"],
+            [item.id, item.created_at.isoformat()],
+            item,
+            audit_event="correlation_snapshot_created",
+            entity_type="correlation_snapshot",
+            entity_id=item.id,
+            audit_payload={"symbols": item.symbols, "run_card_id": item.run_card_id},
+        )
+        return item
+
+    def get_correlation_snapshot(self, snapshot_id: str) -> CorrelationSnapshot | None:
+        return self._get_payload("correlation_snapshots", CorrelationSnapshot, "id", snapshot_id)
+
+    def list_correlation_snapshots(self, limit: int = 50) -> list[CorrelationSnapshot]:
+        return self._list_payloads("correlation_snapshots", CorrelationSnapshot, order_by="created_at DESC", limit=limit)
+
+    def create_sector_snapshot(self, item: SectorSnapshot) -> SectorSnapshot:
+        self._insert_payload(
+            "sector_snapshots",
+            ["id", "sector", "created_at"],
+            [item.id, item.sector, item.created_at.isoformat()],
+            item,
+            audit_event="sector_snapshot_created",
+            entity_type="sector_snapshot",
+            entity_id=item.id,
+            audit_payload={"sector": item.sector, "run_card_id": item.run_card_id},
+        )
+        return item
+
+    def get_sector_snapshot(self, snapshot_id: str) -> SectorSnapshot | None:
+        return self._get_payload("sector_snapshots", SectorSnapshot, "id", snapshot_id)
+
+    def list_sector_snapshots(self, *, sector: str | None = None, limit: int = 50) -> list[SectorSnapshot]:
+        where = "sector = ?" if sector else ""
+        args: tuple[Any, ...] = (sector,) if sector else ()
+        return self._list_payloads("sector_snapshots", SectorSnapshot, where=where, args=args, order_by="created_at DESC", limit=limit)
+
+    def create_options_snapshot(self, item: OptionsSnapshot) -> OptionsSnapshot:
+        self._insert_payload(
+            "options_snapshots",
+            ["id", "symbol", "expiry", "created_at"],
+            [item.id, item.symbol, item.expiry, item.created_at.isoformat()],
+            item,
+            audit_event="options_snapshot_created",
+            entity_type="options_snapshot",
+            entity_id=item.id,
+            audit_payload={"symbol": item.symbol, "implied_move_pct": item.implied_move_pct},
+        )
+        return item
+
+    def list_options_snapshots(self, *, symbol: str | None = None, limit: int = 50) -> list[OptionsSnapshot]:
+        where = "symbol = ?" if symbol else ""
+        args: tuple[Any, ...] = (symbol.upper(),) if symbol else ()
+        return self._list_payloads("options_snapshots", OptionsSnapshot, where=where, args=args, order_by="created_at DESC", limit=limit)
+
+    def create_dividend_review(self, item: DividendReview) -> DividendReview:
+        self._insert_payload(
+            "dividend_reviews",
+            ["id", "symbol", "created_at"],
+            [item.id, item.symbol, item.created_at.isoformat()],
+            item,
+            audit_event="dividend_review_created",
+            entity_type="dividend_review",
+            entity_id=item.id,
+            audit_payload={"symbol": item.symbol, "run_card_id": item.run_card_id},
+        )
+        return item
+
+    def list_dividend_reviews(self, *, symbol: str | None = None, limit: int = 50) -> list[DividendReview]:
+        where = "symbol = ?" if symbol else ""
+        args: tuple[Any, ...] = (symbol.upper(),) if symbol else ()
+        return self._list_payloads("dividend_reviews", DividendReview, where=where, args=args, order_by="created_at DESC", limit=limit)
+
+    def create_idea_screen(self, screen: IdeaScreen, candidates: list[IdeaCandidate]) -> IdeaScreen:
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO idea_screens(id, created_at, payload) VALUES(?, ?, ?)",
+                (screen.id, screen.created_at.isoformat(), self._dump(screen)),
+            )
+            for candidate in candidates:
+                conn.execute(
+                    "INSERT INTO idea_candidates(id, symbol, status, created_at, payload) VALUES(?, ?, ?, ?, ?)",
+                    (candidate.id, candidate.symbol, candidate.status.value, candidate.created_at.isoformat(), self._dump(candidate)),
+                )
+        self.audit("idea_screen_created", "idea_screen", screen.id, {"candidate_count": len(candidates)})
+        return screen
+
+    def create_idea_candidate(self, item: IdeaCandidate) -> IdeaCandidate:
+        self._insert_payload(
+            "idea_candidates",
+            ["id", "symbol", "status", "created_at"],
+            [item.id, item.symbol, item.status.value, item.created_at.isoformat()],
+            item,
+            audit_event="idea_candidate_created",
+            entity_type="idea_candidate",
+            entity_id=item.id,
+            audit_payload={"symbol": item.symbol, "status": item.status.value},
+        )
+        return item
+
+    def update_idea_candidate(self, item: IdeaCandidate) -> IdeaCandidate:
+        self._update_payload(
+            "idea_candidates",
+            "id",
+            item.id,
+            ["symbol", "status", "created_at"],
+            [item.symbol, item.status.value, item.created_at.isoformat()],
+            item,
+        )
+        self.audit("idea_candidate_updated", "idea_candidate", item.id, {"status": item.status.value})
+        return item
+
+    def get_idea_candidate(self, candidate_id: str) -> IdeaCandidate | None:
+        return self._get_payload("idea_candidates", IdeaCandidate, "id", candidate_id)
+
+    def list_idea_candidates(
+        self,
+        *,
+        status: IdeaCandidateStatus | None = None,
+        symbol: str | None = None,
+        limit: int = 50,
+    ) -> list[IdeaCandidate]:
+        clauses: list[str] = []
+        args: list[Any] = []
+        if status:
+            clauses.append("status = ?")
+            args.append(status.value)
+        if symbol:
+            clauses.append("symbol = ?")
+            args.append(symbol.upper())
+        return self._list_payloads(
+            "idea_candidates",
+            IdeaCandidate,
+            where=" AND ".join(clauses),
+            args=tuple(args),
+            order_by="created_at DESC",
+            limit=limit,
+        )
+
+    def create_committee_review(self, item: CommitteeReview) -> CommitteeReview:
+        self._insert_payload(
+            "committee_reviews",
+            ["id", "created_at"],
+            [item.id, item.created_at.isoformat()],
+            item,
+            audit_event="committee_review_created",
+            entity_type="committee_review",
+            entity_id=item.id,
+            audit_payload={"conclusion": item.conclusion.value, "run_card_id": item.run_card_id},
+        )
+        return item
+
+    def get_committee_review(self, review_id: str) -> CommitteeReview | None:
+        return self._get_payload("committee_reviews", CommitteeReview, "id", review_id)
+
+    def list_committee_reviews(self, limit: int = 50) -> list[CommitteeReview]:
+        return self._list_payloads("committee_reviews", CommitteeReview, order_by="created_at DESC", limit=limit)
+
+    def create_data_quality_report(self, item: DataQualityReport) -> DataQualityReport:
+        self._insert_payload(
+            "data_quality_reports",
+            ["id", "target_type", "created_at"],
+            [item.id, item.target_type.value, item.created_at.isoformat()],
+            item,
+            audit_event="data_quality_report_created",
+            entity_type="data_quality_report",
+            entity_id=item.id,
+            audit_payload={"target_type": item.target_type.value, "run_card_id": item.run_card_id},
+        )
+        return item
+
+    def get_data_quality_report(self, report_id: str) -> DataQualityReport | None:
+        return self._get_payload("data_quality_reports", DataQualityReport, "id", report_id)
+
+    def list_data_quality_reports(
+        self,
+        *,
+        target_type: DataQualityTargetType | None = None,
+        limit: int = 50,
+    ) -> list[DataQualityReport]:
+        where = "target_type = ?" if target_type else ""
+        args: tuple[Any, ...] = (target_type.value,) if target_type else ()
+        return self._list_payloads(
+            "data_quality_reports",
+            DataQualityReport,
+            where=where,
+            args=args,
+            order_by="created_at DESC",
+            limit=limit,
+        )
 
     def get_trade_import(self, import_id: str) -> TradeImport | None:
         with self.connect() as conn:

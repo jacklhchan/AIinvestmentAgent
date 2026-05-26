@@ -266,6 +266,12 @@ class CatalystCalendarService:
                         warnings.append(f"manual override acknowledges {message}")
                     else:
                         reasons.append(message)
+        try:
+            from .options_lens import OptionsLensService
+
+            warnings.extend(OptionsLensService(self.store).catalyst_warnings(symbol))
+        except Exception:
+            pass
         return reasons, warnings
 
     def require_catalyst(self, catalyst_id: str) -> Catalyst:

@@ -30,6 +30,14 @@ mcp_servers:
         - create_research_goal
         - add_research_evidence
         - get_research_goal_snapshot
+        - list_hypotheses
+        - get_hypothesis
+        - create_hypothesis_draft
+        - link_run_card_to_hypothesis
+        - invalidate_hypothesis
+        - get_portfolio_risk_snapshot
+        - list_rebalance_reviews
+        - get_rebalance_review
         - create_thesis
         - list_theses
         - get_thesis_snapshot
@@ -38,6 +46,9 @@ mcp_servers:
         - create_catalyst
         - get_catalyst_snapshot
         - complete_catalyst_with_research_goal
+        - run_earnings_preview
+        - list_earnings_previews
+        - get_earnings_preview
         - run_earnings_review
         - list_earnings_reviews
         - get_earnings_review
@@ -45,6 +56,30 @@ mcp_servers:
         - list_run_cards
         - get_run_card
         - get_run_card_artifact
+        - list_quote_history
+        - get_quote_history_summary
+        - list_backtest_imports
+        - get_backtest_import
+        - list_data_imports
+        - get_data_import_summary
+        - get_latest_daily_brief
+        - list_daily_briefs
+        - list_peer_groups
+        - get_correlation_snapshot
+        - get_sector_snapshot
+        - list_options_snapshots
+        - get_options_snapshot
+        - run_dividend_review
+        - list_dividend_reviews
+        - get_dividend_review
+        - list_idea_candidates
+        - get_idea_candidate
+        - create_idea_candidate_draft
+        - run_committee_review
+        - list_committee_reviews
+        - get_committee_review
+        - list_data_quality_reports
+        - get_data_quality_report
         - list_behavior_reports
         - get_behavior_report
         - list_trade_roundtrips

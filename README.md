@@ -447,6 +447,41 @@ python -m invest_agent.cli autonomy-loop
 
 macOS 常駐範例在 `deploy/launchd/com.local.invest-agent-scheduler.plist`。Dashboard 也有 `執行自治循環` 按鈕與 `安全自治狀態` 面板。
 
+## Next Phase Research Cockpit
+
+The roadmap from `nextphaseplan.docx` is implemented as research-only control-plane layers. These artifacts can add context, warnings, run cards, and research goals, but they cannot directly create `PENDING` proposals, approve proposals, unlock Futu, or send live broker orders.
+
+- Hypothesis Registry: `research_hypotheses` and `hypothesis_links`, with MCP drafts defaulting unconfirmed.
+- Portfolio Studio: portfolio risk x-ray, target drift, concentration warnings, and rebalance candidates that can only promote to research goals.
+- Earnings Preview: pre-event key metrics, bull/base/bear scenario notes, what-to-watch checklist, and optional options implied move.
+- Quote History: daily price bars for diagnostic shadow-account counterfactual PnL; missing prices keep PnL fields null.
+- External Backtest Imports: JSON/Markdown run-card artifact import only; no external code execution and no proposal-gate pass.
+- Data Bridge: safe CSV imports under `artifacts/imports` for local schemas such as symbol classification; MCP remains read-only.
+- Daily Briefs: morning/close/weekly research delivery artifacts based on Advisor Brief and Market Regime.
+- Sector / Peer / Correlation Lens, Options Implied Move Lens, Dividend Lens, Idea Inbox, Committee Review, Skill Validator, and Data Quality reports.
+
+Useful CLI examples:
+
+```bash
+python -m invest_agent.cli market-regime --refresh
+python -m invest_agent.cli create-hypothesis --title "AI capex" --statement "AI capex beneficiaries need verified revenue evidence" --symbols AAPL,NVDA
+python -m invest_agent.cli portfolio-risk
+python -m invest_agent.cli rebalance-review
+python -m invest_agent.cli earnings-preview --symbol AAPL
+python -m invest_agent.cli quote-history-refresh --symbol AAPL --path ./bars.csv
+python -m invest_agent.cli run-shadow-report --strategy-id shadow_... --use-quote-history
+python -m invest_agent.cli import-backtest-run-card --path ./run_card.json
+python -m invest_agent.cli data-import --schema symbol_classification --path ./classifications.csv
+python -m invest_agent.cli morning-brief
+python -m invest_agent.cli correlation-run --symbols AAPL,MSFT,NVDA
+python -m invest_agent.cli import-options-snapshot --symbol AAPL --expiry 2026-02-20 --implied-move-pct 7.5
+python -m invest_agent.cli dividend-review --symbol T --dividend-yield 0.06 --payout-ratio 1.1
+python -m invest_agent.cli idea-screen
+python -m invest_agent.cli committee-review --topic "AAPL post-earnings thesis"
+python -m invest_agent.cli validate-skills
+python -m invest_agent.cli data-quality-run --target-type all
+```
+
 ## Hermes + Codex LLM 設定
 
 Hermes 官方文件目前支援 `OpenAI Codex` provider，可用 `hermes model` 進行 ChatGPT OAuth。這個專案預設讓 Hermes 使用 Codex model，再透過 stdio MCP server 連到本機投資控制平面。
@@ -486,6 +521,14 @@ mcp_servers:
         - create_research_goal
         - add_research_evidence
         - get_research_goal_snapshot
+        - list_hypotheses
+        - get_hypothesis
+        - create_hypothesis_draft
+        - link_run_card_to_hypothesis
+        - invalidate_hypothesis
+        - get_portfolio_risk_snapshot
+        - list_rebalance_reviews
+        - get_rebalance_review
         - create_thesis
         - list_theses
         - get_thesis_snapshot
@@ -494,6 +537,9 @@ mcp_servers:
         - create_catalyst
         - get_catalyst_snapshot
         - complete_catalyst_with_research_goal
+        - run_earnings_preview
+        - list_earnings_previews
+        - get_earnings_preview
         - run_earnings_review
         - list_earnings_reviews
         - get_earnings_review
@@ -501,6 +547,30 @@ mcp_servers:
         - list_run_cards
         - get_run_card
         - get_run_card_artifact
+        - list_quote_history
+        - get_quote_history_summary
+        - list_backtest_imports
+        - get_backtest_import
+        - list_data_imports
+        - get_data_import_summary
+        - get_latest_daily_brief
+        - list_daily_briefs
+        - list_peer_groups
+        - get_correlation_snapshot
+        - get_sector_snapshot
+        - list_options_snapshots
+        - get_options_snapshot
+        - run_dividend_review
+        - list_dividend_reviews
+        - get_dividend_review
+        - list_idea_candidates
+        - get_idea_candidate
+        - create_idea_candidate_draft
+        - run_committee_review
+        - list_committee_reviews
+        - get_committee_review
+        - list_data_quality_reports
+        - get_data_quality_report
         - list_behavior_reports
         - get_behavior_report
         - list_trade_roundtrips

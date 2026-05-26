@@ -4,23 +4,53 @@ import argparse
 import json
 from datetime import datetime, timezone
 
+from .backtest_imports import BacktestImportService
 from .autonomy import SafeAutonomyRunner, autonomy_status
 from .catalysts import CatalystCalendarService
+from .committee_reviews import CommitteeReviewService
 from .config import get_settings
+from .daily_briefs import DailyBriefService
+from .data_bridge import DataBridgeService
+from .data_quality import DataQualityService
 from .demo_data import seed_demo_data
 from .deps import get_service, get_store
+from .dividend_lens import DividendLensService
+from .earnings_preview import EarningsPreviewService
 from .earnings_review import EarningsReviewService
 from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event_file
 from .futu_adapter import refresh_futu_readonly
+from .hypotheses import HypothesisRegistryService
+from .idea_inbox import IdeaInboxService
 from .ir_feeds import IrFeedIngestor
+from .market_regime import MarketRegimeService
 from .market_news import MarketNewsIngestor
 from .models import (
+    BacktestImportRequest,
     EarningsReviewRunRequest,
     BehaviorReportRunRequest,
+    CommitteeReviewRunRequest,
+    CorrelationRunRequest,
+    DailyBriefRunRequest,
+    DataImportRequest,
+    DataQualityRunRequest,
+    DataQualityTargetType,
+    DividendReviewRunRequest,
+    EarningsPreviewRunRequest,
+    ExternalBacktestSource,
+    HypothesisCreate,
+    HypothesisInvalidateRequest,
+    HypothesisLinkCreate,
+    HypothesisLinkType,
+    HypothesisScope,
+    IdeaScreenRunRequest,
+    OptionsSnapshotCreate,
+    PeerGroupCreate,
     ProposalCreate,
+    QuoteHistoryRefreshRequest,
     RunCardActor,
     RunCardTriggerSource,
     RunCardType,
+    SectorSnapshotRunRequest,
     ShadowReportRunRequest,
     ShadowStrategyConfirmRequest,
     ShadowStrategyExtractRequest,
@@ -30,10 +60,14 @@ from .models import (
 )
 from .primary_sources import refresh_primary_sources
 from .proposal_drafts import ProposalDraftEngine
+from .portfolio_studio import PortfolioStudioService
+from .quote_history import QuoteHistoryService
 from .run_cards import RunCardService
 from .sec_companyfacts import SecCompanyFactsIngestor
 from .sec_edgar import SecEdgarIngestor
+from .sector_lens import SectorLensService
 from .shadow_account import ShadowAccountService
+from .skill_validator import SkillValidatorService
 from .trade_journal import TradeJournalService
 
 
@@ -147,6 +181,59 @@ def list_catalysts_main(days: int | None = None) -> None:
     print(json.dumps(_json(result), indent=2, ensure_ascii=False))
 
 
+def market_regime_main(refresh: bool = False) -> None:
+    service = MarketRegimeService(get_settings(), get_store())
+    result = service.refresh(actor=RunCardActor.CLI) if refresh else service.build_snapshot()
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def list_hypotheses_main() -> None:
+    print(json.dumps(_json(get_store().list_hypotheses()), indent=2, ensure_ascii=False))
+
+
+def show_hypothesis_main(hypothesis_id: str) -> None:
+    item = get_store().get_hypothesis(hypothesis_id)
+    if not item:
+        raise SystemExit(f"hypothesis not found: {hypothesis_id}")
+    print(json.dumps(_json(item), indent=2, ensure_ascii=False))
+
+
+def create_hypothesis_main(title: str, statement: str, symbols: str | None = None) -> None:
+    result = HypothesisRegistryService(get_store()).create(
+        HypothesisCreate(
+            title=title,
+            statement=statement,
+            scope=HypothesisScope.SYMBOL,
+            symbols=_parse_symbols(symbols) or [],
+        ),
+        actor=RunCardActor.CLI,
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def link_hypothesis_main(hypothesis_id: str, linked_id: str, linked_type: str = "run_card") -> None:
+    result = HypothesisRegistryService(get_store()).link(
+        hypothesis_id,
+        HypothesisLinkCreate(linked_type=HypothesisLinkType(linked_type), linked_id=linked_id),
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def invalidate_hypothesis_main(hypothesis_id: str, note: str) -> None:
+    result = HypothesisRegistryService(get_store()).invalidate(hypothesis_id, HypothesisInvalidateRequest(invalidation_note=note))
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def portfolio_risk_main() -> None:
+    result = PortfolioStudioService(get_settings(), get_store()).refresh_risk_snapshot(actor=RunCardActor.CLI)
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def rebalance_review_main() -> None:
+    result = PortfolioStudioService(get_settings(), get_store()).run_rebalance_review(actor=RunCardActor.CLI)
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
 def earnings_review_main(
     symbol: str,
     catalyst_id: str | None = None,
@@ -168,6 +255,136 @@ def earnings_review_main(
 
 def list_earnings_reviews_main(symbol: str | None = None) -> None:
     print(json.dumps(_json(get_store().list_earnings_reviews(symbol=symbol)), indent=2, ensure_ascii=False))
+
+
+def earnings_preview_main(symbol: str, catalyst_id: str | None = None, thesis_id: str | None = None) -> None:
+    result = EarningsPreviewService(get_store()).run_preview(
+        EarningsPreviewRunRequest(symbol=symbol, catalyst_id=catalyst_id, thesis_id=thesis_id),
+        actor=RunCardActor.CLI,
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def list_earnings_previews_main(symbol: str | None = None) -> None:
+    print(json.dumps(_json(get_store().list_earnings_previews(symbol=symbol)), indent=2, ensure_ascii=False))
+
+
+def quote_history_refresh_main(symbol: str, path: str | None = None, days: int = 365) -> None:
+    result = QuoteHistoryService(get_store()).refresh(
+        QuoteHistoryRefreshRequest(symbol=symbol, path=path, days=days),
+        actor=RunCardActor.CLI,
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def list_price_bars_main(symbol: str | None = None, limit: int = 20) -> None:
+    print(json.dumps(_json(get_store().list_price_bars(symbol=symbol, limit=limit)), indent=2, ensure_ascii=False))
+
+
+def import_backtest_main(path: str, source: str = "manual") -> None:
+    result = BacktestImportService(get_store()).import_run_card(
+        BacktestImportRequest(path=path, source=ExternalBacktestSource(source)),
+        actor=RunCardActor.CLI,
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def list_backtest_imports_main() -> None:
+    print(json.dumps(_json(get_store().list_external_backtest_imports()), indent=2, ensure_ascii=False))
+
+
+def show_backtest_import_main(import_id: str) -> None:
+    item = get_store().get_external_backtest_import(import_id)
+    if not item:
+        raise SystemExit(f"backtest import not found: {import_id}")
+    print(json.dumps(_json(item), indent=2, ensure_ascii=False))
+
+
+def data_import_main(schema_name: str, path: str, source_name: str = "local") -> None:
+    result = DataBridgeService(get_store()).import_file(
+        DataImportRequest(schema_name=schema_name, path=path, source_name=source_name),
+        actor=RunCardActor.CLI,
+        allow_absolute=True,
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def list_data_imports_main() -> None:
+    print(json.dumps(_json(get_store().list_data_imports()), indent=2, ensure_ascii=False))
+
+
+def daily_brief_main(brief_type: str = "morning") -> None:
+    from .models import DailyBriefType
+
+    result = DailyBriefService(get_settings(), get_store()).run(
+        DailyBriefRunRequest(brief_type=DailyBriefType(brief_type)),
+        actor=RunCardActor.CLI,
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def correlation_run_main(symbols: str | None = None) -> None:
+    result = SectorLensService(get_store()).run_correlation(
+        CorrelationRunRequest(symbols=_parse_symbols(symbols) or []),
+        actor=RunCardActor.CLI,
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def sector_snapshot_main(sector: str, symbols: str | None = None) -> None:
+    result = SectorLensService(get_store()).run_sector_snapshot(
+        SectorSnapshotRunRequest(sector=sector, symbols=_parse_symbols(symbols) or []),
+        actor=RunCardActor.CLI,
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def import_options_snapshot_main(symbol: str, expiry: str, implied_move_pct: float | None = None, atm_iv: float | None = None) -> None:
+    from .options_lens import OptionsLensService
+
+    result = OptionsLensService(get_store()).create_snapshot(
+        OptionsSnapshotCreate(symbol=symbol, expiry=expiry, implied_move_pct=implied_move_pct, atm_iv=atm_iv),
+        actor=RunCardActor.CLI,
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def dividend_review_main(symbol: str, dividend_yield: float | None = None, payout_ratio: float | None = None) -> None:
+    result = DividendLensService(get_store()).run_review(
+        DividendReviewRunRequest(symbol=symbol, dividend_yield=dividend_yield, payout_ratio=payout_ratio),
+        actor=RunCardActor.CLI,
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def idea_screen_main() -> None:
+    result = IdeaInboxService(get_settings(), get_store()).run_screen(IdeaScreenRunRequest(), actor=RunCardActor.CLI)
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def list_ideas_main() -> None:
+    print(json.dumps(_json(get_store().list_idea_candidates()), indent=2, ensure_ascii=False))
+
+
+def committee_review_main(topic: str) -> None:
+    result = CommitteeReviewService(get_store()).run_review(CommitteeReviewRunRequest(topic=topic), actor=RunCardActor.CLI)
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def validate_skills_main() -> None:
+    print(json.dumps(_json(SkillValidatorService(get_store()).validate(actor=RunCardActor.CLI)), indent=2, ensure_ascii=False))
+
+
+def data_quality_main(target_type: str = "all") -> None:
+    result = DataQualityService(get_store()).run_report(
+        DataQualityRunRequest(target_type=DataQualityTargetType(target_type)),
+        actor=RunCardActor.CLI,
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def list_data_quality_reports_main() -> None:
+    print(json.dumps(_json(get_store().list_data_quality_reports()), indent=2, ensure_ascii=False))
 
 
 def list_run_cards_main(run_type: str | None = None, symbol: str | None = None, limit: int = 20) -> None:
@@ -249,6 +466,7 @@ def run_shadow_report_main(
     period_start: str | None = None,
     period_end: str | None = None,
     symbols: str | None = None,
+    use_quote_history: bool = False,
 ) -> None:
     result = ShadowAccountService(get_store()).run_report(
         ShadowReportRunRequest(
@@ -257,6 +475,7 @@ def run_shadow_report_main(
             period_start=_parse_cli_datetime(period_start),
             period_end=_parse_cli_datetime(period_end),
             symbols=_parse_symbols(symbols),
+            use_quote_history=use_quote_history,
         ),
         actor=RunCardActor.CLI,
     )
@@ -319,11 +538,42 @@ def main() -> None:
             "autonomy-once",
             "autonomy-loop",
             "autonomy-status",
+            "market-regime",
             "list-theses",
             "list-catalysts",
             "catalyst-preview",
+            "list-hypotheses",
+            "show-hypothesis",
+            "create-hypothesis",
+            "link-hypothesis",
+            "invalidate-hypothesis",
+            "portfolio-risk",
+            "rebalance-review",
+            "earnings-preview",
+            "list-earnings-previews",
             "earnings-review",
             "list-earnings-reviews",
+            "quote-history-refresh",
+            "list-price-bars",
+            "import-backtest-run-card",
+            "list-backtest-imports",
+            "show-backtest-import",
+            "data-import",
+            "list-data-imports",
+            "morning-brief",
+            "close-brief",
+            "weekly-brief",
+            "correlation-run",
+            "sector-snapshot",
+            "import-options-snapshot",
+            "list-options-snapshots",
+            "dividend-review",
+            "idea-screen",
+            "list-ideas",
+            "committee-review",
+            "validate-skills",
+            "data-quality-run",
+            "list-data-quality-reports",
             "list-run-cards",
             "show-run-card",
             "import-trade-journal",
@@ -358,6 +608,25 @@ def main() -> None:
     parser.add_argument("--confirmed-by", default=None)
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--kind", default=None)
+    parser.add_argument("--title", default=None)
+    parser.add_argument("--statement", default=None)
+    parser.add_argument("--hypothesis-id", default=None)
+    parser.add_argument("--linked-id", default=None)
+    parser.add_argument("--linked-type", default="run_card")
+    parser.add_argument("--note", default=None)
+    parser.add_argument("--schema", default=None)
+    parser.add_argument("--source-name", default="local")
+    parser.add_argument("--import-id", default=None)
+    parser.add_argument("--topic", default=None)
+    parser.add_argument("--sector", default=None)
+    parser.add_argument("--expiry", default=None)
+    parser.add_argument("--implied-move-pct", type=float, default=None)
+    parser.add_argument("--atm-iv", type=float, default=None)
+    parser.add_argument("--dividend-yield", type=float, default=None)
+    parser.add_argument("--payout-ratio", type=float, default=None)
+    parser.add_argument("--target-type", default="all")
+    parser.add_argument("--refresh", action="store_true")
+    parser.add_argument("--use-quote-history", action="store_true")
     args = parser.parse_args()
     if args.command == "seed":
         seed_main()
@@ -385,18 +654,106 @@ def main() -> None:
         autonomy_loop_main()
     if args.command == "autonomy-status":
         autonomy_status_main()
+    if args.command == "market-regime":
+        market_regime_main(args.refresh)
     if args.command == "list-theses":
         list_theses_main()
     if args.command == "list-catalysts":
         list_catalysts_main(args.days)
     if args.command == "catalyst-preview":
         list_catalysts_main(args.days or 14)
+    if args.command == "list-hypotheses":
+        list_hypotheses_main()
+    if args.command == "show-hypothesis":
+        if not args.hypothesis_id:
+            parser.error("--hypothesis-id is required for show-hypothesis")
+        show_hypothesis_main(args.hypothesis_id)
+    if args.command == "create-hypothesis":
+        if not args.title or not args.statement:
+            parser.error("--title and --statement are required for create-hypothesis")
+        create_hypothesis_main(args.title, args.statement, args.symbols)
+    if args.command == "link-hypothesis":
+        if not args.hypothesis_id or not args.linked_id:
+            parser.error("--hypothesis-id and --linked-id are required for link-hypothesis")
+        link_hypothesis_main(args.hypothesis_id, args.linked_id, args.linked_type)
+    if args.command == "invalidate-hypothesis":
+        if not args.hypothesis_id or not args.note:
+            parser.error("--hypothesis-id and --note are required for invalidate-hypothesis")
+        invalidate_hypothesis_main(args.hypothesis_id, args.note)
+    if args.command == "portfolio-risk":
+        portfolio_risk_main()
+    if args.command == "rebalance-review":
+        rebalance_review_main()
+    if args.command == "earnings-preview":
+        if not args.symbol:
+            parser.error("--symbol is required for earnings-preview")
+        earnings_preview_main(args.symbol, args.catalyst_id, args.thesis_id)
+    if args.command == "list-earnings-previews":
+        list_earnings_previews_main(args.symbol)
     if args.command == "earnings-review":
         if not args.symbol:
             parser.error("--symbol is required for earnings-review")
         earnings_review_main(args.symbol, args.catalyst_id, args.research_goal_id, args.thesis_id)
     if args.command == "list-earnings-reviews":
         list_earnings_reviews_main(args.symbol)
+    if args.command == "quote-history-refresh":
+        if not args.symbol:
+            parser.error("--symbol is required for quote-history-refresh")
+        quote_history_refresh_main(args.symbol, args.path, args.days or 365)
+    if args.command == "list-price-bars":
+        list_price_bars_main(args.symbol, args.limit)
+    if args.command == "import-backtest-run-card":
+        if not args.path:
+            parser.error("--path is required for import-backtest-run-card")
+        import_backtest_main(args.path, args.source)
+    if args.command == "list-backtest-imports":
+        list_backtest_imports_main()
+    if args.command == "show-backtest-import":
+        if not args.import_id:
+            parser.error("--import-id is required for show-backtest-import")
+        show_backtest_import_main(args.import_id)
+    if args.command == "data-import":
+        if not args.schema or not args.path:
+            parser.error("--schema and --path are required for data-import")
+        data_import_main(args.schema, args.path, args.source_name)
+    if args.command == "list-data-imports":
+        list_data_imports_main()
+    if args.command == "morning-brief":
+        daily_brief_main("morning")
+    if args.command == "close-brief":
+        daily_brief_main("close")
+    if args.command == "weekly-brief":
+        daily_brief_main("weekly")
+    if args.command == "correlation-run":
+        correlation_run_main(args.symbols)
+    if args.command == "sector-snapshot":
+        if not args.sector:
+            parser.error("--sector is required for sector-snapshot")
+        sector_snapshot_main(args.sector, args.symbols)
+    if args.command == "import-options-snapshot":
+        if not args.symbol or not args.expiry:
+            parser.error("--symbol and --expiry are required for import-options-snapshot")
+        import_options_snapshot_main(args.symbol, args.expiry, args.implied_move_pct, args.atm_iv)
+    if args.command == "list-options-snapshots":
+        print(json.dumps(_json(get_store().list_options_snapshots(symbol=args.symbol)), indent=2, ensure_ascii=False))
+    if args.command == "dividend-review":
+        if not args.symbol:
+            parser.error("--symbol is required for dividend-review")
+        dividend_review_main(args.symbol, args.dividend_yield, args.payout_ratio)
+    if args.command == "idea-screen":
+        idea_screen_main()
+    if args.command == "list-ideas":
+        list_ideas_main()
+    if args.command == "committee-review":
+        if not args.topic:
+            parser.error("--topic is required for committee-review")
+        committee_review_main(args.topic)
+    if args.command == "validate-skills":
+        validate_skills_main()
+    if args.command == "data-quality-run":
+        data_quality_main(args.target_type)
+    if args.command == "list-data-quality-reports":
+        list_data_quality_reports_main()
     if args.command == "list-run-cards":
         list_run_cards_main(args.run_type, args.symbol, args.limit)
     if args.command == "show-run-card":
@@ -429,7 +786,14 @@ def main() -> None:
     if args.command == "run-shadow-report":
         if not args.strategy_id:
             parser.error("--strategy-id is required for run-shadow-report")
-        run_shadow_report_main(args.strategy_id, args.behavior_report_id, args.period_start, args.period_end, args.symbols)
+        run_shadow_report_main(
+            args.strategy_id,
+            args.behavior_report_id,
+            args.period_start,
+            args.period_end,
+            args.symbols,
+            args.use_quote_history,
+        )
     if args.command == "list-shadow-strategies":
         list_shadow_strategies_main(args.limit)
     if args.command == "list-shadow-reports":

@@ -153,6 +153,7 @@ class EarningsReviewService:
             filing_date=_latest_filed_at(snapshot),
             catalyst_id=catalyst.id if catalyst else None,
             catalyst_review_id=catalyst_review_id,
+            earnings_preview_id=_latest_preview_id(self.store, symbol, catalyst.id if catalyst else None),
             research_goal_id=goal.id,
             thesis_id=thesis_id,
             revenue_yoy=metrics["revenue"],
@@ -284,6 +285,13 @@ def _run_metrics(review: EarningsReview) -> dict[str, Any]:
         "diluted_eps_yoy": review.diluted_eps_yoy,
         "score": review.score,
     }
+
+
+def _latest_preview_id(store: Store, symbol: str, catalyst_id: str | None) -> str | None:
+    previews = store.list_earnings_previews(symbol=symbol, catalyst_id=catalyst_id, limit=1) if catalyst_id else []
+    if not previews:
+        previews = store.list_earnings_previews(symbol=symbol, limit=1)
+    return previews[0].id if previews else None
 
 
 def _dataset_lineage(snapshot: FundamentalSnapshot) -> dict[str, Any]:

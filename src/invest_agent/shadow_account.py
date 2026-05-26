@@ -17,6 +17,7 @@ from .models import (
     RunCardType,
     ShadowEvent,
     ShadowEventType,
+    PriceBarConfidence,
     ShadowReport,
     ShadowReportRunRequest,
     ShadowRule,
@@ -29,6 +30,7 @@ from .models import (
     TradeFillSide,
     TradeRoundTrip,
 )
+from .quote_history import QuoteHistoryService
 from .run_cards import RunCardService, stable_hash
 from .store import Store
 
@@ -174,7 +176,20 @@ class ShadowAccountService:
             },
         )
         try:
-            events, diagnostics, warnings = self._evaluate_strategy(strategy, fills, roundtrips)
+            events, diagnostics, warnings = self._evaluate_strategy(
+                strategy,
+                fills,
+                roundtrips,
+                use_quote_history=request.use_quote_history,
+            )
+            priced_events = [event for event in events if event.delta_pnl is not None]
+            unpriced_counterfactual_events = [
+                event
+                for event in events
+                if event.event_type in {ShadowEventType.EARLY_EXIT, ShadowEventType.LATE_EXIT}
+                and event.delta_pnl is None
+            ]
+            total_delta_pnl = round(sum(event.delta_pnl or 0.0 for event in priced_events), 4) if priced_events else None
             report = ShadowReport(
                 strategy_id=strategy.id,
                 behavior_report_id=behavior_report.id,
@@ -185,9 +200,21 @@ class ShadowAccountService:
                 early_exit_count=sum(1 for event in events if event.event_type == ShadowEventType.EARLY_EXIT),
                 late_exit_count=sum(1 for event in events if event.event_type == ShadowEventType.LATE_EXIT),
                 missed_signal_count=sum(1 for event in events if event.event_type == ShadowEventType.MISSED_ENTRY),
-                counterfactual_pnl=None,
+                counterfactual_pnl=round(sum(event.counterfactual_pnl or 0.0 for event in priced_events), 4)
+                if priced_events
+                else None,
                 actual_pnl=sum(roundtrip.realized_pnl for roundtrip in roundtrips),
-                delta_pnl=None,
+                delta_pnl=total_delta_pnl,
+                counterfactual_coverage_ratio=round(
+                    len(priced_events) / max(1, len(priced_events) + len(unpriced_counterfactual_events)),
+                    4,
+                )
+                if request.use_quote_history
+                else 0.0,
+                events_with_price_count=len(priced_events),
+                events_without_price_count=len(unpriced_counterfactual_events),
+                total_delta_pnl=total_delta_pnl,
+                price_dataset_hash=diagnostics.get("price_dataset_hash", ""),
                 diagnostics=diagnostics,
                 run_card_id=run_card.id,
             )
@@ -203,6 +230,9 @@ class ShadowAccountService:
                     "thesis_mismatch_count": diagnostics.get("thesis_mismatch_count", 0),
                     "ignored_catalyst_count": diagnostics.get("ignored_catalyst_count", 0),
                     "actual_pnl": report.actual_pnl,
+                    "counterfactual_coverage_ratio": report.counterfactual_coverage_ratio,
+                    "events_with_price_count": report.events_with_price_count,
+                    "events_without_price_count": report.events_without_price_count,
                 },
                 warnings=warnings,
                 outputs={
@@ -214,6 +244,7 @@ class ShadowAccountService:
                 dataset={
                     "events": [event.model_dump(mode="json") for event in events],
                     "roundtrips": [_roundtrip_dataset_row(roundtrip) for roundtrip in roundtrips],
+                    "price_dataset_hash": report.price_dataset_hash,
                 },
             )
             return report
@@ -238,13 +269,17 @@ class ShadowAccountService:
         strategy: ShadowStrategy,
         fills: list[TradeFill],
         roundtrips: list[TradeRoundTrip],
+        *,
+        use_quote_history: bool = False,
     ) -> tuple[list[ShadowEvent], dict[str, Any], list[str]]:
         rules = {rule.rule_type: rule for rule in strategy.rules}
         events: list[ShadowEvent] = []
-        warnings = [
-            "counterfactual_pnl is unavailable in v1 because no quote history is used; only journal-internal violations are counted.",
-            "open positions, short sales, splits, dividends, FX conversion, and option assignment are outside shadow_report_v1 scope.",
-        ]
+        warnings = ["open positions, short sales, splits, dividends, FX conversion, and option assignment are outside shadow_report_v1 scope."]
+        if not use_quote_history:
+            warnings.insert(
+                0,
+                "counterfactual_pnl is unavailable because quote history was not requested; only journal-internal violations are counted.",
+            )
         holding_days = float(rules.get(ShadowRuleType.EXIT, ShadowRule(rule_type=ShadowRuleType.EXIT)).condition_json.get("median_holding_days", 0) or 0)
         take_profit_pct = float(
             rules.get(ShadowRuleType.TAKE_PROFIT, ShadowRule(rule_type=ShadowRuleType.TAKE_PROFIT)).condition_json.get(
@@ -270,25 +305,27 @@ class ShadowAccountService:
 
         for roundtrip in sorted(roundtrips, key=lambda item: (item.opened_at, item.id)):
             if holding_days and roundtrip.realized_pnl > 0 and roundtrip.holding_days < holding_days * 0.6:
-                events.append(
-                    _shadow_event(
-                        roundtrip,
-                        ShadowEventType.EARLY_EXIT,
-                        expected={"minimum_holding_days": holding_days},
-                        actual={"holding_days": roundtrip.holding_days, "realized_pnl_pct": roundtrip.realized_pnl_pct},
-                        explanation="Closed a winning roundtrip materially earlier than the extracted holding rule.",
-                    )
+                event = _shadow_event(
+                    roundtrip,
+                    ShadowEventType.EARLY_EXIT,
+                    expected={"minimum_holding_days": holding_days},
+                    actual={"holding_days": roundtrip.holding_days, "realized_pnl_pct": roundtrip.realized_pnl_pct},
+                    explanation="Closed a winning roundtrip materially earlier than the extracted holding rule.",
                 )
+                if use_quote_history:
+                    _attach_counterfactual_price(event, roundtrip, holding_days, "early_exit_daily_close", self.store)
+                events.append(event)
             if holding_days and roundtrip.realized_pnl < 0 and roundtrip.holding_days > holding_days * 1.5:
-                events.append(
-                    _shadow_event(
-                        roundtrip,
-                        ShadowEventType.LATE_EXIT,
-                        expected={"maximum_loser_holding_days": holding_days * 1.5},
-                        actual={"holding_days": roundtrip.holding_days, "realized_pnl_pct": roundtrip.realized_pnl_pct},
-                        explanation="Held a losing roundtrip materially longer than the extracted holding rule.",
-                    )
+                event = _shadow_event(
+                    roundtrip,
+                    ShadowEventType.LATE_EXIT,
+                    expected={"maximum_loser_holding_days": holding_days * 1.5},
+                    actual={"holding_days": roundtrip.holding_days, "realized_pnl_pct": roundtrip.realized_pnl_pct},
+                    explanation="Held a losing roundtrip materially longer than the extracted holding rule.",
                 )
+                if use_quote_history:
+                    _attach_counterfactual_price(event, roundtrip, holding_days, "late_exit_daily_close", self.store)
+                events.append(event)
             if take_profit_pct and roundtrip.realized_pnl_pct > 0 and roundtrip.realized_pnl_pct < take_profit_pct * 0.5:
                 events.append(
                     _shadow_event(
@@ -337,8 +374,17 @@ class ShadowAccountService:
             "symbol_count": dict(Counter(event.symbol for event in events)),
             "thesis_mismatch_count": sum(1 for event in events if event.event_type == ShadowEventType.THESIS_MISMATCH),
             "ignored_catalyst_count": sum(1 for event in events if event.event_type == ShadowEventType.IGNORED_CATALYST),
-            "missing_quote_history": True,
-            "counterfactual_pnl_available": False,
+            "missing_quote_history": use_quote_history and not any(event.price_bar_id for event in events),
+            "counterfactual_pnl_available": any(event.delta_pnl is not None for event in events),
+            "price_dataset_hash": stable_hash(
+                [
+                    item.model_dump(mode="json")
+                    for symbol in sorted({roundtrip.symbol for roundtrip in roundtrips})
+                    for item in self.store.list_quote_history_imports(symbol=symbol, limit=10)
+                ]
+            )
+            if use_quote_history
+            else "",
         }
         return events, diagnostics, warnings
 
@@ -549,6 +595,31 @@ def _shadow_event(
     )
 
 
+def _attach_counterfactual_price(
+    event: ShadowEvent,
+    roundtrip: TradeRoundTrip,
+    holding_days: float,
+    method: str,
+    store: Store,
+) -> None:
+    expected_exit_at = _ensure_tz(roundtrip.opened_at) + timedelta(days=max(1.0, holding_days))
+    bar, confidence = QuoteHistoryService(store).find_daily_close(roundtrip.symbol, expected_exit_at)
+    event.expected_exit_at = expected_exit_at
+    event.actual_exit_price = roundtrip.sell_price
+    event.actual_pnl = round(roundtrip.realized_pnl, 4)
+    event.counterfactual_method = method
+    if not bar or not confidence:
+        event.expected_exit_price_confidence = PriceBarConfidence.UNAVAILABLE
+        return
+    event.expected_exit_price = bar.close
+    event.expected_exit_price_source = "daily_close"
+    event.expected_exit_price_confidence = PriceBarConfidence(confidence)
+    event.price_bar_id = bar.id
+    event.counterfactual_pnl = round((bar.close - roundtrip.buy_price) * roundtrip.qty - roundtrip.buy_fees - roundtrip.sell_fees, 4)
+    event.delta_pnl = round(event.counterfactual_pnl - roundtrip.realized_pnl, 4)
+    event.pnl_impact = event.delta_pnl
+
+
 def _actor_to_created_via(actor: RunCardActor | str) -> CreatedVia:
     value = RunCardActor(actor)
     if value == RunCardActor.CLI:
@@ -599,4 +670,3 @@ def _ensure_tz(value: datetime) -> datetime:
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
-

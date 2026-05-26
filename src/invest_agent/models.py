@@ -204,6 +204,22 @@ class RunCardType(StrEnum):
     CATALYST_REVIEW = "catalyst_review"
     EVENT_REPLAY = "event_replay"
     MARKET_REGIME = "market_regime"
+    HYPOTHESIS_REVIEW = "hypothesis_review"
+    PORTFOLIO_RISK = "portfolio_risk"
+    REBALANCE_REVIEW = "rebalance_review"
+    EARNINGS_PREVIEW = "earnings_preview"
+    QUOTE_HISTORY_IMPORT = "quote_history_import"
+    EXTERNAL_BACKTEST_IMPORT = "external_backtest_import"
+    DATA_IMPORT = "data_import"
+    DAILY_BRIEF = "daily_brief"
+    CORRELATION_SNAPSHOT = "correlation_snapshot"
+    SECTOR_SNAPSHOT = "sector_snapshot"
+    OPTIONS_SNAPSHOT = "options_snapshot"
+    DIVIDEND_REVIEW = "dividend_review"
+    IDEA_SCREEN = "idea_screen"
+    COMMITTEE_REVIEW = "committee_review"
+    SKILL_VALIDATION = "skill_validation"
+    DATA_QUALITY_REPORT = "data_quality_report"
     TRADE_JOURNAL_IMPORT = "trade_journal_import"
     BEHAVIOR_REPORT = "behavior_report"
     SHADOW_STRATEGY_EXTRACT = "shadow_strategy_extract"
@@ -330,6 +346,118 @@ class ProposalBias(StrEnum):
     DEFENSIVE_ONLY = "defensive_only"
 
 
+class HypothesisScope(StrEnum):
+    SYMBOL = "symbol"
+    SECTOR = "sector"
+    PORTFOLIO = "portfolio"
+    MACRO = "macro"
+    BEHAVIOR = "behavior"
+    STRATEGY = "strategy"
+
+
+class HypothesisStatus(StrEnum):
+    DRAFT = "draft"
+    TESTING = "testing"
+    SUPPORTED = "supported"
+    WEAKENED = "weakened"
+    REJECTED = "rejected"
+    ARCHIVED = "archived"
+
+
+class HypothesisLinkType(StrEnum):
+    RUN_CARD = "run_card"
+    RESEARCH_GOAL = "research_goal"
+    THESIS = "thesis"
+    CATALYST = "catalyst"
+    EARNINGS_REVIEW = "earnings_review"
+    BEHAVIOR_REPORT = "behavior_report"
+    SHADOW_REPORT = "shadow_report"
+    MARKET_REGIME = "market_regime"
+
+
+class PortfolioActionBias(StrEnum):
+    NO_CHANGE = "no_change"
+    WATCH_ONLY = "watch_only"
+    RESEARCH_NEEDED = "research_needed"
+    CANDIDATE_REVIEW = "candidate_review"
+
+
+class RebalanceAction(StrEnum):
+    BUY = "buy"
+    SELL = "sell"
+    TRIM = "trim"
+    ADD = "add"
+    HOLD = "hold"
+
+
+class RebalanceCandidateStatus(StrEnum):
+    CANDIDATE = "candidate"
+    RESEARCHING = "researching"
+    REJECTED = "rejected"
+    PROMOTED_TO_RESEARCH_GOAL = "promoted_to_research_goal"
+
+
+class QuoteHistorySource(StrEnum):
+    FUTU_HISTORY_KLINE = "futu_history_kline"
+    MANUAL_CSV = "manual_csv"
+    FUTURE_IMPORT = "future_import"
+
+
+class PriceBarConfidence(StrEnum):
+    EXACT_BAR = "exact_bar"
+    NEXT_AVAILABLE_BAR = "next_available_bar"
+    PREVIOUS_AVAILABLE_BAR = "previous_available_bar"
+    UNAVAILABLE = "unavailable"
+
+
+class ExternalBacktestSource(StrEnum):
+    VIBE_TRADING = "vibe_trading"
+    MANUAL = "manual"
+    OTHER = "other"
+
+
+class ExternalBacktestValidationStatus(StrEnum):
+    IMPORTED = "imported"
+    VALIDATED = "validated"
+    REJECTED = "rejected"
+
+
+class DailyBriefType(StrEnum):
+    MORNING = "morning"
+    CLOSE = "close"
+    WEEKLY = "weekly"
+
+
+class IdeaDirection(StrEnum):
+    LONG = "long"
+    SHORT = "short"
+    NEUTRAL_WATCH = "neutral_watch"
+
+
+class IdeaCandidateStatus(StrEnum):
+    INBOX = "inbox"
+    RESEARCHING = "researching"
+    REJECTED = "rejected"
+    PROMOTED_TO_THESIS = "promoted_to_thesis"
+
+
+class CommitteeConclusion(StrEnum):
+    RESEARCH_MORE = "research_more"
+    ELIGIBLE_FOR_PROPOSAL = "eligible_for_proposal"
+    REJECT = "reject"
+    WATCH_ONLY = "watch_only"
+
+
+class DataQualityTargetType(StrEnum):
+    FUNDAMENTALS = "fundamentals"
+    PRICE_BARS = "price_bars"
+    TRADE_JOURNAL = "trade_journal"
+    CATALYSTS = "catalysts"
+    EARNINGS_REVIEW = "earnings_review"
+    RUN_CARDS = "run_cards"
+    ALL = "all"
+
+
 class Position(BaseModel):
     symbol: str
     qty: float
@@ -414,6 +542,559 @@ class MarketRegimeSnapshot(BaseModel):
     metrics: dict[str, Any] = Field(default_factory=dict)
     input_hash: str = ""
     run_card_id: str | None = None
+
+
+class HypothesisLink(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("hyplink"))
+    hypothesis_id: str
+    linked_type: HypothesisLinkType
+    linked_id: str
+    evidence_hash: str = ""
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class ResearchHypothesis(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("hyp"))
+    title: str = Field(min_length=3)
+    statement: str = Field(min_length=8)
+    scope: HypothesisScope = HypothesisScope.SYMBOL
+    symbols: list[str] = Field(default_factory=list)
+    status: HypothesisStatus = HypothesisStatus.DRAFT
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    created_via: CreatedVia = CreatedVia.REST
+    created_by: CreatedBy = CreatedBy.HUMAN
+    human_confirmed: bool = False
+    invalidation_note: str = ""
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+    links: list[HypothesisLink] = Field(default_factory=list)
+
+    @field_validator("symbols")
+    @classmethod
+    def normalize_hypothesis_symbols(cls, value: list[str]) -> list[str]:
+        return [item.strip().upper() for item in value if item and item.strip()]
+
+
+class HypothesisCreate(BaseModel):
+    title: str = Field(min_length=3)
+    statement: str = Field(min_length=8)
+    scope: HypothesisScope = HypothesisScope.SYMBOL
+    symbols: list[str] = Field(default_factory=list)
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    created_via: CreatedVia = CreatedVia.REST
+    created_by: CreatedBy = CreatedBy.HUMAN
+    human_confirmed: bool = False
+
+    @field_validator("symbols")
+    @classmethod
+    def normalize_create_hypothesis_symbols(cls, value: list[str]) -> list[str]:
+        return [item.strip().upper() for item in value if item and item.strip()]
+
+
+class HypothesisLinkCreate(BaseModel):
+    linked_type: HypothesisLinkType
+    linked_id: str
+    evidence_hash: str = ""
+
+
+class HypothesisInvalidateRequest(BaseModel):
+    invalidation_note: str = Field(min_length=3)
+
+
+class PortfolioTarget(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("ptgt"))
+    asset_class: str
+    target_weight: float = Field(ge=0.0, le=1.0)
+    min_weight: float = Field(default=0.0, ge=0.0, le=1.0)
+    max_weight: float = Field(default=1.0, ge=0.0, le=1.0)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class SymbolClassification(BaseModel):
+    symbol: str
+    asset_class: str = "equity"
+    sector: str = "unknown"
+    region: str = "US"
+    style: str = "unknown"
+    risk_bucket: str = "medium"
+    updated_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_classification_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+
+class PortfolioRiskSnapshot(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("prisk"))
+    as_of: datetime = Field(default_factory=utc_now)
+    total_value: float = 0.0
+    cash_weight: float = 0.0
+    top_5_weight: float = 0.0
+    sector_exposure: dict[str, float] = Field(default_factory=dict)
+    asset_class_exposure: dict[str, float] = Field(default_factory=dict)
+    concentration_warnings: list[str] = Field(default_factory=list)
+    drift: dict[str, Any] = Field(default_factory=dict)
+    regime_context: dict[str, Any] = Field(default_factory=dict)
+    run_card_id: str | None = None
+
+
+class RebalanceCandidate(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("rbcand"))
+    review_id: str
+    symbol: str
+    action: RebalanceAction = RebalanceAction.HOLD
+    reason: str
+    status: RebalanceCandidateStatus = RebalanceCandidateStatus.CANDIDATE
+    linked_research_goal_id: str | None = None
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_rebalance_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+
+class RebalanceReview(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("rbrev"))
+    as_of: datetime = Field(default_factory=utc_now)
+    portfolio_value: float = 0.0
+    drift_summary: dict[str, Any] = Field(default_factory=dict)
+    risk_notes: list[str] = Field(default_factory=list)
+    action_bias: PortfolioActionBias = PortfolioActionBias.NO_CHANGE
+    run_card_id: str | None = None
+    candidates: list[RebalanceCandidate] = Field(default_factory=list)
+
+
+class EarningsPreview(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("eprev"))
+    symbol: str
+    catalyst_id: str | None = None
+    thesis_id: str | None = None
+    period: str = "unknown"
+    earnings_date: datetime | None = None
+    source_summary: str = ""
+    key_metrics: dict[str, Any] = Field(default_factory=dict)
+    bull_case: dict[str, Any] = Field(default_factory=dict)
+    base_case: dict[str, Any] = Field(default_factory=dict)
+    bear_case: dict[str, Any] = Field(default_factory=dict)
+    implied_move_pct: float | None = None
+    what_to_watch: list[str] = Field(default_factory=list)
+    evidence_hash: str = ""
+    run_card_id: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_earnings_preview_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+
+class EarningsPreviewRunRequest(BaseModel):
+    symbol: str
+    catalyst_id: str | None = None
+    thesis_id: str | None = None
+    period: str | None = None
+    implied_move_pct: float | None = None
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_earnings_preview_run_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+
+class QuoteHistoryImport(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("qhimp"))
+    source: QuoteHistorySource = QuoteHistorySource.MANUAL_CSV
+    symbol: str
+    broker_symbol: str | None = None
+    start_date: datetime | None = None
+    end_date: datetime | None = None
+    ktype: str = "K_DAY"
+    autype: str = "qfq"
+    row_count: int = 0
+    input_hash: str = ""
+    dataset_hash: str = ""
+    run_card_id: str | None = None
+    imported_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_quote_history_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+
+class PriceBar(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("bar"))
+    import_id: str
+    symbol: str
+    broker_symbol: str | None = None
+    ts: datetime
+    timezone: str = "America/New_York"
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float = 0.0
+    turnover: float | None = None
+    ktype: str = "K_DAY"
+    autype: str = "qfq"
+    source: QuoteHistorySource = QuoteHistorySource.MANUAL_CSV
+    raw: dict[str, Any] = Field(default_factory=dict)
+    row_hash: str = ""
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_price_bar_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+
+class QuoteHistoryRefreshRequest(BaseModel):
+    symbol: str
+    path: str | None = None
+    days: int = Field(default=365, gt=0, le=5000)
+    ktype: str = "K_DAY"
+    autype: str = "qfq"
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_quote_refresh_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+
+class ExternalBacktestImport(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("btimp"))
+    source: ExternalBacktestSource = ExternalBacktestSource.MANUAL
+    imported_run_card_path: str
+    run_card_hash: str
+    strategy_name: str = ""
+    universe: list[str] = Field(default_factory=list)
+    period_start: str | None = None
+    period_end: str | None = None
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    validation_status: ExternalBacktestValidationStatus = ExternalBacktestValidationStatus.IMPORTED
+    linked_hypothesis_id: str | None = None
+    linked_research_goal_id: str | None = None
+    file_hash: str = ""
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class BacktestImportRequest(BaseModel):
+    path: str
+    source: ExternalBacktestSource = ExternalBacktestSource.MANUAL
+    linked_hypothesis_id: str | None = None
+    linked_research_goal_id: str | None = None
+
+
+class DataSchema(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("dschema"))
+    name: str
+    version: str = "v1"
+    required_columns: list[str] = Field(default_factory=list)
+    optional_columns: list[str] = Field(default_factory=list)
+    canonical_mapping: dict[str, str] = Field(default_factory=dict)
+    validation_rules: dict[str, Any] = Field(default_factory=dict)
+
+
+class DataImport(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("dimp"))
+    source_name: str
+    file_hash: str
+    file_type: str
+    schema_name: str
+    schema_version: str = "v1"
+    row_count: int = 0
+    dataset_hash: str = ""
+    validation_warnings: list[str] = Field(default_factory=list)
+    run_card_id: str | None = None
+    imported_at: datetime = Field(default_factory=utc_now)
+
+
+class DataImportRequest(BaseModel):
+    schema_name: str
+    path: str
+    source_name: str = "local"
+
+
+class DailyBrief(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("brief"))
+    date: str
+    brief_type: DailyBriefType = DailyBriefType.MORNING
+    market_regime_snapshot_id: str | None = None
+    advisor_brief_hash: str = ""
+    blocked_items: list[dict[str, Any]] = Field(default_factory=list)
+    action_items: list[dict[str, Any]] = Field(default_factory=list)
+    watch_items: list[dict[str, Any]] = Field(default_factory=list)
+    info_items: list[dict[str, Any]] = Field(default_factory=list)
+    delivered_to: str | None = None
+    delivered_at: datetime | None = None
+    run_card_id: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class DailyBriefRunRequest(BaseModel):
+    brief_type: DailyBriefType = DailyBriefType.MORNING
+    delivered_to: str | None = None
+
+
+class PeerGroup(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("peer"))
+    name: str = Field(min_length=2)
+    sector: str = "unknown"
+    symbols: list[str] = Field(default_factory=list)
+    theme: str = ""
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("symbols")
+    @classmethod
+    def normalize_peer_symbols(cls, value: list[str]) -> list[str]:
+        return [item.strip().upper() for item in value if item and item.strip()]
+
+
+class PeerGroupCreate(BaseModel):
+    name: str = Field(min_length=2)
+    sector: str = "unknown"
+    symbols: list[str] = Field(default_factory=list)
+    theme: str = ""
+
+    @field_validator("symbols")
+    @classmethod
+    def normalize_peer_create_symbols(cls, value: list[str]) -> list[str]:
+        return [item.strip().upper() for item in value if item and item.strip()]
+
+
+class CorrelationSnapshot(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("corr"))
+    symbols: list[str] = Field(default_factory=list)
+    lookback_days: int = 90
+    correlation_matrix: dict[str, dict[str, float]] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    run_card_id: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class CorrelationRunRequest(BaseModel):
+    symbols: list[str] = Field(default_factory=list)
+    lookback_days: int = Field(default=90, gt=1, le=2000)
+
+    @field_validator("symbols")
+    @classmethod
+    def normalize_corr_symbols(cls, value: list[str]) -> list[str]:
+        return [item.strip().upper() for item in value if item and item.strip()]
+
+
+class SectorSnapshot(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("sector"))
+    sector: str
+    leaders: list[str] = Field(default_factory=list)
+    laggards: list[str] = Field(default_factory=list)
+    valuation_context: dict[str, Any] = Field(default_factory=dict)
+    risk_notes: list[str] = Field(default_factory=list)
+    source_summary: str = ""
+    run_card_id: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class SectorSnapshotRunRequest(BaseModel):
+    sector: str
+    symbols: list[str] = Field(default_factory=list)
+
+    @field_validator("symbols")
+    @classmethod
+    def normalize_sector_symbols(cls, value: list[str]) -> list[str]:
+        return [item.strip().upper() for item in value if item and item.strip()]
+
+
+class OptionsSnapshot(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("opt"))
+    symbol: str
+    expiry: str
+    atm_iv: float | None = None
+    implied_move_pct: float | None = None
+    put_call_ratio: float | None = None
+    skew: float | None = None
+    source: str = "manual"
+    source_uri: str | None = None
+    run_card_id: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_options_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+
+class OptionsSnapshotCreate(BaseModel):
+    symbol: str
+    expiry: str
+    atm_iv: float | None = None
+    implied_move_pct: float | None = None
+    put_call_ratio: float | None = None
+    skew: float | None = None
+    source: str = "manual"
+    source_uri: str | None = None
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_options_create_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+
+class DividendReview(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("div"))
+    symbol: str
+    dividend_yield: float | None = None
+    payout_ratio: float | None = None
+    dividend_growth_3y: float | None = None
+    fcf_coverage: float | None = None
+    buyback_yield: float | None = None
+    shareholder_yield: float | None = None
+    yield_trap_warning: str = ""
+    ex_dividend_date: str | None = None
+    source_summary: str = ""
+    evidence_hash: str = ""
+    run_card_id: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_dividend_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+
+class DividendReviewRunRequest(BaseModel):
+    symbol: str
+    dividend_yield: float | None = None
+    payout_ratio: float | None = None
+    dividend_growth_3y: float | None = None
+    fcf_coverage: float | None = None
+    buyback_yield: float | None = None
+    ex_dividend_date: str | None = None
+    thesis_id: str | None = None
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_dividend_run_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+
+class IdeaScreen(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("screen"))
+    screen_type: str = "manual"
+    criteria: dict[str, Any] = Field(default_factory=dict)
+    universe: str = "watchlist"
+    source_summary: str = ""
+    run_card_id: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class IdeaCandidate(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("idea"))
+    screen_id: str | None = None
+    symbol: str
+    direction: IdeaDirection = IdeaDirection.NEUTRAL_WATCH
+    one_line_thesis: str
+    score: float = 0.0
+    risks: list[str] = Field(default_factory=list)
+    next_research_step: str = ""
+    status: IdeaCandidateStatus = IdeaCandidateStatus.INBOX
+    linked_research_goal_id: str | None = None
+    linked_thesis_id: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_idea_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+
+class IdeaScreenRunRequest(BaseModel):
+    screen_type: str = "manual"
+    criteria: dict[str, Any] = Field(default_factory=dict)
+    universe: str = "watchlist"
+    symbols: list[str] = Field(default_factory=list)
+
+    @field_validator("symbols")
+    @classmethod
+    def normalize_idea_symbols(cls, value: list[str]) -> list[str]:
+        return [item.strip().upper() for item in value if item and item.strip()]
+
+
+class IdeaCandidateCreate(BaseModel):
+    symbol: str
+    direction: IdeaDirection = IdeaDirection.NEUTRAL_WATCH
+    one_line_thesis: str = Field(min_length=5)
+    score: float = 0.0
+    risks: list[str] = Field(default_factory=list)
+    next_research_step: str = ""
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_idea_create_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+
+class CommitteeReview(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("committee"))
+    topic: str
+    proposal_id: str | None = None
+    research_goal_id: str | None = None
+    hypothesis_id: str | None = None
+    bull_case: str = ""
+    bear_case: str = ""
+    risk_memo: str = ""
+    missing_evidence: list[str] = Field(default_factory=list)
+    conclusion: CommitteeConclusion = CommitteeConclusion.RESEARCH_MORE
+    run_card_id: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class CommitteeReviewRunRequest(BaseModel):
+    topic: str = Field(min_length=3)
+    proposal_id: str | None = None
+    research_goal_id: str | None = None
+    hypothesis_id: str | None = None
+    bull_case: str = ""
+    bear_case: str = ""
+    risk_memo: str = ""
+    missing_evidence: list[str] = Field(default_factory=list)
+    conclusion: CommitteeConclusion = CommitteeConclusion.RESEARCH_MORE
+
+
+class SkillValidationIssue(BaseModel):
+    path: str
+    message: str
+    severity: str = "error"
+
+
+class SkillValidationReport(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("skillval"))
+    checked_count: int = 0
+    issue_count: int = 0
+    issues: list[SkillValidationIssue] = Field(default_factory=list)
+    summary: str = ""
+    run_card_id: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class DataQualityReport(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("dq"))
+    target_type: DataQualityTargetType = DataQualityTargetType.ALL
+    target_id: str | None = None
+    missing_fields: list[dict[str, Any]] = Field(default_factory=list)
+    stale_data: list[dict[str, Any]] = Field(default_factory=list)
+    duplicate_rows: list[dict[str, Any]] = Field(default_factory=list)
+    unit_mismatch: list[dict[str, Any]] = Field(default_factory=list)
+    outliers: list[dict[str, Any]] = Field(default_factory=list)
+    severity_counts: dict[str, int] = Field(default_factory=dict)
+    summary: str = ""
+    run_card_id: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class DataQualityRunRequest(BaseModel):
+    target_type: DataQualityTargetType = DataQualityTargetType.ALL
+    target_id: str | None = None
 
 
 class RiskCheck(BaseModel):
@@ -804,6 +1485,7 @@ class EarningsReview(BaseModel):
     filing_date: datetime | None = None
     catalyst_id: str | None = None
     catalyst_review_id: str | None = None
+    earnings_preview_id: str | None = None
     research_goal_id: str | None = None
     thesis_id: str | None = None
     revenue_yoy: float | None = None
@@ -1056,6 +1738,11 @@ class ShadowReport(BaseModel):
     counterfactual_pnl: float | None = None
     actual_pnl: float = 0.0
     delta_pnl: float | None = None
+    counterfactual_coverage_ratio: float = 0.0
+    events_with_price_count: int = 0
+    events_without_price_count: int = 0
+    total_delta_pnl: float | None = None
+    price_dataset_hash: str = ""
     diagnostics: dict[str, Any] = Field(default_factory=dict)
     run_card_id: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
@@ -1071,6 +1758,16 @@ class ShadowEvent(BaseModel):
     expected_action: dict[str, Any] = Field(default_factory=dict)
     actual_action: dict[str, Any] = Field(default_factory=dict)
     pnl_impact: float | None = None
+    expected_exit_at: datetime | None = None
+    expected_exit_price: float | None = None
+    expected_exit_price_source: str | None = None
+    expected_exit_price_confidence: PriceBarConfidence = PriceBarConfidence.UNAVAILABLE
+    actual_exit_price: float | None = None
+    actual_pnl: float | None = None
+    counterfactual_pnl: float | None = None
+    delta_pnl: float | None = None
+    price_bar_id: str | None = None
+    counterfactual_method: str = ""
     explanation: str = ""
     created_at: datetime = Field(default_factory=utc_now)
 
@@ -1097,6 +1794,7 @@ class ShadowReportRunRequest(BaseModel):
     period_start: datetime | None = None
     period_end: datetime | None = None
     symbols: list[str] | None = None
+    use_quote_history: bool = False
 
     @field_validator("symbols")
     @classmethod

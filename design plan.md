@@ -29,6 +29,28 @@
 - 這仍然是 research-only workflow：不自動建立 proposal、不自動 approve、不 unlock Futu、不送 live order。
 - 原本的手動表單保留為「控制平面 / 審計工作台」，而不是日常主入口。
 
+## 目前落地：Next Phase Research Cockpit
+
+`nextphaseplan.docx` 的 15 個 checkpoint 已按 research-only 原則落地為本機控制平面 artifact：
+
+- Market Regime / Risk Budget Lens：只作 proposal 審批背景。
+- Hypothesis Registry：研究假設可 linked run card / research goal / thesis / catalyst，但不能通過 proposal gate。
+- Portfolio Studio：組合風險、drift、rebalance candidate；candidate 只可升級成 research goal。
+- Earnings Preview：財報前 key metrics、bull/base/bear scenario、what-to-watch、implied move context。
+- Quote History / Shadow PnL：每日 close 只作診斷，缺價保持 null。
+- External Backtest Importer：只讀 JSON/Markdown artifact，不執行外部 code，不通過 proposal gate。
+- Data Bridge：安全 CSV schema import，MCP read-only。
+- Daily Brief：morning/close/weekly research delivery artifact。
+- Sector / Correlation、Options、Dividend、Idea Inbox、Committee Review、Skill Validator、Data Quality：全部只產生 context、warning、run card 或 research backlog。
+
+新的共同原則：
+
+- 新 layer 可建立 run card、research artifact、warning、research goal。
+- 新 layer 不可直接建立 `PENDING` proposal。
+- 新 layer 不可 approve proposal。
+- 新 layer 不可 unlock Futu 或送 live broker order。
+- 若要影響 proposal，必須回到 `InvestmentService` / policy / evidence gate / thesis / catalyst invariant。
+
 ## 總體架構與資料流
 
 ```mermaid

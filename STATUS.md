@@ -14,6 +14,14 @@ This version is intentionally paper-only. It can create trade proposals, run pol
 - AI Advisor Brief first-screen workflow that automatically summarizes portfolio, proposal, thesis, catalyst, earnings, behavior, shadow, and research-goal state into research-only advice.
 - Market Context Lens with broad-market symbols for index, volatility, rates, gold, and oil context; it informs advice but does not create proposal candidates.
 - Market Regime / Risk Budget Lens that deterministically turns broad-market quote/news context into risk appetite, growth/rates/volatility/inflation pressure, and proposal-bias background.
+- Hypothesis Registry / Research Autopilot spine with hypothesis lifecycle, run-card/research/thesis/catalyst links, and MCP-created drafts kept unconfirmed.
+- Portfolio Studio / Risk X-ray with allocation drift, concentration warnings, rebalance reviews, and candidates that can only promote to research goals.
+- Earnings Preview layer for pre-event setup, key metrics, scenarios, what-to-watch lists, and optional implied-move context before post-event earnings review.
+- Quote History layer with daily price bars and shadow-account diagnostic PnL coverage only when reliable bars exist.
+- External Backtest Importer for JSON/Markdown run-card artifacts without executing external code or passing proposal gates.
+- Data Bridge for safe local CSV imports, including symbol classification schema, with REST/CLI write paths and MCP read-only summaries.
+- Daily Brief / Research Delivery artifacts for morning, close, and weekly blocked/action/watch/info summaries.
+- Sector / Peer / Correlation Lens, Options Implied Move Lens, Dividend / Shareholder Yield Lens, Idea Inbox, Committee Review, Skill Validator, and Data Quality reports.
 - SQLite-backed local store for portfolio snapshot, quotes, news, proposals, executions, and audit events.
 - Demo portfolio, quotes, and news seed data.
 - Watchlist resolver that merges configured symbols, held positions, and locally cached quotes.
@@ -86,7 +94,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - `reject_trade_proposal`
 - Hermes config snippet at `deploy/hermes/config.snippet.yaml`.
 - launchd example plists at `deploy/launchd/com.local.invest-agent-api.plist` and `deploy/launchd/com.local.invest-agent-scheduler.plist`.
-- Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, non-pending state handling, Futu adapter mapping, dashboard localization, news parsing, watchlist resolution, market context/regime guardrails, SEC/IR parsing, event replay, proposal draft creation, research evidence gates, thesis tracker behavior, catalyst calendar invariants, earnings review behavior, research run card artifacts, trade journal behavior analytics, shadow account counterfactual reports, and AI Advisor Brief behavior.
+- Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, non-pending state handling, Futu adapter mapping, dashboard localization, news parsing, watchlist resolution, market context/regime guardrails, SEC/IR parsing, event replay, proposal draft creation, research evidence gates, thesis tracker behavior, catalyst calendar invariants, earnings review/preview behavior, research run card artifacts, trade journal behavior analytics, quote-history-backed shadow diagnostics, hypothesis/portfolio/backtest/data-bridge/daily-brief/sector/options/dividend/idea/committee/skill-validator/data-quality layers, and AI Advisor Brief behavior.
 
 ## AI Advisor Brief
 
@@ -111,6 +119,7 @@ The app now separates broad-market context from trade proposal watchlists.
 - Safe autonomy refreshes market-context news alongside watchlist news.
 - Dashboard has a `市場全景` panel and `刷新市場全景` action.
 - Dashboard has a `市場狀態 / 風險預算` panel with risk appetite, proposal bias, growth/rates pressure, and vol/inflation pressure.
+- Dashboard includes panels for 研究假設, 組合風險 / 再平衡檢討, 財報預覽, Quote History / Shadow PnL, 外部回測匯入, 資料匯入, 每日簡報, 同業與相關性, 期權風險, 股息檢討, 想法收件箱, 投資委員會備忘, 技能 / 指令檢查, and 資料品質.
 - Dashboard market summary now shows 24 latest news items instead of 8.
 - Futu read-only refresh attempts quote snapshots for market-context symbols in addition to held positions.
 - Hermes MCP exposes `get_market_context`, `get_market_regime`, and `refresh_market_context_news`.
@@ -130,7 +139,7 @@ The global Hermes config at `/Users/apple/.hermes/config.yaml` has been updated 
 
 `hermes auth status openai-codex` shows logged in.
 
-`/Users/apple/.hermes/hermes-agent/venv/bin/hermes mcp list` shows `invest_agent` enabled with 50 selected tools after adding the market regime tool.
+`/Users/apple/.hermes/hermes-agent/venv/bin/hermes mcp list` should now show `invest_agent` with 85 local MCP tools after adding the next-phase research cockpit tools. Re-run the Hermes list command after syncing config to verify the live selection.
 
 ## Futu Setup
 
@@ -379,11 +388,12 @@ This phase still does not unlock Futu OpenD and does not place live orders.
 
 The app now adds a research-only shadow account layer on top of imported fills, FIFO roundtrips, and behavior reports. It studies whether historical trades followed the user's own observed discipline; it does not create proposals, approve proposals, unlock Futu, or place broker orders.
 
-- SQLite now has `shadow_strategies`, `shadow_rules`, `shadow_reports`, and `shadow_events` tables.
+- SQLite now has `shadow_strategies`, `shadow_rules`, `shadow_reports`, `shadow_events`, `quote_history_imports`, and `price_bars` tables.
 - `ShadowAccountService.extract_strategy` reads a behavior report plus local fills/roundtrips and creates deterministic draft rules such as median holding days, median winner/loser PnL %, median entry notional, same-symbol cooldown, thesis requirement, and high-impact catalyst guardrail.
 - Extracted strategies default to `draft`, `human_confirmed=false`; they must be confirmed through CLI/REST/dashboard before a shadow report can run.
-- Shadow report v1 is journal-internal only. It can flag `early_exit`, `late_exit`, `oversized_trade`, `ignored_catalyst`, `thesis_mismatch`, `post_event_review_missing`, and `contradicted_earnings_review`, but it does not run full OHLCV backtests.
-- Missing quote history is explicit: `counterfactual_pnl` and `delta_pnl` remain `null` instead of being fabricated.
+- Shadow report v1 can remain journal-internal, or use cached daily price bars when `use_quote_history=true` to estimate diagnostic counterfactual PnL for early/late exits.
+- Missing quote history is explicit: `counterfactual_pnl` and `delta_pnl` remain `null` when a matching daily close is unavailable.
+- Quote-history-backed diagnostics use daily close only. They do not model dividends, splits, FX, taxes, borrow, liquidity, or executable intraday prices.
 - Shadow strategy extraction creates `shadow_strategy_extract` run cards; shadow reports create `shadow_report` run cards with strategy inputs, roundtrip dataset hash, event counts, warnings, and outputs.
 - REST endpoints:
   - `POST /api/shadow-strategies/extract`
@@ -394,11 +404,16 @@ The app now adds a research-only shadow account layer on top of imported fills, 
   - `GET /api/shadow-reports`
   - `GET /api/shadow-reports/{report_id}`
   - `GET /api/shadow-events`
+  - `POST /api/quote-history/refresh`
+  - `GET /api/quote-history`
+  - `GET /api/quote-history/{symbol}`
 - Hermes MCP shadow tools are read-only:
   - `list_shadow_strategies`
   - `get_shadow_strategy`
   - `list_shadow_reports`
   - `get_shadow_report`
+  - `list_quote_history`
+  - `get_quote_history_summary`
   - `list_shadow_events`
 - CLI:
   - `python -m invest_agent.cli extract-shadow-strategy --behavior-report-id beh_...`

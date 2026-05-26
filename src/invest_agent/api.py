@@ -7,29 +7,60 @@ from pydantic import BaseModel
 
 from .advisor import AdvisorService
 from .autonomy import SafeAutonomyRunner, autonomy_status
+from .backtest_imports import BacktestImportService
 from .catalysts import CatalystCalendarService
+from .committee_reviews import CommitteeReviewService
 from .config import get_settings
+from .daily_briefs import DailyBriefService
+from .data_bridge import DataBridgeService
+from .data_quality import DataQualityService
 from .deps import get_service, get_store
+from .dividend_lens import DividendLensService
+from .earnings_preview import EarningsPreviewService
 from .earnings_review import EarningsReviewService
 from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event_file
 from .futu_adapter import FutuIntegrationError, get_futu_status, refresh_futu_readonly
+from .hypotheses import HypothesisRegistryService
+from .idea_inbox import IdeaInboxService
 from .ir_feeds import IrFeedIngestor
 from .market_news import MarketNewsIngestor, external_ticker, resolve_watchlist_symbols
 from .market_context import MarketContextService
 from .market_regime import MarketRegimeService
+from .options_lens import OptionsLensService
+from .portfolio_studio import PortfolioStudioService
+from .quote_history import QuoteHistoryService
+from .sector_lens import SectorLensService
+from .skill_validator import SkillValidatorService
 from .models import (
     AdvisorBriefRequest,
+    BacktestImportRequest,
     CatalystCompleteRequest,
     CatalystCreate,
     CatalystReviewCreate,
     CatalystStatus,
     BehaviorReportRunRequest,
+    CommitteeReviewRunRequest,
+    CorrelationRunRequest,
     CreatedBy,
     CreatedVia,
+    DailyBriefRunRequest,
+    DataImportRequest,
+    DataQualityRunRequest,
+    DividendReviewRunRequest,
     EarningsReviewApplyRequest,
+    EarningsPreviewRunRequest,
     EarningsReviewRunRequest,
+    HypothesisCreate,
+    HypothesisInvalidateRequest,
+    HypothesisLinkCreate,
+    IdeaCandidateCreate,
+    IdeaCandidateStatus,
+    IdeaScreenRunRequest,
+    OptionsSnapshotCreate,
+    PeerGroupCreate,
     ProposalCreate,
     ProposalStatus,
+    QuoteHistoryRefreshRequest,
     ResearchEvidenceCreate,
     ResearchGoalCreate,
     ResearchGoalStatus,
@@ -37,6 +68,7 @@ from .models import (
     RunCardStatus,
     RunCardTriggerSource,
     RunCardType,
+    SectorSnapshotRunRequest,
     ShadowReportRunRequest,
     ShadowStrategyConfirmRequest,
     ShadowStrategyExtractRequest,
@@ -259,6 +291,293 @@ def refresh_fundamentals(request: FundamentalsRefreshRequest | None = None):
         max_symbols=request.max_symbols,
         forms=request.forms,
     )
+
+
+@app.get("/api/hypotheses")
+def hypotheses(symbol: str | None = None, limit: int = 50):
+    return get_store().list_hypotheses(symbol=symbol, limit=limit)
+
+
+@app.post("/api/hypotheses")
+def create_hypothesis(request: HypothesisCreate):
+    return HypothesisRegistryService(get_store()).create(request, actor=RunCardActor.API)
+
+
+@app.get("/api/hypotheses/{hypothesis_id}")
+def hypothesis(hypothesis_id: str):
+    item = get_store().get_hypothesis(hypothesis_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="hypothesis not found")
+    return item
+
+
+@app.post("/api/hypotheses/{hypothesis_id}/links")
+def link_hypothesis(hypothesis_id: str, request: HypothesisLinkCreate):
+    try:
+        return HypothesisRegistryService(get_store()).link(hypothesis_id, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/hypotheses/{hypothesis_id}/invalidate")
+def invalidate_hypothesis(hypothesis_id: str, request: HypothesisInvalidateRequest):
+    try:
+        return HypothesisRegistryService(get_store()).invalidate(hypothesis_id, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/portfolio-risk")
+def portfolio_risk(limit: int = 20):
+    return get_store().list_portfolio_risk_snapshots(limit=limit)
+
+
+@app.post("/api/portfolio-risk/refresh")
+def refresh_portfolio_risk():
+    return PortfolioStudioService(get_settings(), get_store()).refresh_risk_snapshot(actor=RunCardActor.API)
+
+
+@app.get("/api/rebalance-reviews")
+def rebalance_reviews(limit: int = 20):
+    return get_store().list_rebalance_reviews(limit=limit)
+
+
+@app.post("/api/rebalance-reviews/run")
+def run_rebalance_review():
+    return PortfolioStudioService(get_settings(), get_store()).run_rebalance_review(actor=RunCardActor.API)
+
+
+@app.post("/api/rebalance-candidates/{candidate_id}/promote-to-research-goal")
+def promote_rebalance_candidate(candidate_id: str):
+    try:
+        return PortfolioStudioService(get_settings(), get_store()).promote_candidate_to_research_goal(candidate_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/earnings-previews")
+def earnings_previews(symbol: str | None = None, limit: int = 50):
+    return get_store().list_earnings_previews(symbol=symbol, limit=limit)
+
+
+@app.post("/api/earnings-previews/run")
+def run_earnings_preview(request: EarningsPreviewRunRequest):
+    try:
+        return EarningsPreviewService(get_store()).run_preview(request, actor=RunCardActor.API)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/earnings-previews/{preview_id}")
+def earnings_preview(preview_id: str):
+    item = get_store().get_earnings_preview(preview_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="earnings preview not found")
+    return item
+
+
+@app.get("/api/quote-history")
+def quote_history(symbol: str | None = None):
+    return QuoteHistoryService(get_store()).summary(symbol=symbol)
+
+
+@app.get("/api/quote-history/{symbol}")
+def quote_history_symbol(symbol: str, limit: int = 500):
+    return get_store().list_price_bars(symbol=symbol, limit=limit)
+
+
+@app.post("/api/quote-history/refresh")
+def refresh_quote_history(request: QuoteHistoryRefreshRequest):
+    try:
+        return QuoteHistoryService(get_store()).refresh(request, actor=RunCardActor.API)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/backtest-imports")
+def backtest_imports(limit: int = 50):
+    return get_store().list_external_backtest_imports(limit=limit)
+
+
+@app.post("/api/backtest-imports")
+def import_backtest(request: BacktestImportRequest):
+    try:
+        return BacktestImportService(get_store()).import_run_card(request, actor=RunCardActor.API)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/backtest-imports/{import_id}")
+def backtest_import(import_id: str):
+    item = get_store().get_external_backtest_import(import_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="backtest import not found")
+    return item
+
+
+@app.get("/api/data-schemas")
+def data_schemas():
+    service = DataBridgeService(get_store())
+    service.ensure_default_schemas()
+    return get_store().list_data_schemas(limit=100)
+
+
+@app.get("/api/data-imports")
+def data_imports(limit: int = 50):
+    return get_store().list_data_imports(limit=limit)
+
+
+@app.post("/api/data-imports/import")
+def import_data(request: DataImportRequest):
+    try:
+        return DataBridgeService(get_store()).import_file(request, actor=RunCardActor.API, allow_absolute=False)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/daily-briefs")
+def daily_briefs(limit: int = 50):
+    return get_store().list_daily_briefs(limit=limit)
+
+
+@app.post("/api/daily-briefs/run")
+def run_daily_brief(request: DailyBriefRunRequest | None = None):
+    return DailyBriefService(get_settings(), get_store()).run(request or DailyBriefRunRequest(), actor=RunCardActor.API)
+
+
+@app.get("/api/daily-briefs/{brief_id}")
+def daily_brief(brief_id: str):
+    item = get_store().get_daily_brief(brief_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="daily brief not found")
+    return item
+
+
+@app.get("/api/peer-groups")
+def peer_groups(sector: str | None = None, limit: int = 50):
+    return get_store().list_peer_groups(sector=sector, limit=limit)
+
+
+@app.post("/api/peer-groups")
+def create_peer_group(request: PeerGroupCreate):
+    return SectorLensService(get_store()).create_peer_group(request)
+
+
+@app.post("/api/correlations/run")
+def run_correlation(request: CorrelationRunRequest):
+    return SectorLensService(get_store()).run_correlation(request, actor=RunCardActor.API)
+
+
+@app.get("/api/correlations")
+def correlations(limit: int = 50):
+    return get_store().list_correlation_snapshots(limit=limit)
+
+
+@app.post("/api/sector-snapshots/run")
+def run_sector_snapshot(request: SectorSnapshotRunRequest):
+    return SectorLensService(get_store()).run_sector_snapshot(request, actor=RunCardActor.API)
+
+
+@app.get("/api/sector-snapshots")
+def sector_snapshots(sector: str | None = None, limit: int = 50):
+    return get_store().list_sector_snapshots(sector=sector, limit=limit)
+
+
+@app.get("/api/options-snapshots")
+def options_snapshots(symbol: str | None = None, limit: int = 50):
+    return get_store().list_options_snapshots(symbol=symbol, limit=limit)
+
+
+@app.post("/api/options-snapshots")
+def create_options_snapshot(request: OptionsSnapshotCreate):
+    return OptionsLensService(get_store()).create_snapshot(request, actor=RunCardActor.API)
+
+
+@app.post("/api/options-snapshots/import")
+def import_options_snapshot(request: OptionsSnapshotCreate):
+    return OptionsLensService(get_store()).create_snapshot(request, actor=RunCardActor.API)
+
+
+@app.get("/api/dividend-reviews")
+def dividend_reviews(symbol: str | None = None, limit: int = 50):
+    return get_store().list_dividend_reviews(symbol=symbol, limit=limit)
+
+
+@app.post("/api/dividend-reviews/run")
+def run_dividend_review(request: DividendReviewRunRequest):
+    return DividendLensService(get_store()).run_review(request, actor=RunCardActor.API)
+
+
+@app.post("/api/idea-screens/run")
+def run_idea_screen(request: IdeaScreenRunRequest | None = None):
+    return IdeaInboxService(get_settings(), get_store()).run_screen(request or IdeaScreenRunRequest(), actor=RunCardActor.API)
+
+
+@app.get("/api/idea-candidates")
+def idea_candidates(status: IdeaCandidateStatus | None = None, symbol: str | None = None, limit: int = 50):
+    return get_store().list_idea_candidates(status=status, symbol=symbol, limit=limit)
+
+
+@app.post("/api/idea-candidates")
+def create_idea_candidate(request: IdeaCandidateCreate):
+    return IdeaInboxService(get_settings(), get_store()).create_candidate(request)
+
+
+@app.post("/api/idea-candidates/{candidate_id}/promote-to-research-goal")
+def promote_idea_to_research_goal(candidate_id: str):
+    try:
+        return IdeaInboxService(get_settings(), get_store()).promote_to_research_goal(candidate_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/idea-candidates/{candidate_id}/promote-to-thesis")
+def promote_idea_to_thesis(candidate_id: str):
+    try:
+        return IdeaInboxService(get_settings(), get_store()).promote_to_thesis(candidate_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/committee-reviews")
+def committee_reviews(limit: int = 50):
+    return get_store().list_committee_reviews(limit=limit)
+
+
+@app.post("/api/committee-reviews/run")
+def run_committee_review(request: CommitteeReviewRunRequest):
+    return CommitteeReviewService(get_store()).run_review(request, actor=RunCardActor.API)
+
+
+@app.get("/api/committee-reviews/{review_id}")
+def committee_review(review_id: str):
+    item = get_store().get_committee_review(review_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="committee review not found")
+    return item
+
+
+@app.get("/api/skills")
+def skills():
+    return SkillValidatorService(get_store()).validate(actor=RunCardActor.API)
+
+
+@app.get("/api/data-quality")
+def data_quality_reports(limit: int = 50):
+    return get_store().list_data_quality_reports(limit=limit)
+
+
+@app.post("/api/data-quality/run")
+def run_data_quality(request: DataQualityRunRequest | None = None):
+    return DataQualityService(get_store()).run_report(request or DataQualityRunRequest(), actor=RunCardActor.API)
+
+
+@app.get("/api/data-quality/{report_id}")
+def data_quality_report(report_id: str):
+    item = get_store().get_data_quality_report(report_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="data quality report not found")
+    return item
 
 
 @app.get("/api/research-goals")
@@ -1049,6 +1368,62 @@ DASHBOARD_HTML = """
       <h2>市場狀態 / 風險預算</h2>
       <div class="source-strip" id="market-regime"></div>
       <div class="stack-list" id="market-regime-drivers"></div>
+    </section>
+    <section class="panel">
+      <h2>研究假設</h2>
+      <div class="empty">Hypothesis Registry：研究 claim、run card link、invalidation note；不會建立 proposal。</div>
+    </section>
+    <section class="panel">
+      <h2>組合風險 / 再平衡檢討</h2>
+      <div class="empty">Portfolio Studio：concentration、drift、rebalance candidates；candidate 只可升級成 research goal。</div>
+    </section>
+    <section class="panel">
+      <h2>財報預覽</h2>
+      <div class="empty">Pre-event setup：key metrics、bull/base/bear scenario、what to watch、implied move。</div>
+    </section>
+    <section class="panel">
+      <h2>Quote History / Shadow PnL</h2>
+      <div class="empty">每日 close 只作 shadow report 診斷 PnL；缺價時 counterfactual PnL 保持 null。</div>
+    </section>
+    <section class="panel">
+      <h2>外部回測匯入</h2>
+      <div class="empty">只匯入 run_card JSON / Markdown artifact，不執行外部程式，也不能通過 proposal gate。</div>
+    </section>
+    <section class="panel">
+      <h2>資料匯入</h2>
+      <div class="empty">Data Bridge：安全匯入 CSV schema，例如 symbol classification；MCP 維持 read-only。</div>
+    </section>
+    <section class="panel">
+      <h2>每日簡報</h2>
+      <div class="empty">Research Delivery：morning / close / weekly brief，整理 blocked/action/watch/info items。</div>
+    </section>
+    <section class="panel">
+      <h2>同業與相關性</h2>
+      <div class="empty">Sector / Peer / Correlation Lens：只提供集中度與同業 context warning。</div>
+    </section>
+    <section class="panel">
+      <h2>期權風險</h2>
+      <div class="empty">Options Implied Move Lens：只作事件風險 context，不產生 options strategy。</div>
+    </section>
+    <section class="panel">
+      <h2>股息檢討</h2>
+      <div class="empty">Dividend / Shareholder Yield Lens：檢查 payout、FCF coverage、yield-trap warning。</div>
+    </section>
+    <section class="panel">
+      <h2>想法收件箱</h2>
+      <div class="empty">Idea Inbox：新想法先進 research backlog，不能直接建立 proposal。</div>
+    </section>
+    <section class="panel">
+      <h2>投資委員會備忘</h2>
+      <div class="empty">Committee Review：bull/bear/risk/missing evidence memo，不能 approve。</div>
+    </section>
+    <section class="panel">
+      <h2>技能 / 指令檢查</h2>
+      <div class="empty">Local skill validator：檢查 SKILL.md allowed tools 與 paper-only guardrail。</div>
+    </section>
+    <section class="panel">
+      <h2>資料品質</h2>
+      <div class="empty">Data QA：fundamentals、price bars、trade journal、catalysts、run cards warning report。</div>
     </section>
     <section class="panel">
       <h2>市場全景</h2>
