@@ -43,7 +43,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
 - Risk checks for max notional, cash availability, portfolio percentage, confidence floor, duplicate pending proposals, and approval-time price drift.
 - Traditional Chinese browser dashboard for portfolio, pending proposals, create proposal, approve/reject, positions, news digest, source provenance, refresh timestamps, and recent audit events.
 - Futu OpenD read-only refresh for account funds, positions, and position quote snapshots.
-- Hermes daily stdio MCP surface exposing only high-level Advisor tools:
+- Hermes daily stdio MCP surface exposing only high-level Advisor/Profile/Committee tools:
   - `ask_advisor`
   - `get_advisor_profile`
   - `suggest_advisor_profile_update`
@@ -52,6 +52,9 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - `run_pre_market_advisor_brief`
   - `run_post_close_advisor_brief`
   - `get_latest_advisor_brief`
+  - `run_committee_review`
+  - `list_committee_reviews`
+  - `get_committee_review`
   - low-level research / proposal / approval tools remain in the local control plane but are hidden from daily Hermes gateway usage.
 - Hermes daily config snippets at `deploy/hermes/config.snippet.yaml` and `deploy/hermes/config.daily.snippet.yaml`; research/admin snippet at `deploy/hermes/config.research-admin.snippet.yaml`.
 - launchd example plists at `deploy/launchd/com.local.invest-agent-api.plist` and `deploy/launchd/com.local.invest-agent-scheduler.plist`.
@@ -80,7 +83,7 @@ Hermes now has a higher-level Advisor Mode over the existing research control pl
 - `GET /api/advisor/briefs/latest` and `GET /api/advisor/recommendations` expose the stored Advisor Mode state to dashboard/Hermes.
 - CLI commands: `ask-advisor`, `opportunity-radar`, `advisor-pulse`, `pre-market-brief`, `post-close-brief`.
 - Scheduler commands: `advisor-scheduler-once` and `advisor-scheduler-loop`, with launchd sample `deploy/launchd/com.local.invest-agent-advisor-scheduler.plist`.
-- Hermes MCP high-level tools: `ask_advisor`, `get_advisor_profile`, `suggest_advisor_profile_update`, `confirm_advisor_profile_update`, `run_hourly_advisor_pulse`, `run_pre_market_advisor_brief`, `run_post_close_advisor_brief`, `get_latest_advisor_brief`.
+- Hermes MCP high-level tools: `ask_advisor`, `get_advisor_profile`, `suggest_advisor_profile_update`, `confirm_advisor_profile_update`, `run_hourly_advisor_pulse`, `run_pre_market_advisor_brief`, `run_post_close_advisor_brief`, `get_latest_advisor_brief`, `run_committee_review`, `list_committee_reviews`, `get_committee_review`.
 - Dashboard now has a `Hermes Advisor Mode` panel with Ask Hermes, Opportunity Radar, Hourly Pulse, full brief actions, and recommendation groups.
 - The schedule context derives NYSE/Nasdaq regular session from America/New_York time and converts to Asia/Singapore with DST handled by timezone conversion; it also applies rule-based US market holiday / early-close handling.
 - Safety boundary remains unchanged: Advisor Mode writes advisor/run-card artifacts only. It cannot create pending proposals, approve proposals, unlock Futu, or place/modify orders.
@@ -96,7 +99,7 @@ Opportunity Radar sits behind `ask_advisor` and can also be run through local RE
 - Tables: `opportunity_radar_runs` and `opportunity_cards`.
 - Run cards use type `opportunity_radar` and include scoring version, evidence coverage, warnings, and output hashes.
 - REST: `POST /api/opportunity-radar/run`, `GET /api/opportunity-radar/runs`, `GET /api/opportunity-radar/runs/{id}`.
-- The daily Hermes MCP surface is unchanged; Hermes still calls `ask_advisor`, and Advisor Orchestrator calls Opportunity Radar internally.
+- The daily Hermes MCP surface keeps proposal/admin tools hidden; Hermes still calls `ask_advisor` for broad opportunity questions, and Advisor Orchestrator calls Opportunity Radar internally. If the user explicitly asks for committee / swarm / bull-bear review, Hermes can call the research-only committee tools.
 - Daily Hermes snippets are covered by tests so proposal/admin tools such as `draft_trade_proposals_from_watchlist`, `create_trade_proposal`, `approve_trade_proposal`, and `reject_trade_proposal` cannot slip into daily Telegram mode.
 
 ## Market Context Lens
@@ -131,7 +134,7 @@ The global Hermes config at `/Users/apple/.hermes/config.yaml` has been updated 
 
 `hermes auth status openai-codex` shows logged in.
 
-`/Users/apple/.hermes/hermes-agent/venv/bin/hermes mcp list` for the daily gateway should show `invest_agent` with high-level Advisor tools only. Low-level research/admin tools remain local control-plane capabilities and should not be exposed to daily Telegram mode.
+`/Users/apple/.hermes/hermes-agent/venv/bin/hermes mcp list` for the daily gateway should show `invest_agent` with high-level Advisor/Profile/Committee tools only. Low-level research/admin tools remain local control-plane capabilities and should not be exposed to daily Telegram mode.
 
 ## Futu Setup
 

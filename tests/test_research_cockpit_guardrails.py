@@ -88,6 +88,9 @@ HERMES_DAILY_ADVISOR_TOOLS = {
     "run_pre_market_advisor_brief",
     "run_post_close_advisor_brief",
     "get_latest_advisor_brief",
+    "run_committee_review",
+    "list_committee_reviews",
+    "get_committee_review",
 }
 PROPOSAL_ADMIN_TOOLS = {
     "approve_trade_proposal",
