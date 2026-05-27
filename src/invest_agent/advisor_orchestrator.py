@@ -124,6 +124,55 @@ OPPORTUNITY_QUERY_TERMS = [
     "市場有無",
     "睇咩",
 ]
+FULL_STUDY_TERMS = [
+    "full study",
+    "full brief",
+    "full advisor",
+    "full research",
+    "full stack",
+    "audited",
+    "audit trail",
+    "complete study",
+    "run full",
+    "完整研究",
+    "完整簡報",
+    "完整檢查",
+    "全面研究",
+    "全面檢查",
+    "深度研究",
+    "深入研究",
+    "全套研究",
+    "全套檢查",
+    "跑完整",
+    "跑晒",
+]
+POST_CLOSE_TERMS = [
+    "post-close",
+    "post close",
+    "after close",
+    "market close",
+    "close review",
+    "收市後",
+    "收盤後",
+    "收市",
+    "收盤",
+    "今日回顧",
+    "明日計劃",
+]
+PRE_MARKET_TERMS = [
+    "pre-market",
+    "pre market",
+    "before market",
+    "market open",
+    "open brief",
+    "開市前",
+    "開盤前",
+    "開市",
+    "開盤",
+    "今晚",
+    "今日策略",
+    "今日部署",
+]
 PRIVATE_OFFERING_TERMS = [
     "ipo",
     "pre-ipo",
@@ -180,6 +229,8 @@ class AdvisorOrchestrator:
         actor: RunCardActor | str = RunCardActor.API,
     ) -> AdvisorAnswer:
         intent = _question_intent(request.question)
+        full_study_requested = _wants_full_study(request.question, request.style)
+        full_brief_type = _full_brief_type_for_question(request.question) if full_study_requested else None
         resolution = self._resolve_question_symbol(request.question, request.symbol, intent=intent)
         symbol = resolution.resolved_symbol
         inputs = request.model_dump(mode="json")
@@ -189,6 +240,8 @@ class AdvisorOrchestrator:
                 "resolved_symbol": resolution.resolved_symbol,
                 "symbol_resolution_status": resolution.status.value,
                 "question_intent": intent,
+                "full_study_requested": full_study_requested,
+                "full_brief_type": full_brief_type.value if full_brief_type else None,
             }
         )
         question_id = new_id("advq")
@@ -206,11 +259,25 @@ class AdvisorOrchestrator:
                 "cannot_approve_or_execute_trades": True,
             },
         )
+        full_brief = (
+            self.run_full_advisor_brief(full_brief_type, actor=actor)
+            if full_brief_type is not None
+            else None
+        )
         brief = AdvisorService(self.store, settings=self.settings, paper_only=self.paper_only).build_brief(
-            AdvisorBriefRequest(max_items=12)
+            AdvisorBriefRequest(max_items=20 if full_study_requested else 12)
         )
         profile = self.store.get_advisor_profile()
-        decision = self._build_answer(question_id, request.question, resolution, brief, run_card.id, profile, actor=actor)
+        decision = self._build_answer(
+            question_id,
+            request.question,
+            resolution,
+            brief,
+            run_card.id,
+            profile,
+            actor=actor,
+            full_brief=full_brief,
+        )
         question = AdvisorQuestion(
             id=question_id,
             user_question=request.question,
@@ -250,10 +317,16 @@ class AdvisorOrchestrator:
                 "risk_count": len(decision.risks),
                 "advisor_profile_version": profile.version if profile else None,
                 "opportunity_radar_run_id": decision.opportunity_radar_run_id,
+                "full_study_requested": full_study_requested,
+                "full_brief_id": full_brief.id if full_brief else None,
+                "full_brief_type": full_brief.brief_type.value if full_brief else None,
             },
             warnings=[],
             outputs=decision.model_dump(mode="json"),
-            dataset={"advisor_brief_hash": stable_hash(brief.model_dump(mode="json"))},
+            dataset={
+                "advisor_brief_hash": stable_hash(brief.model_dump(mode="json")),
+                "advisor_full_brief_id": full_brief.id if full_brief else None,
+            },
             write_artifacts=False,
         )
         return decision
@@ -445,6 +518,7 @@ class AdvisorOrchestrator:
         profile: AdvisorProfile | None = None,
         *,
         actor: RunCardActor | str = RunCardActor.API,
+        full_brief: AdvisorFullBrief | None = None,
     ) -> AdvisorAnswer:
         symbol = resolution.resolved_symbol
         intent = _question_intent(question)
@@ -476,6 +550,15 @@ class AdvisorOrchestrator:
         )
         lacks_thesis = bool(symbol and position and not active_theses)
         artifacts = _linked_artifacts(symbol, relevant_items, run_card_id, quote, active_theses, catalysts)
+        if full_brief:
+            artifacts.append(
+                {
+                    "type": "advisor_full_brief",
+                    "id": full_brief.id,
+                    "brief_type": full_brief.brief_type.value,
+                    "run_card_id": full_brief.run_card_id,
+                }
+            )
 
         extra_reasons: list[str] = []
         extra_risks: list[str] = []
@@ -586,6 +669,7 @@ class AdvisorOrchestrator:
                     active_theses=active_theses,
                     catalysts=catalysts,
                     profile=profile,
+                    full_brief=full_brief,
                     opportunity_radar_run_id=radar.id,
                     opportunity_cards_count=len(radar.cards),
                 ),
@@ -727,6 +811,7 @@ class AdvisorOrchestrator:
                 active_theses=active_theses,
                 catalysts=catalysts,
                 profile=profile,
+                full_brief=full_brief,
             ),
             run_card_id=run_card_id,
             paper_only=self.paper_only,
@@ -1060,6 +1145,7 @@ def _advisor_provenance(
     active_theses,
     catalysts,
     profile: AdvisorProfile | None,
+    full_brief: AdvisorFullBrief | None = None,
     opportunity_radar_run_id: str | None = None,
     opportunity_cards_count: int = 0,
 ) -> dict[str, Any]:
@@ -1069,7 +1155,7 @@ def _advisor_provenance(
     coverage = market_context.get("coverage_summary", {}) or {}
     executed_layers = [
         "advisor_question_run_card",
-        "lightweight_advisor_brief",
+        "full_advisor_brief" if full_brief else "lightweight_advisor_brief",
         "portfolio_snapshot_cache",
         "market_context_snapshot",
         "market_regime_snapshot",
@@ -1084,11 +1170,14 @@ def _advisor_provenance(
 
     return {
         "answer_scope": "advisor_question",
-        "audit_level": "advisor_question_run_card",
+        "audit_level": "advisor_question_with_full_brief" if full_brief else "advisor_question_run_card",
         "control_plane": "AIinvestmentAgent",
         "mcp_tool": "ask_advisor",
         "run_card_id": run_card_id,
-        "full_advisor_brief_run": False,
+        "full_advisor_brief_run": bool(full_brief),
+        "full_brief_id": full_brief.id if full_brief else None,
+        "full_brief_type": full_brief.brief_type.value if full_brief else None,
+        "full_brief_run_card_id": full_brief.run_card_id if full_brief else None,
         "external_shell_or_web_used_by_control_plane": False,
         "executed_layers": executed_layers,
         "not_run": [
@@ -1131,11 +1220,19 @@ def _advisor_provenance(
             "proposal_approved": False,
             "trade_executed": False,
         },
-        "limitations": [
-            "This is a concise Advisor question answer, not a full pre/post-market Advisor Brief.",
-            "It uses cached/local control-plane state unless the called Advisor path explicitly creates a run card.",
-            "Advice is research-only and cannot approve or execute trades.",
-        ],
+        "limitations": (
+            [
+                "A Full Advisor Brief ran, but the final answer remains a concise research-only decision card.",
+                "Full briefs still do not create research goals, proposals, approvals, or trades by themselves.",
+                "Advice is research-only and cannot approve or execute trades.",
+            ]
+            if full_brief
+            else [
+                "This is a concise Advisor question answer, not a full pre/post-market Advisor Brief.",
+                "It uses cached/local control-plane state unless the called Advisor path explicitly creates a run card.",
+                "Advice is research-only and cannot approve or execute trades.",
+            ]
+        ),
     }
 
 
@@ -1344,6 +1441,28 @@ def _question_intent(question: str) -> str:
     if any(token in text for token in PORTFOLIO_STRATEGY_TERMS):
         return "portfolio"
     return "review"
+
+
+def _wants_full_study(question: str, style: str | None = None) -> bool:
+    style_text = (style or "").strip().lower()
+    if style_text in {"full", "full_study", "full-study", "audited", "audit", "detailed"}:
+        return True
+    text = question.lower()
+    return any(token in text for token in FULL_STUDY_TERMS)
+
+
+def _full_brief_type_for_question(question: str, now: datetime | None = None) -> AdvisorFullBriefType:
+    text = question.lower()
+    if any(token in text for token in POST_CLOSE_TERMS):
+        return AdvisorFullBriefType.POST_CLOSE
+    if any(token in text for token in PRE_MARKET_TERMS):
+        return AdvisorFullBriefType.PRE_MARKET
+    ny_now = _aware_utc(now or utc_now()).astimezone(NY_TZ)
+    if is_trading_day(ny_now.date()):
+        _, close_et = market_open_close(ny_now.date())
+        if ny_now >= close_et:
+            return AdvisorFullBriefType.POST_CLOSE
+    return AdvisorFullBriefType.PRE_MARKET
 
 
 def _normalize_symbol_candidate(symbol: str | None) -> str | None:

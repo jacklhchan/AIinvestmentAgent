@@ -148,6 +148,26 @@ def test_advisor_answer_provenance_marks_lightweight_not_full_stack(tmp_path) ->
     assert len(store.list_proposals(limit=100)) == proposal_count
 
 
+def test_ask_advisor_full_study_runs_full_brief_without_proposal(tmp_path) -> None:
+    store = make_store(tmp_path)
+    proposal_count = len(store.list_proposals(limit=100))
+
+    answer = AdvisorOrchestrator(store, settings=Settings(db_path=tmp_path / "test.db")).answer_user_question(
+        AdvisorQuestionRequest(question="Please run full study before market for AAPL.", symbol="AAPL")
+    )
+    briefs = store.list_advisor_briefs(brief_type=AdvisorFullBriefType.PRE_MARKET.value, limit=10)
+
+    assert briefs
+    assert answer.provenance_json["audit_level"] == "advisor_question_with_full_brief"
+    assert answer.provenance_json["full_advisor_brief_run"] is True
+    assert answer.provenance_json["full_brief_type"] == AdvisorFullBriefType.PRE_MARKET.value
+    assert answer.provenance_json["full_brief_id"] == briefs[0].id
+    assert "full_advisor_brief" in answer.provenance_json["executed_layers"]
+    assert any(item.get("type") == "advisor_full_brief" for item in answer.linked_artifacts_json)
+    assert answer.provenance_json["side_effects"]["proposal_created"] is False
+    assert len(store.list_proposals(limit=100)) == proposal_count
+
+
 def test_profile_update_requires_confirmation_before_applying(tmp_path) -> None:
     store = make_store(tmp_path)
     orchestrator = AdvisorOrchestrator(store, settings=Settings(db_path=tmp_path / "test.db"))
