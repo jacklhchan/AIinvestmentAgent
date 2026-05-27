@@ -11,7 +11,7 @@
 - Canonical Accounting + IPS foundation：由交易日誌同步成 accounting transactions、FIFO tax lots、accounting snapshot，並把確認後的 Advisor Profile 固化成 Investor Policy Statement
 - SQLite 狀態儲存：proposal、approval、paper executions、portfolio、quotes、news、fundamentals、research goals、evidence rows、theses、thesis updates、catalysts、catalyst reviews、earnings reviews、research run cards、trade journal、behavior reports、shadow account、audit events
 - 風控/審批狀態機：TTL、重複單、notional、confidence、price drift revalidation
-- Hermes daily MCP surface：日常 Telegram 只暴露 high-level Advisor/Profile/Committee tools；底層 portfolio/news/proposal context 由 Advisor Orchestrator 背後讀取
+- Hermes daily MCP surface：日常 Telegram 只暴露 high-level Advisor/Profile/Committee tools；full study / committee 會先做受控 evidence hydration，再把 frozen data pack 交給 committee
 - Futu OpenD read-only refresh：讀取資金、持倉與持倉 quote snapshot，不 unlock trade
 - Market/news ingestion：從 watchlist 抓取 GDELT，並在有 `FINNHUB_API_KEY` 時補 Finnhub company news
 - SEC/IR primary-source ingestion：SEC EDGAR filings 預設可用；公司 IR RSS 可透過 `.env` 設定
@@ -94,6 +94,8 @@ python -m invest_agent.cli advisor-scheduler-loop
 ```
 
 Hermes daily MCP 只暴露 high-level Advisor / Profile / Committee tools：`ask_advisor`、`get_advisor_profile`、`suggest_advisor_profile_update`、`confirm_advisor_profile_update`、`run_hourly_advisor_pulse`、`run_pre_market_advisor_brief`、`run_post_close_advisor_brief`、`get_latest_advisor_brief`、`run_committee_review`、`list_committee_reviews`、`get_committee_review`。Advisor Orchestrator 會在本機背後讀取 portfolio、news、market regime、proposal context 與 research artifacts；committee tools 只產生 research-only memo / run card，不可建立 proposal、approve 或 execute trades。Hermes 日常不直接看到底層 tools。
+
+當 Hermes 透過 `ask_advisor` 或 `run_committee_review` 做 full study / committee 時，系統會先對本機 unknown ticker 做受控 read-only hydration：Finnhub quote / company news、GDELT / Google News fallback、SEC EDGAR filings、SEC companyfacts。這些資料會先寫入本機 store，再凍結成 committee data pack；committee 不會自由瀏覽網頁，也不會把網絡文字直接升級成 proposal / approval。CLI 可用 `committee-review --refresh` 觸發同一條受控 hydration path。
 
 Hermes snippets 分開兩種用途：`deploy/hermes/config.daily.snippet.yaml` 只包含上述 daily Advisor/Profile/Committee tools；`deploy/hermes/config.research-admin.snippet.yaml` 給本機研究/admin 工作使用，仍不包含 proposal approval / create / draft tools。舊的 `deploy/hermes/config.snippet.yaml` 保留為 daily-compatible alias。
 

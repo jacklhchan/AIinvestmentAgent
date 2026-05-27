@@ -12,7 +12,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
 
 - FastAPI control plane on `127.0.0.1:8788`.
 - AI Advisor Brief first-screen workflow that automatically summarizes portfolio, proposal, thesis, catalyst, earnings, behavior, shadow, and research-goal state into research-only advice.
-- Hermes Advisor Mode with concise Ask Hermes decision cards, hourly urgent pulses, pre-market / post-close full advisor briefs, stored advisor recommendations, REST / CLI / MCP entry points, and quiet-hours notification policy.
+- Hermes Advisor Mode with concise Ask Hermes decision cards, hourly urgent pulses, pre-market / post-close full advisor briefs, stored advisor recommendations, controlled full-study evidence hydration for committee reviews, REST / CLI / MCP entry points, and quiet-hours notification policy.
 - Opportunity Radar for broad questions like "今晚市場有無值得留意的新機會？"; it creates evidence-ranked WATCH / RESEARCH / BLOCKED / AVOID cards and cannot create proposals.
 - Canonical Accounting + IPS foundation with accounting transactions, FIFO tax lots, accounting snapshots, and Investor Policy Statements generated from confirmed Advisor Profiles.
 - Market Context Lens with broad-market, sector, theme, volatility, rates, gold, oil, and cash-like ETF context; it informs advice but does not create proposal candidates.
@@ -58,6 +58,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
   - `get_committee_review`
   - low-level research / proposal / approval tools remain in the local control plane but are hidden from daily Hermes gateway usage.
 - Hermes daily config snippets at `deploy/hermes/config.snippet.yaml` and `deploy/hermes/config.daily.snippet.yaml`; research/admin snippet at `deploy/hermes/config.research-admin.snippet.yaml`.
+- Full study / committee reviews through Hermes now hydrate unknown tickers through controlled read-only ingestion before freezing the data pack: Finnhub quotes/company news, GDELT/Google News fallback, SEC EDGAR filings, and SEC companyfacts. Committee remains research-only and cannot create proposals, approve, unlock Futu, or execute.
 - launchd example plists at `deploy/launchd/com.local.invest-agent-api.plist` and `deploy/launchd/com.local.invest-agent-scheduler.plist`.
 - Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, non-pending state handling, Futu adapter mapping, dashboard localization, news parsing, watchlist resolution, market context/regime guardrails, SEC/IR parsing, event replay, proposal draft creation, research evidence gates, thesis tracker behavior, catalyst calendar invariants, earnings review/preview behavior, research run card artifacts, trade journal behavior analytics, quote-history-backed shadow diagnostics, hypothesis/portfolio/backtest/data-bridge/daily-brief/sector/options/dividend/idea/committee/skill-validator/data-quality layers, AI Advisor Brief behavior, and Opportunity Radar guardrails.
 - Accounting / IPS tests cover trade-journal-to-ledger sync, FIFO lot rebuilding, dividend withholding accounting, Advisor Profile to IPS promotion, and schema-check coverage.
@@ -98,6 +99,7 @@ Hermes now has a higher-level Advisor Mode over the existing research control pl
 - CLI commands: `ask-advisor`, `opportunity-radar`, `advisor-pulse`, `pre-market-brief`, `post-close-brief`.
 - Scheduler commands: `advisor-scheduler-once` and `advisor-scheduler-loop`, with launchd sample `deploy/launchd/com.local.invest-agent-advisor-scheduler.plist`.
 - Hermes MCP high-level tools: `ask_advisor`, `get_advisor_profile`, `suggest_advisor_profile_update`, `confirm_advisor_profile_update`, `run_hourly_advisor_pulse`, `run_pre_market_advisor_brief`, `run_post_close_advisor_brief`, `get_latest_advisor_brief`, `run_committee_review`, `list_committee_reviews`, `get_committee_review`.
+- `run_committee_review` defaults to controlled read-only hydration for unknown tickers when called from Hermes MCP. Local REST/CLI can still keep hydration off by default; CLI uses `committee-review --refresh` to opt in.
 - Dashboard now has a `Hermes Advisor Mode` panel with Ask Hermes, Opportunity Radar, Hourly Pulse, full brief actions, and recommendation groups.
 - The schedule context derives NYSE/Nasdaq regular session from America/New_York time and converts to Asia/Singapore with DST handled by timezone conversion; it also applies rule-based US market holiday / early-close handling.
 - Safety boundary remains unchanged: Advisor Mode writes advisor/run-card artifacts only. It cannot create pending proposals, approve proposals, unlock Futu, or place/modify orders.

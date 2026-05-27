@@ -10,7 +10,7 @@ from xml.etree import ElementTree
 import httpx
 
 from .config import Settings
-from .models import NewsIngestResult, NewsItem, utc_now
+from .models import NewsIngestResult, NewsItem, Quote, utc_now
 from .store import Store
 
 
@@ -231,6 +231,51 @@ class MarketNewsIngestor:
         payload = response.json()
         return news_items_from_finnhub(symbol, payload, limit=limit)
 
+    def refresh_finnhub_quotes(self, symbols: list[str]) -> dict[str, Any]:
+        watchlist = _resolve_explicit_symbols(symbols)
+        if not watchlist:
+            return {"symbols": [], "stored_count": 0, "errors": []}
+        if not self.settings.finnhub_api_key:
+            return {"symbols": watchlist, "stored_count": 0, "errors": ["finnhub api key is not configured"]}
+
+        errors: list[str] = []
+        stored_count = 0
+        owns_client = self.client is None
+        client = self.client or httpx.Client(
+            timeout=httpx.Timeout(
+                self.settings.news_timeout_seconds,
+                connect=min(3.0, self.settings.news_timeout_seconds),
+            )
+        )
+        try:
+            for symbol in watchlist:
+                ticker = external_ticker(symbol)
+                try:
+                    response = self._get_finnhub_with_backoff(
+                        client,
+                        "https://finnhub.io/api/v1/quote",
+                        params={"symbol": ticker, "token": self.settings.finnhub_api_key},
+                    )
+                    quote = quote_from_finnhub(symbol, response.json())
+                    if quote:
+                        self.store.upsert_quote(quote)
+                        stored_count += 1
+                    else:
+                        errors.append(f"finnhub-quote {symbol}: empty quote payload")
+                except (httpx.HTTPError, ValueError) as exc:
+                    errors.append(f"finnhub-quote {symbol}: {exc}")
+        finally:
+            if owns_client:
+                client.close()
+
+        self.store.audit(
+            "finnhub_quotes_refreshed",
+            "quotes",
+            "finnhub",
+            {"symbols": watchlist, "stored_count": stored_count, "errors": errors},
+        )
+        return {"symbols": watchlist, "stored_count": stored_count, "errors": errors}
+
     def _get_finnhub_with_backoff(self, client: httpx.Client, url: str, *, params: dict[str, Any]) -> httpx.Response:
         attempts = max(0, self.settings.finnhub_max_retries) + 1
         last_error: httpx.HTTPStatusError | None = None
@@ -358,6 +403,23 @@ def news_items_from_google_news(symbol: str, xml_text: str, *, limit: int) -> li
     return items
 
 
+def quote_from_finnhub(symbol: str, payload: Any) -> Quote | None:
+    if not isinstance(payload, dict):
+        return None
+    last_price = _float_or_none(payload.get("c"))
+    previous_close = _float_or_none(payload.get("pc"))
+    if last_price is None or last_price <= 0:
+        return None
+    return Quote(
+        symbol=_normalize_symbol(symbol),
+        last_price=last_price,
+        previous_close=previous_close,
+        change_pct=_float_or_none(payload.get("dp")),
+        updated_at=_parse_epoch(payload.get("t")),
+        source="finnhub",
+    )
+
+
 def external_ticker(symbol: str) -> str:
     normalized = _normalize_symbol(symbol)
     return normalized.split(".", 1)[1] if "." in normalized else normalized
@@ -418,6 +480,13 @@ def _parse_epoch(value: Any) -> datetime:
         return datetime.fromtimestamp(int(value), tz=timezone.utc)
     except (TypeError, ValueError, OSError):
         return utc_now()
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _parse_rss_date(value: str) -> datetime:

@@ -936,8 +936,9 @@ def run_committee_review(
     bear_case: str = "",
     risk_memo: str = "",
     missing_evidence: list[str] | None = None,
+    hydrate_missing_data: bool = True,
 ) -> dict:
-    """Create a committee-style research memo. It cannot approve or create pending proposals."""
+    """Create a committee-style research memo. It can hydrate read-only evidence first, but cannot approve or create pending proposals."""
     return _json(
         CommitteeReviewService(get_store()).run_review(
             CommitteeReviewRunRequest(
@@ -950,6 +951,7 @@ def run_committee_review(
                 bear_case=bear_case,
                 risk_memo=risk_memo,
                 missing_evidence=missing_evidence or [],
+                hydrate_missing_data=hydrate_missing_data,
             ),
             actor=RunCardActor.MCP,
         )

@@ -294,6 +294,7 @@ class AdvisorOrchestrator:
                     topic=request.question,
                     symbols=[symbol] if symbol else [],
                     created_via=_created_via_for_advisor_actor(actor),
+                    hydrate_missing_data=True,
                 ),
                 actor=actor,
             )

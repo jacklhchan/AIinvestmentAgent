@@ -1209,6 +1209,8 @@ class CommitteeReviewRunRequest(BaseModel):
     missing_evidence: list[str] = Field(default_factory=list)
     conclusion: CommitteeConclusion = CommitteeConclusion.RESEARCH_MORE
     created_via: CreatedVia = CreatedVia.SYSTEM
+    hydrate_missing_data: bool = False
+    hydration_max_symbols: int = Field(default=5, ge=0, le=20)
 
     @field_validator("symbols")
     @classmethod

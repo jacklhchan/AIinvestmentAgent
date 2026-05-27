@@ -4,8 +4,9 @@ import re
 from typing import Any
 
 from .config import Settings, get_settings
+from .ir_feeds import IrFeedIngestor
 from .market_context import MarketContextService
-from .market_news import economic_exposure_ticker, external_ticker
+from .market_news import MarketNewsIngestor, economic_exposure_ticker, external_ticker
 from .market_regime import MarketRegimeService
 from .models import (
     CatalystExpectedImpact,
@@ -24,7 +25,10 @@ from .models import (
     ThesisStatus,
     utc_now,
 )
+from .primary_sources import refresh_primary_sources
 from .run_cards import RunCardService, stable_hash
+from .sec_companyfacts import SecCompanyFactsIngestor
+from .sec_edgar import SecEdgarIngestor
 from .store import Store
 
 
@@ -33,15 +37,30 @@ TECH_EXPOSURE_TICKERS = {"AAPL", "AMD", "GOOG", "GOOGL", "META", "MSFT", "NVDA",
 SYMBOL_STOP_WORDS = {
     "AI",
     "API",
+    "CFO",
+    "CEO",
+    "CIK",
+    "DCF",
+    "EPS",
     "BUY",
+    "CAPEX",
     "ETF",
+    "ETFS",
+    "FCF",
     "FULL",
+    "GAAP",
+    "HK",
     "IPO",
     "MCP",
+    "NOT",
+    "REIT",
+    "REITS",
     "SEC",
     "SELL",
     "THE",
     "US",
+    "USD",
+    "YOY",
 }
 
 
@@ -57,7 +76,12 @@ class CommitteeReviewService:
         actor: RunCardActor | str = RunCardActor.API,
     ) -> CommitteeReview:
         symbols = _symbols_from_request(request)
-        data_pack = self._build_data_pack(request, symbols)
+        hydration = (
+            self._hydrate_missing_symbols(symbols, max_symbols=request.hydration_max_symbols)
+            if request.hydrate_missing_data
+            else {"enabled": False, "attempted_symbols": [], "results": {}, "errors": []}
+        )
+        data_pack = self._build_data_pack(request, symbols, hydration=hydration)
         data_pack_hash = stable_hash(data_pack)
         missing = _clean_list([*request.missing_evidence, *data_pack["missing_evidence"]])
         findings = self._build_findings(data_pack, missing)
@@ -86,6 +110,7 @@ class CommitteeReviewService:
                 "cannot_create_pending_proposal_directly": True,
                 "cannot_execute_trades": True,
                 "members_read_same_frozen_data_pack": True,
+                "controlled_evidence_hydration_before_freeze": request.hydrate_missing_data,
             },
             links={"research_goal_id": request.research_goal_id, "proposal_id": request.proposal_id},
         )
@@ -132,7 +157,7 @@ class CommitteeReviewService:
         )
         return stored
 
-    def _build_data_pack(self, request: CommitteeReviewRunRequest, symbols: list[str]) -> dict[str, Any]:
+    def _build_data_pack(self, request: CommitteeReviewRunRequest, symbols: list[str], *, hydration: dict[str, Any]) -> dict[str, Any]:
         portfolio = self.store.get_portfolio()
         context = MarketContextService(self.settings, self.store).build_context()
         regime = MarketRegimeService(self.settings, self.store).build_snapshot()
@@ -171,6 +196,7 @@ class CommitteeReviewService:
             },
             "market_context": context.model_dump(mode="json"),
             "market_regime": regime.model_dump(mode="json"),
+            "evidence_hydration": hydration,
             "research_goal": research_goal.model_dump(mode="json") if research_goal else None,
             "symbols_context": symbol_packs,
             "latest_behavior_reports": [
@@ -186,6 +212,89 @@ class CommitteeReviewService:
                 "trade_executed": False,
             },
         }
+
+    def _hydrate_missing_symbols(self, symbols: list[str], *, max_symbols: int) -> dict[str, Any]:
+        attempted = [
+            symbol for symbol in symbols
+            if _is_plausible_symbol(symbol) and not self._has_local_symbol_context(symbol)
+        ][:max_symbols]
+        hydration: dict[str, Any] = {
+            "enabled": True,
+            "attempted_symbols": attempted,
+            "results": {},
+            "errors": [],
+            "side_effects": {
+                "proposal_created": False,
+                "proposal_approved": False,
+                "trade_executed": False,
+            },
+        }
+        if not attempted:
+            return hydration
+
+        news_ingestor = MarketNewsIngestor(self.settings, self.store)
+        try:
+            quote_result = news_ingestor.refresh_finnhub_quotes(attempted)
+            hydration["results"]["finnhub_quotes"] = quote_result
+            hydration["errors"].extend(quote_result.get("errors", []))
+        except Exception as exc:  # pragma: no cover - defensive network guard
+            hydration["errors"].append(f"finnhub_quotes: {exc}")
+
+        try:
+            news_result = news_ingestor.refresh_news(
+                symbols=attempted,
+                days=min(self.settings.news_lookback_days, 5),
+                max_per_symbol=min(self.settings.news_max_per_symbol, 3),
+                max_symbols=len(attempted),
+                include_gdelt=True,
+                include_google_news=True,
+                include_finnhub=True,
+            )
+            hydration["results"]["market_news"] = news_result.model_dump(mode="json")
+            hydration["errors"].extend(news_result.errors)
+        except Exception as exc:  # pragma: no cover - defensive network guard
+            hydration["errors"].append(f"market_news: {exc}")
+
+        try:
+            primary_result = refresh_primary_sources(
+                SecEdgarIngestor(self.settings, self.store),
+                IrFeedIngestor(self.settings, self.store),
+                symbols=attempted,
+                include_sec=True,
+                include_ir=False,
+                forms=["10-K", "10-Q", "8-K"],
+                max_filings=3,
+                max_symbols=len(attempted),
+            )
+            hydration["results"]["sec_filings"] = primary_result.model_dump(mode="json")
+            hydration["errors"].extend(primary_result.errors)
+        except Exception as exc:  # pragma: no cover - defensive network guard
+            hydration["errors"].append(f"sec_filings: {exc}")
+
+        try:
+            fundamentals_result = SecCompanyFactsIngestor(self.settings, self.store).refresh_fundamentals(
+                symbols=attempted,
+                max_symbols=len(attempted),
+                forms=["10-K", "10-Q"],
+            )
+            hydration["results"]["sec_companyfacts"] = fundamentals_result.model_dump(mode="json")
+            hydration["errors"].extend(fundamentals_result.errors)
+        except Exception as exc:  # pragma: no cover - defensive network guard
+            hydration["errors"].append(f"sec_companyfacts: {exc}")
+        hydration["errors"] = _clean_list(hydration["errors"])
+        return hydration
+
+    def _has_local_symbol_context(self, symbol: str) -> bool:
+        ticker = economic_exposure_ticker(symbol)
+        return bool(
+            self._quote(symbol)
+            or any(economic_exposure_ticker(item.symbol) == ticker for item in self.store.get_portfolio().positions)
+            or any(economic_exposure_ticker(item.symbol) == ticker for item in self.store.list_theses(status=ThesisStatus.ACTIVE, limit=200))
+            or any(item.symbol and economic_exposure_ticker(item.symbol) == ticker for item in self.store.list_catalysts(limit=200))
+            or any(economic_exposure_ticker(item.symbol) == ticker for item in self.store.list_fundamentals())
+            or any(item.symbol and economic_exposure_ticker(item.symbol) == ticker for item in self.store.list_news(limit=200))
+            or self.store.list_research_goals(symbol=symbol, limit=1)
+        )
 
     def _symbol_pack(self, symbol: str, research_goal, missing: list[str]) -> dict[str, Any]:
         ticker = economic_exposure_ticker(symbol)
@@ -405,11 +514,19 @@ def _symbols_from_request(request: CommitteeReviewRunRequest) -> list[str]:
     out: list[str] = []
     for raw in symbols:
         symbol = raw.strip().upper()
-        if not symbol or symbol in seen:
+        if not symbol or symbol in seen or not _is_plausible_symbol(symbol):
             continue
         seen.add(symbol)
         out.append(symbol)
     return out
+
+
+def _is_plausible_symbol(symbol: str) -> bool:
+    value = symbol.strip().upper()
+    ticker = external_ticker(value)
+    if not ticker or ticker in SYMBOL_STOP_WORDS:
+        return False
+    return bool(re.fullmatch(r"[A-Z][A-Z0-9.]{0,5}", value))
 
 
 def _created_via(actor: RunCardActor | str, fallback: CreatedVia) -> CreatedVia:
