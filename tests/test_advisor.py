@@ -21,10 +21,12 @@ from invest_agent.models import (
     RunCardActor,
     RunCardType,
     SymbolResolutionStatus,
+    ThesisCreate,
     TradeJournalImportRequest,
     TradeJournalSource,
 )
 from invest_agent.store import Store
+from invest_agent.thesis_tracker import ThesisTrackerService
 from invest_agent.trade_journal import TradeJournalService
 
 
@@ -300,6 +302,35 @@ def test_advisor_answer_default_text_hides_internal_artifact_ids(tmp_path) -> No
     assert not any(prefix in visible_text for prefix in ["run_", "goal_", "thesis_", "evidence_", "committee_"])
     assert answer.details_available is True
     assert answer.linked_artifacts_json
+
+
+def test_ask_advisor_uses_alphabet_thesis_across_share_classes(tmp_path) -> None:
+    settings = Settings(db_path=tmp_path / "test.db", watchlist_symbols="GOOGL")
+    store = Store(settings.db_path)
+    store.upsert_quote(
+        Quote(
+            symbol="US.GOOG",
+            last_price=175,
+            previous_close=174,
+            change_pct=0.57,
+            updated_at=datetime(2026, 5, 27, 14, 0, tzinfo=timezone.utc),
+            source="test",
+        )
+    )
+    thesis = ThesisTrackerService(store).create_thesis(
+        ThesisCreate(
+            symbol="US.GOOG",
+            thesis_statement="Alphabet thesis covers both GOOG and GOOGL share classes for issuer-level risk.",
+        )
+    )
+
+    answer = AdvisorOrchestrator(store, settings=settings).answer_user_question(
+        AdvisorQuestionRequest(question="Should I buy GOOGL now?", symbol="GOOGL")
+    )
+
+    assert answer.resolved_symbol in {"GOOGL", "US.GOOG"}
+    assert any(item.get("type") == "thesis" and item.get("id") == thesis.id for item in answer.linked_artifacts_json)
+    assert any(item.get("type") == "quote" and item.get("id") == "US.GOOG" for item in answer.linked_artifacts_json)
 
 
 def test_hourly_pulse_respects_quiet_hours_except_urgent(tmp_path) -> None:

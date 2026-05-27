@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 from .advisor import AdvisorService
 from .config import Settings, get_settings
-from .market_news import external_ticker, resolve_watchlist_symbols
+from .market_news import economic_exposure_ticker, external_ticker, resolve_watchlist_symbols
 from .market_regime import MarketRegimeService
 from .models import (
     AdvisorAnswer,
@@ -454,10 +454,10 @@ class AdvisorOrchestrator:
         relevant_items = [] if not symbol and intent != "portfolio" else self._relevant_brief_items(symbol, brief.advice)
         top_candidates = relevant_items or (brief.advice if symbol or intent == "portfolio" else [])
         top_item = max(top_candidates, key=_advisor_item_rank, default=None)
-        quote = self.store.get_quote(symbol) if symbol else None
+        quote = self._quote(symbol) if symbol else None
         position = self._position(symbol)
-        active_theses = self.store.list_theses(status=ThesisStatus.ACTIVE, symbol=symbol, limit=5) if symbol else []
-        catalysts = self.store.list_catalysts(symbol=symbol, limit=20) if symbol else []
+        active_theses = self._active_theses(symbol) if symbol else []
+        catalysts = self._catalysts_for_symbol(symbol) if symbol else []
         high_catalyst_block = any(
             item.status == CatalystStatus.UPCOMING and item.expected_impact == CatalystExpectedImpact.HIGH
             for item in catalysts
@@ -511,13 +511,18 @@ class AdvisorOrchestrator:
                 if card.recommendation_type
                 in {OpportunityRecommendationType.BLOCKED, OpportunityRecommendationType.AVOID}
             ]
-            if positives:
+            coverage_limited = "資料覆蓋不足" in radar.summary
+            if coverage_limited:
+                conclusion = "Opportunity Radar：資料覆蓋不足，今晚不判斷新機會。"
+            elif positives:
                 conclusion = "Opportunity Radar：有方向值得 WATCH，但未有直接 buy signal。"
             else:
                 conclusion = "Opportunity Radar：今晚未見足夠新機會，先保守觀察。"
             summary_parts = [radar.summary]
-            if positives:
+            if positives and not coverage_limited:
                 summary_parts.append("WATCH / RESEARCH：" + "；".join(card.title for card in positives[:3]))
+            elif positives:
+                summary_parts.append("RESEARCH ONLY：" + "；".join(card.title for card in positives[:3]))
             if blocked_cards:
                 summary_parts.append("BLOCKED / AVOID：" + "；".join(card.title for card in blocked_cards[:3]))
             reasons = _clean_list(
@@ -533,6 +538,7 @@ class AdvisorOrchestrator:
                         f"{card.title}：{(card.risks or card.downgrade_conditions or [card.one_line])[0]}"
                         for card in blocked_cards[:3]
                     ],
+                    "Market context coverage 不足時，Advisor 不能把 radar item 說成新機會。",
                     "Opportunity Radar 只產生 evidence-ranked watchlist，不會建立 proposal 或下單。",
                 ]
             )[:3]
@@ -559,9 +565,16 @@ class AdvisorOrchestrator:
                 symbol_resolution_status=resolution.status,
                 conclusion=conclusion,
                 summary=" ".join(summary_parts),
-                confidence=AdvisorConfidence.MEDIUM,
-                suggested_user_action="先把 Top WATCH / RESEARCH 加入觀察；若要升級，先補 primary-source evidence、portfolio fit、risk gate 與人工 confirmation。",
-                reasons=reasons or ["今晚先用 broader market radar 找方向，不直接建立 buy proposal。"],
+                confidence=AdvisorConfidence.LOW if coverage_limited else AdvisorConfidence.MEDIUM,
+                suggested_user_action="先刷新 market context / sector ETF quote-news coverage；覆蓋足夠後才把 RESEARCH item 升級為 WATCH 或 action candidate。"
+                if coverage_limited
+                else "先把 Top WATCH / RESEARCH 加入觀察；若要升級，先補 primary-source evidence、portfolio fit、risk gate 與人工 confirmation。",
+                reasons=reasons
+                or (
+                    ["market context coverage 不足，不直接判斷今晚新機會。"]
+                    if coverage_limited
+                    else ["今晚先用 broader market radar 找方向，不直接建立 buy proposal。"]
+                ),
                 risks=risks,
                 decision_required=False,
                 details_available=True,
@@ -769,13 +782,13 @@ class AdvisorOrchestrator:
                 )
             )
 
-        held_symbols = {position.symbol for position in self.store.get_portfolio().positions}
+        held_symbols = {economic_exposure_ticker(position.symbol) for position in self.store.get_portfolio().positions}
         for catalyst in self.store.list_catalysts(limit=100):
             if catalyst.status == CatalystStatus.UPCOMING and catalyst.expected_impact == CatalystExpectedImpact.HIGH:
                 event_date = _aware_utc(catalyst.event_date)
                 if timedelta(0) <= event_date - now <= timedelta(hours=48):
                     symbol = catalyst.symbol
-                    urgent = not symbol or symbol in held_symbols
+                    urgent = not symbol or economic_exposure_ticker(symbol) in held_symbols
                     recommendations.append(
                         _make_recommendation(
                             source_type=AdvisorSourceType.PULSE,
@@ -799,7 +812,7 @@ class AdvisorOrchestrator:
                         source_id=pulse_id,
                         symbol=catalyst.symbol,
                         recommendation_type=AdvisorSeverity.BLOCKED
-                        if catalyst.symbol in held_symbols
+                        if catalyst.symbol and economic_exposure_ticker(catalyst.symbol) in held_symbols
                         else AdvisorSeverity.WATCH,
                         title=f"{catalyst.symbol or 'Portfolio'} 事件完成但未 review",
                         summary="事件後缺少 thesis delta，系統應先 block 新 proposal。",
@@ -816,7 +829,7 @@ class AdvisorOrchestrator:
             move = quote.change_pct
             if move is None or abs(move) < 5:
                 continue
-            is_holding = quote.symbol in held_symbols
+            is_holding = economic_exposure_ticker(quote.symbol) in held_symbols
             urgent = is_holding and abs(move) >= 8
             recommendations.append(
                 _make_recommendation(
@@ -926,22 +939,58 @@ class AdvisorOrchestrator:
                 continue
             candidates[symbol] = symbol
             candidates[external_ticker(symbol)] = symbol
+            candidates[economic_exposure_ticker(symbol)] = symbol
         return candidates
+
+    def _quote(self, symbol: str | None):
+        if not symbol:
+            return None
+        quote = self.store.get_quote(symbol)
+        if quote:
+            return quote
+        ticker = economic_exposure_ticker(symbol)
+        return next(
+            (quote for quote in self.store.list_quotes() if economic_exposure_ticker(quote.symbol) == ticker),
+            None,
+        )
 
     def _position(self, symbol: str | None):
         if not symbol:
             return None
-        ticker = external_ticker(symbol)
-        return next((position for position in self.store.get_portfolio().positions if external_ticker(position.symbol) == ticker), None)
+        ticker = economic_exposure_ticker(symbol)
+        return next(
+            (
+                position
+                for position in self.store.get_portfolio().positions
+                if economic_exposure_ticker(position.symbol) == ticker
+            ),
+            None,
+        )
+
+    def _active_theses(self, symbol: str):
+        ticker = economic_exposure_ticker(symbol)
+        return [
+            thesis
+            for thesis in self.store.list_theses(status=ThesisStatus.ACTIVE, limit=200)
+            if economic_exposure_ticker(thesis.symbol) == ticker
+        ][:5]
+
+    def _catalysts_for_symbol(self, symbol: str):
+        ticker = economic_exposure_ticker(symbol)
+        return [
+            catalyst
+            for catalyst in self.store.list_catalysts(limit=200)
+            if catalyst.symbol and economic_exposure_ticker(catalyst.symbol) == ticker
+        ][:20]
 
     def _relevant_brief_items(self, symbol: str | None, items: list[AdvisorBriefItem]) -> list[AdvisorBriefItem]:
         if not symbol:
             return list(items)
-        ticker = external_ticker(symbol)
+        ticker = economic_exposure_ticker(symbol)
         relevant = []
         for item in items:
             haystack = " ".join([item.title, item.rationale, item.next_action, *item.related_ids]).upper()
-            if ticker in haystack or symbol.upper() in haystack:
+            if ticker in haystack or external_ticker(symbol) in haystack or symbol.upper() in haystack:
                 relevant.append(item)
         generic = [item for item in items if item.category in {"market", "market_regime", "behavior", "shadow", "research"}]
         return [*relevant, *[item for item in generic if item not in relevant]]
@@ -1172,7 +1221,7 @@ def _tech_exposure_weight(portfolio) -> float:
     tech_value = sum(
         position.market_value
         for position in portfolio.positions
-        if external_ticker(position.symbol) in TECH_SYMBOL_HINTS
+        if economic_exposure_ticker(position.symbol) in TECH_SYMBOL_HINTS
     )
     return tech_value / total
 

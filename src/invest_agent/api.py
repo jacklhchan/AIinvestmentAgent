@@ -320,6 +320,7 @@ def refresh_market_context(request: NewsRefreshRequest | None = None):
     result = service.refresh_news(
         days=request.days,
         max_per_symbol=request.max_per_symbol,
+        include_gdelt=request.include_gdelt,
         include_google_news=request.include_google_news,
         include_finnhub=request.include_finnhub,
     )

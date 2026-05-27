@@ -29,7 +29,7 @@ class Settings(BaseModel):
     draft_max_candidates: int = 3
     news_lookback_days: int = 3
     news_max_per_symbol: int = 5
-    news_max_symbols: int = 6
+    news_max_symbols: int = 12
     news_timeout_seconds: float = 5.0
     google_news_fallback_enabled: bool = True
     sec_user_agent: str = "AIinvestmentAgent/0.1 local-use contact@example.com"
@@ -63,6 +63,9 @@ class Settings(BaseModel):
     telegram_bot_token: str = ""
     telegram_allowed_users: str = ""
     finnhub_api_key: str = ""
+    finnhub_min_interval_seconds: float = 1.2
+    finnhub_max_retries: int = 3
+    finnhub_rate_limit_backoff_seconds: float = 2.0
     alpha_vantage_api_key: str = ""
 
     @property
@@ -118,7 +121,7 @@ def get_settings() -> Settings:
         draft_max_candidates=_int_env("INVEST_AGENT_DRAFT_MAX_CANDIDATES", 3),
         news_lookback_days=_int_env("INVEST_AGENT_NEWS_LOOKBACK_DAYS", 3),
         news_max_per_symbol=_int_env("INVEST_AGENT_NEWS_MAX_PER_SYMBOL", 5),
-        news_max_symbols=_int_env("INVEST_AGENT_NEWS_MAX_SYMBOLS", 6),
+        news_max_symbols=_int_env("INVEST_AGENT_NEWS_MAX_SYMBOLS", 12),
         news_timeout_seconds=_float_env("INVEST_AGENT_NEWS_TIMEOUT_SECONDS", 5.0),
         google_news_fallback_enabled=_bool_env("INVEST_AGENT_GOOGLE_NEWS_FALLBACK_ENABLED", True),
         sec_user_agent=os.getenv("INVEST_AGENT_SEC_USER_AGENT", "AIinvestmentAgent/0.1 local-use contact@example.com"),
@@ -151,6 +154,9 @@ def get_settings() -> Settings:
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
         telegram_allowed_users=os.getenv("TELEGRAM_ALLOWED_USERS", ""),
         finnhub_api_key=os.getenv("FINNHUB_API_KEY", ""),
+        finnhub_min_interval_seconds=_float_env("INVEST_AGENT_FINNHUB_MIN_INTERVAL_SECONDS", 1.2),
+        finnhub_max_retries=_int_env("INVEST_AGENT_FINNHUB_MAX_RETRIES", 3),
+        finnhub_rate_limit_backoff_seconds=_float_env("INVEST_AGENT_FINNHUB_RATE_LIMIT_BACKOFF_SECONDS", 2.0),
         alpha_vantage_api_key=os.getenv("ALPHA_VANTAGE_API_KEY", ""),
     )
 

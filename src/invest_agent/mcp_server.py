@@ -247,10 +247,22 @@ def get_market_regime() -> dict:
 
 
 @mcp.tool()
-def refresh_market_context_news(days: int | None = None, max_per_symbol: int | None = None) -> dict:
+def refresh_market_context_news(
+    days: int | None = None,
+    max_per_symbol: int | None = None,
+    include_gdelt: bool = True,
+    include_google_news: bool | None = None,
+    include_finnhub: bool = True,
+) -> dict:
     """Refresh broad-market context news without creating proposals or approvals."""
     service = MarketContextService(get_settings(), get_store())
-    result = service.refresh_news(days=days, max_per_symbol=max_per_symbol)
+    result = service.refresh_news(
+        days=days,
+        max_per_symbol=max_per_symbol,
+        include_gdelt=include_gdelt,
+        include_google_news=include_google_news,
+        include_finnhub=include_finnhub,
+    )
     return {"refresh": _json(result), "context": _json(service.build_context())}
 
 

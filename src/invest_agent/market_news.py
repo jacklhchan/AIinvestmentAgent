@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from hashlib import sha1
@@ -26,6 +27,15 @@ COMPANY_NAMES = {
     "NFLX": "Netflix",
 }
 
+# Some tickers are different share classes of the same economic issuer. Risk,
+# thesis and proposal gates must treat these as one exposure even when the
+# broker/account stores only one share class. Keep this deliberately small: it
+# is a risk-control alias, not a general ticker rewrite layer.
+ECONOMIC_EXPOSURE_TICKER_ALIASES = {
+    "GOOG": "GOOGL",
+    "GOOGL": "GOOGL",
+}
+
 MARKET_CONTEXT_QUERIES = {
     "SPY": "S&P 500 OR broad market OR US equities",
     "QQQ": "Nasdaq 100 OR mega cap tech OR growth stocks",
@@ -46,13 +56,13 @@ def resolve_watchlist_symbols(settings: Settings, store: Store, symbols: list[st
     else:
         configured = _split_symbols(settings.watchlist_symbols)
         held = [position.symbol for position in store.get_portfolio().positions]
-        market_context_tickers = {external_ticker(symbol) for symbol in _split_symbols(settings.market_context_symbols)}
-        protected_tickers = {external_ticker(symbol) for symbol in [*configured, *held]}
+        market_context_tickers = {economic_exposure_ticker(symbol) for symbol in _split_symbols(settings.market_context_symbols)}
+        protected_tickers = {economic_exposure_ticker(symbol) for symbol in [*configured, *held]}
         quote_symbols = [
             quote.symbol
             for quote in store.list_quotes()
-            if external_ticker(quote.symbol) not in market_context_tickers
-            or external_ticker(quote.symbol) in protected_tickers
+            if economic_exposure_ticker(quote.symbol) not in market_context_tickers
+            or economic_exposure_ticker(quote.symbol) in protected_tickers
         ]
         candidates.extend(configured)
         candidates.extend(held)
@@ -63,7 +73,7 @@ def resolve_watchlist_symbols(settings: Settings, store: Store, symbols: list[st
         symbol = _normalize_symbol(candidate)
         if not symbol:
             continue
-        ticker = external_ticker(symbol)
+        ticker = economic_exposure_ticker(symbol)
         current = by_ticker.get(ticker)
         if current is None or _is_market_symbol(symbol):
             by_ticker[ticker] = symbol
@@ -86,6 +96,7 @@ class MarketNewsIngestor:
         self.settings = settings
         self.store = store
         self.client = client
+        self._last_finnhub_request_at: float | None = None
 
     def refresh_news(
         self,
@@ -114,6 +125,7 @@ class MarketNewsIngestor:
         client = self.client or httpx.Client(timeout=timeout)
         try:
             for symbol in watchlist:
+                gdelt_items: list[NewsItem] = []
                 if include_gdelt:
                     try:
                         gdelt_items = self.fetch_gdelt(client, symbol, days=lookback_days, limit=limit)
@@ -121,11 +133,11 @@ class MarketNewsIngestor:
                     except (httpx.HTTPError, ValueError) as exc:
                         errors.append(f"gdelt {symbol}: {exc}")
                         gdelt_items = []
-                    if use_google_news and not gdelt_items:
-                        try:
-                            items.extend(self.fetch_google_news(client, symbol, limit=limit))
-                        except (httpx.HTTPError, ValueError, ElementTree.ParseError) as exc:
-                            errors.append(f"google-news {symbol}: {exc}")
+                if use_google_news and not gdelt_items:
+                    try:
+                        items.extend(self.fetch_google_news(client, symbol, limit=limit))
+                    except (httpx.HTTPError, ValueError, ElementTree.ParseError) as exc:
+                        errors.append(f"google-news {symbol}: {exc}")
                 if include_finnhub and self.settings.finnhub_api_key:
                     try:
                         items.extend(self.fetch_finnhub(client, symbol, days=lookback_days, limit=limit))
@@ -206,7 +218,8 @@ class MarketNewsIngestor:
         ticker = external_ticker(symbol)
         today = utc_now().date()
         start = today - timedelta(days=max(days, 1))
-        response = client.get(
+        response = self._get_finnhub_with_backoff(
+            client,
             "https://finnhub.io/api/v1/company-news",
             params={
                 "symbol": ticker,
@@ -215,9 +228,54 @@ class MarketNewsIngestor:
                 "token": self.settings.finnhub_api_key,
             },
         )
-        response.raise_for_status()
         payload = response.json()
         return news_items_from_finnhub(symbol, payload, limit=limit)
+
+    def _get_finnhub_with_backoff(self, client: httpx.Client, url: str, *, params: dict[str, Any]) -> httpx.Response:
+        attempts = max(0, self.settings.finnhub_max_retries) + 1
+        last_error: httpx.HTTPStatusError | None = None
+        for attempt in range(attempts):
+            self._wait_for_finnhub_slot()
+            response = client.get(url, params=params)
+            try:
+                response.raise_for_status()
+                return response
+            except httpx.HTTPStatusError as exc:
+                last_error = exc
+                if exc.response.status_code != 429 or attempt >= attempts - 1:
+                    raise
+                time.sleep(self._finnhub_retry_delay(exc.response, attempt))
+        if last_error:
+            raise last_error
+        raise ValueError("finnhub request did not return a response")
+
+    def _wait_for_finnhub_slot(self) -> None:
+        interval = max(0.0, self.settings.finnhub_min_interval_seconds)
+        if interval <= 0:
+            self._last_finnhub_request_at = time.monotonic()
+            return
+        now = time.monotonic()
+        if self._last_finnhub_request_at is not None:
+            remaining = interval - (now - self._last_finnhub_request_at)
+            if remaining > 0:
+                time.sleep(remaining)
+                now = time.monotonic()
+        self._last_finnhub_request_at = now
+
+    def _finnhub_retry_delay(self, response: httpx.Response, attempt: int) -> float:
+        retry_after = response.headers.get("Retry-After")
+        if retry_after:
+            retry_after = retry_after.strip()
+            try:
+                return max(0.0, float(retry_after))
+            except ValueError:
+                try:
+                    parsed = parsedate_to_datetime(retry_after)
+                    return max(0.0, (parsed - datetime.now(timezone.utc)).total_seconds())
+                except (TypeError, ValueError):
+                    pass
+        base = max(0.0, self.settings.finnhub_rate_limit_backoff_seconds)
+        return base * (2**attempt)
 
 
 def news_items_from_gdelt(symbol: str, payload: dict[str, Any], *, limit: int) -> list[NewsItem]:
@@ -305,6 +363,15 @@ def external_ticker(symbol: str) -> str:
     return normalized.split(".", 1)[1] if "." in normalized else normalized
 
 
+def economic_exposure_ticker(symbol: str) -> str:
+    ticker = external_ticker(symbol)
+    return ECONOMIC_EXPOSURE_TICKER_ALIASES.get(ticker, ticker)
+
+
+def symbols_economically_equivalent(left: str, right: str) -> bool:
+    return economic_exposure_ticker(left) == economic_exposure_ticker(right)
+
+
 def _split_symbols(raw: str) -> list[str]:
     return [_normalize_symbol(item) for item in raw.replace(";", ",").split(",") if _normalize_symbol(item)]
 
@@ -315,7 +382,7 @@ def _resolve_explicit_symbols(symbols: list[str]) -> list[str]:
         symbol = _normalize_symbol(candidate)
         if not symbol:
             continue
-        ticker = external_ticker(symbol)
+        ticker = economic_exposure_ticker(symbol)
         current = by_ticker.get(ticker)
         if current is None or _is_market_symbol(symbol):
             by_ticker[ticker] = symbol

@@ -183,6 +183,7 @@ class OpportunityRadarService:
         risk_snapshot = next(iter(self.store.list_portfolio_risk_snapshots(limit=1)), None)
         behavior_report = next(iter(self.store.list_behavior_reports(limit=1)), None)
         shadow_report = next(iter(self.store.list_shadow_reports(limit=1)), None)
+        coverage_warnings = _coverage_warnings(context)
         cards = self._build_cards(
             run_id,
             run_card.id,
@@ -202,7 +203,7 @@ class OpportunityRadarService:
             market_regime_snapshot_id=regime.id,
             portfolio_risk_snapshot_id=risk_snapshot.id if risk_snapshot else None,
             run_card_id=run_card.id,
-            summary=_radar_summary(cards),
+            summary=_radar_summary(cards, coverage_warnings),
             cards=cards,
             created_at=now,
         )
@@ -215,6 +216,7 @@ class OpportunityRadarService:
             "portfolio_risk_snapshot_id": risk_snapshot.id if risk_snapshot else None,
             "behavior_report_id": behavior_report.id if behavior_report else None,
             "shadow_report_id": shadow_report.id if shadow_report else None,
+            "coverage_warnings": coverage_warnings,
             "cards": [card.model_dump(mode="json") for card in cards],
         }
         RunCardService(self.store).complete_run(
@@ -238,8 +240,11 @@ class OpportunityRadarService:
                     in {OpportunityRecommendationType.BLOCKED, OpportunityRecommendationType.AVOID}
                 ),
                 "scoring_version": OPPORTUNITY_RADAR_RULE_VERSION,
+                "market_context_coverage_sufficient": not coverage_warnings,
+                "market_context_news_coverage_ratio": context.coverage_summary.get("news_coverage_ratio"),
+                "market_context_quote_coverage_ratio": context.coverage_summary.get("quote_coverage_ratio"),
             },
-            warnings=[*context.risk_notes, *regime.warnings],
+            warnings=[*coverage_warnings, *context.risk_notes, *regime.warnings],
             outputs=stored.model_dump(mode="json"),
             dataset=dataset,
             evidence_hash=stable_hash(dataset),
@@ -274,6 +279,7 @@ class OpportunityRadarService:
         cash_weight = portfolio.cash_usd / total_value if total_value else 0.0
         tech_weight = _tech_weight(portfolio)
         chasing_flag = _behavior_chasing_flag(behavior_report, shadow_report)
+        coverage_warnings = _coverage_warnings(context)
 
         positive: list[OpportunityCard] = []
         blocked: list[OpportunityCard] = []
@@ -292,6 +298,7 @@ class OpportunityRadarService:
                 tech_weight,
                 cash_weight,
                 chasing_flag,
+                coverage_warnings,
                 risk_snapshot,
                 behavior_report,
                 shadow_report,
@@ -326,6 +333,7 @@ class OpportunityRadarService:
         tech_weight: float,
         cash_weight: float,
         chasing_flag: bool,
+        coverage_warnings: list[str],
         risk_snapshot,
         behavior_report,
         shadow_report,
@@ -357,12 +365,20 @@ class OpportunityRadarService:
         score = market_score + rotation_score + portfolio_score + evidence_score - penalties
         recommendation = _recommendation_from_score(score, blockers, spec)
         confidence = _confidence(score, blockers, quote_count, news_count, primary_count)
+        if coverage_warnings and recommendation in {
+            OpportunityRecommendationType.ACTION_CANDIDATE,
+            OpportunityRecommendationType.WATCH,
+        }:
+            recommendation = OpportunityRecommendationType.RESEARCH
+            confidence = AdvisorConfidence.LOW
         evidence_layers = {
             "market_regime": [regime.summary, *regime.drivers[:2]],
             "sector_theme_rotation": [rotation_reason],
             "symbol_specific": _symbol_evidence(tickers, quotes, news_counts, fundamentals, active_theses, catalyst_blocks),
             "portfolio_fit": [portfolio_reason],
-            "risk_gate": risk_reasons or ["沒有發現足以升級為交易建議的 gate-passing evidence。"],
+            "risk_gate": _clean([*coverage_warnings, *blockers])
+            or risk_reasons
+            or ["沒有發現足以升級為交易建議的 gate-passing evidence。"],
             "behavior_shadow": [_behavior_evidence(chasing_flag, behavior_report, shadow_report)],
         }
         reasons = _clean(
@@ -373,7 +389,7 @@ class OpportunityRadarService:
                 evidence_reason,
             ]
         )[:3]
-        risks = _clean([*portfolio_risks, *risk_reasons])[:3]
+        risks = _clean([*coverage_warnings[:1], *blockers, *portfolio_risks, *risk_reasons])[:3]
         linked = {
             "run_card_id": run_card_id,
             "market_regime_snapshot_id": regime.id,
@@ -410,6 +426,29 @@ def _news_counts(items) -> dict[str, int]:
         ticker = external_ticker(item.symbol)
         counts[ticker] = counts.get(ticker, 0) + 1
     return counts
+
+
+def _coverage_warnings(context) -> list[str]:
+    summary = context.coverage_summary or {}
+    if summary.get("coverage_sufficient"):
+        return []
+    symbol_count = int(summary.get("symbol_count") or 0)
+    if not symbol_count:
+        return ["Market context coverage is empty; Opportunity Radar must stay research-only."]
+    with_news = int(summary.get("with_news") or 0)
+    with_quote = int(summary.get("with_quote") or 0)
+    min_news = float(summary.get("min_news_coverage_ratio") or 0.5)
+    min_quote = float(summary.get("min_quote_coverage_ratio") or 0.4)
+    warnings: list[str] = []
+    if with_news / symbol_count < min_news:
+        warnings.append(
+            f"Market context news coverage is insufficient ({with_news}/{symbol_count}); do not call this a new opportunity."
+        )
+    if with_quote / symbol_count < min_quote:
+        warnings.append(
+            f"Market context quote coverage is insufficient ({with_quote}/{symbol_count}); sector/theme rotation remains research-only."
+        )
+    return warnings
 
 
 def _catalyst_blocks(catalysts) -> dict[str, str]:
@@ -658,7 +697,12 @@ def _downgrade_conditions(spec: OpportunitySpec) -> list[str]:
     return conditions
 
 
-def _radar_summary(cards: list[OpportunityCard]) -> str:
+def _radar_summary(cards: list[OpportunityCard], coverage_warnings: list[str] | None = None) -> str:
+    if coverage_warnings:
+        return (
+            "Market context 資料覆蓋不足；今晚只輸出 research/watchlist context，"
+            "不判斷新機會、不建立 proposal。"
+        )
     positives = [
         card
         for card in cards

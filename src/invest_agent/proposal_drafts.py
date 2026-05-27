@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from .config import Settings
-from .market_news import external_ticker, resolve_watchlist_symbols
+from .market_news import economic_exposure_ticker, resolve_watchlist_symbols
 from .models import (
     DraftProposalResult,
     FundamentalMetric,
@@ -144,12 +144,12 @@ class ProposalDraftEngine:
         cutoff = utc_now() - timedelta(hours=max(1, lookback_hours))
         primary_cutoff = utc_now() - timedelta(days=max(1, self.settings.primary_source_lookback_days))
         news = self.store.list_news(limit=30, symbol=symbol)
-        ticker = external_ticker(symbol)
+        ticker = economic_exposure_ticker(symbol)
         return [
             item
             for item in news
             if item.symbol is not None
-            and external_ticker(item.symbol) == ticker
+            and economic_exposure_ticker(item.symbol) == ticker
             and (item.published_at >= cutoff or (_is_primary_source(item) and item.published_at >= primary_cutoff))
         ]
 
@@ -205,7 +205,7 @@ class ProposalDraftEngine:
                 counter_evidence.append("SEC companyfacts fundamentals are parsed locally, but the draft still requires human approval.")
         else:
             counter_evidence.append("No SEC companyfacts fundamentals snapshot is available for this symbol.")
-        tracked_thesis = self.store.get_active_thesis_for_symbol(symbol)
+        tracked_thesis = self._find_active_thesis(symbol)
         thesis = (
             f"Watchlist news flow is {direction} for {symbol}. "
             f"The draft keeps notional small and sends the idea through policy checks before approval."
@@ -336,19 +336,35 @@ class ProposalDraftEngine:
         quote = self.store.get_quote(symbol)
         if quote:
             return quote
-        ticker = external_ticker(symbol)
-        return next((item for item in self.store.list_quotes() if external_ticker(item.symbol) == ticker), None)
+        ticker = economic_exposure_ticker(symbol)
+        return next((item for item in self.store.list_quotes() if economic_exposure_ticker(item.symbol) == ticker), None)
 
     def _find_position(self, symbol: str) -> Position | None:
-        ticker = external_ticker(symbol)
-        return next((item for item in self.store.get_portfolio().positions if external_ticker(item.symbol) == ticker), None)
+        ticker = economic_exposure_ticker(symbol)
+        return next((item for item in self.store.get_portfolio().positions if economic_exposure_ticker(item.symbol) == ticker), None)
 
     def _find_fundamentals(self, symbol: str) -> FundamentalSnapshot | None:
         snapshot = self.store.get_fundamentals(symbol)
         if snapshot:
             return snapshot
-        ticker = external_ticker(symbol)
-        return next((item for item in self.store.list_fundamentals() if external_ticker(item.symbol) == ticker), None)
+        ticker = economic_exposure_ticker(symbol)
+        return next((item for item in self.store.list_fundamentals() if economic_exposure_ticker(item.symbol) == ticker), None)
+
+    def _find_active_thesis(self, symbol: str):
+        thesis = self.store.get_active_thesis_for_symbol(symbol)
+        if thesis:
+            return thesis
+        ticker = economic_exposure_ticker(symbol)
+        return next(
+            (
+                item
+                for item in self.store.list_theses(limit=200)
+                if item.human_confirmed
+                and item.status.value == "active"
+                and economic_exposure_ticker(item.symbol) == ticker
+            ),
+            None,
+        )
 
 
 def _score_news(item: NewsItem) -> int:

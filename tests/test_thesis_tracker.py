@@ -219,3 +219,93 @@ def test_proposal_draft_attaches_active_thesis(tmp_path) -> None:
     assert result.drafts[0].thesis_id == thesis.id
     assert result.created[0].thesis_id == thesis.id
     assert any("thesis-tracker" in item for item in result.drafts[0].evidence)
+
+
+def test_proposal_accepts_alphabet_share_class_equivalent_thesis(tmp_path) -> None:
+    _settings, store, service = make_stack(tmp_path)
+    thesis = create_sample_thesis(store, symbol="US.GOOG")
+
+    proposal = service.create_proposal(
+        ProposalCreate(
+            symbol="GOOGL",
+            side=Side.BUY,
+            qty=1,
+            limit_price=175.70,
+            thesis="Use a US.GOOG tracked thesis for an economically equivalent GOOGL proposal.",
+            trigger="pytest share-class normalization",
+            confidence=0.65,
+            manual_override_reason="Regression test for Alphabet share-class thesis matching.",
+            thesis_id=thesis.id,
+        )
+    )
+
+    assert proposal.status == ProposalStatus.PENDING
+    assert not any("thesis symbol" in reason for reason in proposal.risk_check.reasons)
+
+
+def test_pending_alphabet_share_class_proposal_blocks_duplicate_exposure(tmp_path) -> None:
+    _settings, store, service = make_stack(tmp_path)
+    thesis = create_sample_thesis(store, symbol="US.GOOG")
+    first = service.create_proposal(
+        ProposalCreate(
+            symbol="US.GOOG",
+            side=Side.BUY,
+            qty=1,
+            limit_price=175.70,
+            thesis="First Alphabet share-class proposal should reserve issuer exposure.",
+            trigger="pytest share-class duplicate setup",
+            confidence=0.65,
+            manual_override_reason="Regression test setup for duplicate exposure.",
+            thesis_id=thesis.id,
+        )
+    )
+
+    duplicate = service.create_proposal(
+        ProposalCreate(
+            symbol="GOOGL",
+            side=Side.BUY,
+            qty=1,
+            limit_price=175.70,
+            thesis="Second Alphabet share-class proposal should be blocked as duplicate exposure.",
+            trigger="pytest share-class duplicate",
+            confidence=0.65,
+            manual_override_reason="Regression test for duplicate exposure.",
+            thesis_id=thesis.id,
+        )
+    )
+
+    assert first.status == ProposalStatus.PENDING
+    assert duplicate.status == ProposalStatus.RISK_REJECTED
+    assert any("duplicate pending proposal" in reason for reason in duplicate.risk_check.reasons)
+
+
+def test_proposal_draft_attaches_active_thesis_across_alphabet_share_classes(tmp_path) -> None:
+    settings, store, service = make_stack(tmp_path, watchlist="GOOGL")
+    thesis = create_sample_thesis(store, symbol="US.GOOG")
+    store.upsert_news(
+        NewsItem(
+            symbol="GOOGL",
+            title="Alphabet raises guidance after record cloud growth",
+            source="finnhub",
+            published_at=utc_now(),
+            summary="Growth and demand remain strong.",
+        )
+    )
+    store.upsert_news(
+        NewsItem(
+            symbol="GOOGL",
+            title="SEC 10-Q filed for Alphabet",
+            source="sec-edgar",
+            published_at=utc_now(),
+            tags=["primary-source", "sec-edgar", "10-q"],
+            summary="Primary-source SEC EDGAR filing.",
+        )
+    )
+
+    result = ProposalDraftEngine(settings, store, service).draft_from_watchlist(
+        symbols=["GOOGL"],
+        create_proposals=False,
+    )
+
+    assert result.drafts
+    assert result.drafts[0].thesis_id == thesis.id

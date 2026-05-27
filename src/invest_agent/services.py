@@ -20,6 +20,7 @@ from .models import (
 )
 from .policy import RiskEngine
 from .research_goals import compute_evidence_hash, evaluate_research_gate
+from .market_news import symbols_economically_equivalent
 from .store import Store
 
 
@@ -107,7 +108,7 @@ class InvestmentService:
         thesis = self.store.get_thesis(request.thesis_id)
         if not thesis:
             return [f"thesis not found: {request.thesis_id}"]
-        if thesis.symbol != request.symbol:
+        if not symbols_economically_equivalent(thesis.symbol, request.symbol):
             return [f"thesis symbol {thesis.symbol} does not match proposal symbol {request.symbol}"]
         reasons: list[str] = []
         if not thesis.human_confirmed:

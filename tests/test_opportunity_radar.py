@@ -86,6 +86,25 @@ def test_broad_opportunity_question_uses_radar_inside_ask_advisor(tmp_path) -> N
     assert len(store.list_proposals(limit=100)) == proposal_count
 
 
+def test_broad_opportunity_question_does_not_call_new_opportunities_when_coverage_is_low(tmp_path) -> None:
+    settings = Settings(db_path=tmp_path / "test.db", market_context_symbols="SPY,QQQ,XLK,XLV")
+    store = Store(settings.db_path)
+    store.upsert_quote(Quote(symbol="SPY", last_price=700, previous_close=696, change_pct=0.6))
+    store.upsert_news(NewsItem(symbol="SPY", title="Broad market opens higher", source="google-news"))
+
+    answer = AdvisorOrchestrator(store, settings=settings).answer_user_question(
+        AdvisorQuestionRequest(question="今晚市場有無值得留意的新機會？")
+    )
+
+    assert "資料覆蓋不足" in answer.conclusion
+    assert answer.confidence.value == "low"
+    assert all(
+        card["recommendation_type"] not in {"watch", "action_candidate"}
+        for card in answer.opportunity_cards_json
+    )
+    assert not store.list_proposals(limit=100)
+
+
 def test_high_tech_concentration_blocks_ai_chasing_ideas(tmp_path) -> None:
     store = make_store(tmp_path)
     now = utc_now()

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from .config import Settings
-from .market_news import MarketNewsIngestor, external_ticker, resolve_market_context_symbols
+from .market_news import MarketNewsIngestor, economic_exposure_ticker, external_ticker, resolve_market_context_symbols
 from .models import MarketContextItem, MarketContextSnapshot, NewsIngestResult, Quote
 from .store import Store
 
+
+MIN_MARKET_CONTEXT_NEWS_COVERAGE_RATIO = 0.50
+MIN_MARKET_CONTEXT_QUOTE_COVERAGE_RATIO = 0.40
 
 MARKET_CONTEXT_ROLES = {
     "SPY": ("US broad equity", "S&P 500 / broad risk appetite"),
@@ -47,11 +50,14 @@ class MarketContextService:
     def build_context(self) -> MarketContextSnapshot:
         symbols = resolve_market_context_symbols(self.settings, self.store)
         quotes = self.store.list_quotes()
-        quote_by_ticker = {external_ticker(quote.symbol): quote for quote in quotes}
-        items = [self._item(symbol, quote_by_ticker.get(external_ticker(symbol))) for symbol in symbols]
+        quote_by_ticker = {economic_exposure_ticker(quote.symbol): quote for quote in quotes}
+        items = [self._item(symbol, quote_by_ticker.get(economic_exposure_ticker(symbol))) for symbol in symbols]
         with_quote = sum(1 for item in items if item.has_quote)
         with_news = sum(1 for item in items if item.news_count)
         missing = [item.symbol for item in items if not item.has_quote and not item.news_count]
+        symbol_count = len(symbols)
+        quote_coverage_ratio = with_quote / symbol_count if symbol_count else 0.0
+        news_coverage_ratio = with_news / symbol_count if symbol_count else 0.0
         notes: list[str] = []
         if missing:
             notes.append(f"Market context missing local quote/news coverage for {', '.join(missing[:5])}.")
@@ -59,16 +65,30 @@ class MarketContextService:
             notes.append("Market context has no local quote coverage yet; current broad-market view is news-only.")
         if with_news == 0:
             notes.append("Refresh market context news before relying on broad-market advice.")
+        if symbol_count and news_coverage_ratio < MIN_MARKET_CONTEXT_NEWS_COVERAGE_RATIO:
+            notes.append(
+                f"Market context news coverage is low ({with_news}/{symbol_count}); do not present broad opportunity ideas as new opportunities until refresh succeeds."
+            )
+        if symbol_count and quote_coverage_ratio < MIN_MARKET_CONTEXT_QUOTE_COVERAGE_RATIO:
+            notes.append(
+                f"Market context quote coverage is low ({with_quote}/{symbol_count}); sector/theme rotation should remain research-only."
+            )
         if any(external_ticker(item.symbol) in {"VIX", "VIXY"} and item.news_count for item in items):
             notes.append("Volatility proxy has fresh news; review risk appetite before approving new proposals.")
         return MarketContextSnapshot(
             symbols=symbols,
             items=items,
             coverage_summary={
-                "symbol_count": len(symbols),
+                "symbol_count": symbol_count,
                 "with_quote": with_quote,
                 "with_news": with_news,
                 "missing_count": len(missing),
+                "quote_coverage_ratio": round(quote_coverage_ratio, 4),
+                "news_coverage_ratio": round(news_coverage_ratio, 4),
+                "min_quote_coverage_ratio": MIN_MARKET_CONTEXT_QUOTE_COVERAGE_RATIO,
+                "min_news_coverage_ratio": MIN_MARKET_CONTEXT_NEWS_COVERAGE_RATIO,
+                "coverage_sufficient": news_coverage_ratio >= MIN_MARKET_CONTEXT_NEWS_COVERAGE_RATIO
+                and quote_coverage_ratio >= MIN_MARKET_CONTEXT_QUOTE_COVERAGE_RATIO,
             },
             risk_notes=notes,
         )
@@ -78,6 +98,7 @@ class MarketContextService:
         *,
         days: int | None = None,
         max_per_symbol: int | None = None,
+        include_gdelt: bool = True,
         include_google_news: bool | None = None,
         include_finnhub: bool = True,
     ) -> NewsIngestResult:
@@ -87,20 +108,22 @@ class MarketContextService:
             days=days,
             max_per_symbol=max_per_symbol,
             max_symbols=len(symbols),
+            include_gdelt=include_gdelt,
             include_google_news=include_google_news,
             include_finnhub=include_finnhub,
         )
 
     def _item(self, symbol: str, quote: Quote | None) -> MarketContextItem:
-        ticker = external_ticker(symbol)
-        role, label = MARKET_CONTEXT_ROLES.get(ticker, ("market context", f"{ticker} market context"))
+        ticker = economic_exposure_ticker(symbol)
+        display_ticker = external_ticker(symbol)
+        role, label = MARKET_CONTEXT_ROLES.get(display_ticker, ("market context", f"{display_ticker} market context"))
         news_candidates = self.store.list_news(symbol=symbol, limit=20)
-        if symbol != ticker:
-            news_candidates.extend(self.store.list_news(symbol=ticker, limit=20))
+        if symbol != display_ticker:
+            news_candidates.extend(self.store.list_news(symbol=display_ticker, limit=20))
         news_by_id = {
             item.id: item
             for item in news_candidates
-            if item.symbol and external_ticker(item.symbol) == ticker
+            if item.symbol and economic_exposure_ticker(item.symbol) == ticker
         }
         news = sorted(news_by_id.values(), key=lambda item: item.published_at, reverse=True)
         latest = news[0] if news else None

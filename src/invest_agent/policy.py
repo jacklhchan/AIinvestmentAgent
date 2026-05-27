@@ -3,7 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from .config import Settings
-from .models import PortfolioSnapshot, Proposal, ProposalCreate, RiskCheck, Side
+from .market_news import economic_exposure_ticker
+from .models import PortfolioSnapshot, Proposal, ProposalCreate, ProposalStatus, Quote, RiskCheck, Side
 from .store import Store
 
 
@@ -37,11 +38,11 @@ class RiskEngine:
         if request.side == Side.BUY and notional > portfolio.cash_usd:
             reasons.append(f"cash_usd {portfolio.cash_usd:.2f} is lower than proposal notional {notional:.2f}")
 
-        duplicate = self.store.pending_for_symbol(request.symbol, request.side.value)
+        duplicate = self._pending_for_same_exposure(request.symbol, request.side.value)
         if duplicate:
             reasons.append(f"duplicate pending proposal for {request.symbol} {request.side.value}")
 
-        quote = self.store.get_quote(request.symbol)
+        quote = self._quote_for_symbol(request.symbol)
         if not quote:
             warnings.append("no local quote found; approval will require manual caution")
         else:
@@ -74,7 +75,7 @@ class RiskEngine:
         if proposal.expires_at < now:
             reasons.append("proposal expired")
 
-        quote = self.store.get_quote(proposal.symbol)
+        quote = self._quote_for_symbol(proposal.symbol)
         latest_price = quote.last_price if quote else proposal.limit_price
         drift_bps = abs(latest_price - proposal.limit_price) / proposal.limit_price * 10000.0
         max_drift = proposal.max_slippage_bps or self.settings.max_price_drift_bps
@@ -102,4 +103,24 @@ class RiskEngine:
                 "price_drift_bps": round(drift_bps, 2),
                 "max_price_drift_bps": max_drift,
             },
+        )
+
+    def _pending_for_same_exposure(self, symbol: str, side: str | None = None) -> list[Proposal]:
+        ticker = economic_exposure_ticker(symbol)
+        side_value = side.upper() if side else None
+        return [
+            proposal
+            for proposal in self.store.list_proposals(status=ProposalStatus.PENDING, limit=500)
+            if economic_exposure_ticker(proposal.symbol) == ticker
+            and (side_value is None or proposal.side.value == side_value)
+        ]
+
+    def _quote_for_symbol(self, symbol: str) -> Quote | None:
+        quote = self.store.get_quote(symbol)
+        if quote:
+            return quote
+        ticker = economic_exposure_ticker(symbol)
+        return next(
+            (quote for quote in self.store.list_quotes() if economic_exposure_ticker(quote.symbol) == ticker),
+            None,
         )
