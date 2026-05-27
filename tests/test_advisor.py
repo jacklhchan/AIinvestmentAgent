@@ -108,8 +108,43 @@ def test_ask_advisor_returns_concise_card_without_proposal_side_effect(tmp_path)
     assert len(answer.reasons) <= 3
     assert len(answer.risks) <= 3
     assert answer.details_available is True
+    assert answer.provenance_json["audit_level"] == "advisor_question_run_card"
+    assert answer.provenance_json["full_advisor_brief_run"] is False
+    assert "advisor_question_run_card" in answer.provenance_json["executed_layers"]
+    assert "research_goal_created" in answer.provenance_json["not_run"]
+    assert "evidence_gate_run" in answer.provenance_json["not_run"]
+    assert answer.provenance_json["side_effects"]["proposal_created"] is False
     assert len(store.list_advisor_questions(limit=10)) == 1
     assert store.list_advisor_recommendations(limit=10)
+    assert len(store.list_proposals(limit=100)) == proposal_count
+
+
+def test_advisor_answer_provenance_marks_lightweight_not_full_stack(tmp_path) -> None:
+    store = make_store(tmp_path)
+    proposal_count = len(store.list_proposals(limit=100))
+
+    answer = AdvisorOrchestrator(store, settings=Settings(db_path=tmp_path / "test.db")).answer_user_question(
+        AdvisorQuestionRequest(question="Should I buy AAPL now?", symbol="AAPL")
+    )
+
+    provenance = answer.provenance_json
+    assert provenance["answer_scope"] == "advisor_question"
+    assert provenance["audit_level"] == "advisor_question_run_card"
+    assert provenance["full_advisor_brief_run"] is False
+    assert provenance["external_shell_or_web_used_by_control_plane"] is False
+    assert "lightweight_advisor_brief" in provenance["executed_layers"]
+    assert "market_context_snapshot" in provenance["executed_layers"]
+    assert "market_regime_snapshot" in provenance["executed_layers"]
+    assert "cached_thesis_lookup" in provenance["executed_layers"]
+    assert "new_earnings_review" in provenance["not_run"]
+    assert "committee_review" in provenance["not_run"]
+    assert "proposal_created" in provenance["not_run"]
+    assert provenance["side_effects"] == {
+        "research_goal_created": False,
+        "proposal_created": False,
+        "proposal_approved": False,
+        "trade_executed": False,
+    }
     assert len(store.list_proposals(limit=100)) == proposal_count
 
 

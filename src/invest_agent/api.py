@@ -2175,6 +2175,19 @@ proposal 需要靠 manual override 才能成立</textarea></div>
           <div class="muted">${escapeHtml((card.symbols || []).join(", "))}</div>
         </div>
       `).join("");
+      const provenance = answer.provenance_json || {};
+      const executed = (provenance.executed_layers || []).slice(0, 8).map(item => pill("info", item)).join(" ");
+      const notRun = (provenance.not_run || []).slice(0, 8).map(item => pill("PENDING", item)).join(" ");
+      const sideEffects = provenance.side_effects || {};
+      const provenanceBlock = Object.keys(provenance).length ? `
+        <div>
+          <div class="label">Provenance</div>
+          <div class="muted">Audit：${escapeHtml(provenance.audit_level || "advisor_question")} · Full brief：${provenance.full_advisor_brief_run ? "yes" : "no"}</div>
+          <div class="muted">已檢查：${executed || "n/a"}</div>
+          <div class="muted">未執行：${notRun || "n/a"}</div>
+          <div class="muted">Side effects：proposal ${sideEffects.proposal_created ? "created" : "none"} · approval ${sideEffects.proposal_approved ? "yes" : "no"} · execution ${sideEffects.trade_executed ? "yes" : "no"}</div>
+        </div>
+      ` : "";
       shell.innerHTML = `
         <div class="advisor-meta">
           ${pill(answer.recommendation_type, advisorSeverityLabels[answer.recommendation_type] || answer.recommendation_type)}
@@ -2186,6 +2199,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         <div><div class="label">主要原因</div><ol>${reasons || "<li>暫時沒有足夠資料。</li>"}</ol></div>
         <div><div class="label">主要風險</div><ol>${risks || "<li>Advice 不等於交易。</li>"}</ol></div>
         ${opportunityCards ? `<div><div class="label">機會雷達</div>${opportunityCards}</div>` : ""}
+        ${provenanceBlock}
         <div class="muted">你可以：${escapeHtml(answer.suggested_user_action)}</div>
       `;
     }

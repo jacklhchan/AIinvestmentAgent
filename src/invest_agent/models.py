@@ -2023,6 +2023,7 @@ class AdvisorAnswer(BaseModel):
     decision_required: bool = False
     details_available: bool = False
     linked_artifacts_json: list[dict[str, Any]] = Field(default_factory=list)
+    provenance_json: dict[str, Any] = Field(default_factory=dict)
     opportunity_radar_run_id: str | None = None
     opportunity_cards_json: list[dict[str, Any]] = Field(default_factory=list)
     run_card_id: str | None = None

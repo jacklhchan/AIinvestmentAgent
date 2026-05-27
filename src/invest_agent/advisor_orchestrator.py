@@ -579,6 +579,16 @@ class AdvisorOrchestrator:
                 decision_required=False,
                 details_available=True,
                 linked_artifacts_json=artifacts,
+                provenance_json=_advisor_provenance(
+                    brief=brief,
+                    run_card_id=run_card_id,
+                    symbol=symbol,
+                    active_theses=active_theses,
+                    catalysts=catalysts,
+                    profile=profile,
+                    opportunity_radar_run_id=radar.id,
+                    opportunity_cards_count=len(radar.cards),
+                ),
                 opportunity_radar_run_id=radar.id,
                 opportunity_cards_json=[card.model_dump(mode="json") for card in radar.cards],
                 run_card_id=run_card_id,
@@ -710,6 +720,14 @@ class AdvisorOrchestrator:
             decision_required=recommendation == AdvisorSeverity.ACTION,
             details_available=bool(artifacts),
             linked_artifacts_json=artifacts,
+            provenance_json=_advisor_provenance(
+                brief=brief,
+                run_card_id=run_card_id,
+                symbol=symbol,
+                active_theses=active_theses,
+                catalysts=catalysts,
+                profile=profile,
+            ),
             run_card_id=run_card_id,
             paper_only=self.paper_only,
         )
@@ -1032,6 +1050,93 @@ def market_open_close(session_date: date) -> tuple[datetime, datetime]:
     close_hour = 13 if is_early_close(session_date) else 16
     close_at = datetime.combine(session_date, time(close_hour, 0), tzinfo=NY_TZ)
     return open_at, close_at
+
+
+def _advisor_provenance(
+    *,
+    brief,
+    run_card_id: str,
+    symbol: str | None,
+    active_theses,
+    catalysts,
+    profile: AdvisorProfile | None,
+    opportunity_radar_run_id: str | None = None,
+    opportunity_cards_count: int = 0,
+) -> dict[str, Any]:
+    data_status = getattr(brief, "data_status", {}) or {}
+    market_context = data_status.get("market_context", {}) or {}
+    market_regime = data_status.get("market_regime", {}) or {}
+    coverage = market_context.get("coverage_summary", {}) or {}
+    executed_layers = [
+        "advisor_question_run_card",
+        "lightweight_advisor_brief",
+        "portfolio_snapshot_cache",
+        "market_context_snapshot",
+        "market_regime_snapshot",
+        "cached_research_goals",
+        "cached_earnings_reviews",
+        "cached_behavior_shadow_reports",
+    ]
+    if symbol:
+        executed_layers.extend(["symbol_resolution", "cached_thesis_lookup", "cached_catalyst_lookup"])
+    if opportunity_radar_run_id:
+        executed_layers.append("opportunity_radar")
+
+    return {
+        "answer_scope": "advisor_question",
+        "audit_level": "advisor_question_run_card",
+        "control_plane": "AIinvestmentAgent",
+        "mcp_tool": "ask_advisor",
+        "run_card_id": run_card_id,
+        "full_advisor_brief_run": False,
+        "external_shell_or_web_used_by_control_plane": False,
+        "executed_layers": executed_layers,
+        "not_run": [
+            "research_goal_created",
+            "evidence_gate_run",
+            "new_thesis_update",
+            "new_catalyst_review",
+            "new_earnings_review",
+            "committee_review",
+            "new_trade_journal_behavior_report",
+            "new_shadow_account_report",
+            "proposal_created",
+            "proposal_approved",
+            "trade_executed",
+        ],
+        "artifact_counts": {
+            "advisor_items": len(getattr(brief, "advice", []) or []),
+            "active_theses_for_symbol": len(active_theses or []),
+            "catalysts_for_symbol": len(catalysts or []),
+            "opportunity_cards": opportunity_cards_count,
+            "market_context_symbols": coverage.get("symbol_count", len(market_context.get("symbols", []) or [])),
+            "market_context_with_quote": coverage.get("with_quote", 0),
+            "market_context_with_news": coverage.get("with_news", 0),
+        },
+        "local_artifacts_checked": {
+            "advisor_profile": bool(profile),
+            "portfolio": True,
+            "market_context": bool(market_context),
+            "market_regime": bool(market_regime),
+            "cached_research_goals": True,
+            "cached_theses": bool(symbol),
+            "cached_catalysts": bool(symbol),
+            "cached_earnings_reviews": True,
+            "cached_behavior_shadow_reports": True,
+            "opportunity_radar": bool(opportunity_radar_run_id),
+        },
+        "side_effects": {
+            "research_goal_created": False,
+            "proposal_created": False,
+            "proposal_approved": False,
+            "trade_executed": False,
+        },
+        "limitations": [
+            "This is a concise Advisor question answer, not a full pre/post-market Advisor Brief.",
+            "It uses cached/local control-plane state unless the called Advisor path explicitly creates a run card.",
+            "Advice is research-only and cannot approve or execute trades.",
+        ],
+    }
 
 
 def is_trading_day(value: date) -> bool:

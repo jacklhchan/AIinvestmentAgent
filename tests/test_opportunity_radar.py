@@ -80,6 +80,9 @@ def test_broad_opportunity_question_uses_radar_inside_ask_advisor(tmp_path) -> N
     assert answer.recommendation_type == AdvisorSeverity.WATCH
     assert answer.opportunity_radar_run_id
     assert answer.opportunity_cards_json
+    assert answer.provenance_json["local_artifacts_checked"]["opportunity_radar"] is True
+    assert "opportunity_radar" in answer.provenance_json["executed_layers"]
+    assert answer.provenance_json["artifact_counts"]["opportunity_cards"] == len(answer.opportunity_cards_json)
     assert "Opportunity Radar" in answer.conclusion
     assert question.symbol is None
     assert question.symbol_resolution_status.value == "portfolio_scope"
