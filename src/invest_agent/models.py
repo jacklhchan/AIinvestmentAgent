@@ -514,6 +514,49 @@ class CommitteeConclusion(StrEnum):
     ELIGIBLE_FOR_PROPOSAL = "eligible_for_proposal"
     REJECT = "reject"
     WATCH_ONLY = "watch_only"
+    INFO_ONLY = "info_only"
+    WATCH = "watch"
+    RESEARCH_NEEDED = "research_needed"
+    ELIGIBLE_FOR_PROPOSAL_REVIEW = "eligible_for_proposal_review"
+    BLOCKED = "blocked"
+
+
+class CommitteeReviewType(StrEnum):
+    INVESTMENT_COMMITTEE = "investment_committee"
+    RISK_COMMITTEE = "risk_committee"
+    MACRO_COMMITTEE = "macro_committee"
+    EARNINGS_COMMITTEE = "earnings_committee"
+
+
+class CommitteeReviewStatus(StrEnum):
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class CommitteeMemberRole(StrEnum):
+    BULL_ANALYST = "bull_analyst"
+    BEAR_ANALYST = "bear_analyst"
+    RISK_MANAGER = "risk_manager"
+    PORTFOLIO_MANAGER = "portfolio_manager"
+    EVIDENCE_AUDITOR = "evidence_auditor"
+    EXECUTION_SKEPTIC = "execution_skeptic"
+
+
+class CommitteeFindingType(StrEnum):
+    BULL_CASE = "bull_case"
+    BEAR_CASE = "bear_case"
+    RISK = "risk"
+    MISSING_EVIDENCE = "missing_evidence"
+    PORTFOLIO_FIT = "portfolio_fit"
+    ENTRY_QUALITY = "entry_quality"
+    BEHAVIOR_WARNING = "behavior_warning"
+
+
+class CommitteeFindingSeverity(StrEnum):
+    INFO = "info"
+    WARNING = "warning"
+    BLOCKING = "blocking"
 
 
 class DataQualityTargetType(StrEnum):
@@ -1105,6 +1148,9 @@ class IdeaCandidateCreate(BaseModel):
 class CommitteeReview(BaseModel):
     id: str = Field(default_factory=lambda: new_id("committee"))
     topic: str
+    symbols: list[str] = Field(default_factory=list)
+    review_type: CommitteeReviewType = CommitteeReviewType.INVESTMENT_COMMITTEE
+    status: CommitteeReviewStatus = CommitteeReviewStatus.COMPLETED
     proposal_id: str | None = None
     research_goal_id: str | None = None
     hypothesis_id: str | None = None
@@ -1113,12 +1159,26 @@ class CommitteeReview(BaseModel):
     risk_memo: str = ""
     missing_evidence: list[str] = Field(default_factory=list)
     conclusion: CommitteeConclusion = CommitteeConclusion.RESEARCH_MORE
+    data_pack_json: dict[str, Any] = Field(default_factory=dict)
+    data_pack_hash: str = ""
+    output_hash: str = ""
+    members_json: list[dict[str, Any]] = Field(default_factory=list)
+    findings_json: list[dict[str, Any]] = Field(default_factory=list)
+    created_via: CreatedVia = CreatedVia.SYSTEM
     run_card_id: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
+    completed_at: datetime | None = None
+
+    @field_validator("symbols")
+    @classmethod
+    def normalize_committee_symbols(cls, value: list[str]) -> list[str]:
+        return [item.strip().upper() for item in value if item and item.strip()]
 
 
 class CommitteeReviewRunRequest(BaseModel):
     topic: str = Field(min_length=3)
+    symbols: list[str] = Field(default_factory=list)
+    review_type: CommitteeReviewType = CommitteeReviewType.INVESTMENT_COMMITTEE
     proposal_id: str | None = None
     research_goal_id: str | None = None
     hypothesis_id: str | None = None
@@ -1127,6 +1187,12 @@ class CommitteeReviewRunRequest(BaseModel):
     risk_memo: str = ""
     missing_evidence: list[str] = Field(default_factory=list)
     conclusion: CommitteeConclusion = CommitteeConclusion.RESEARCH_MORE
+    created_via: CreatedVia = CreatedVia.SYSTEM
+
+    @field_validator("symbols")
+    @classmethod
+    def normalize_committee_request_symbols(cls, value: list[str]) -> list[str]:
+        return [item.strip().upper() for item in value if item and item.strip()]
 
 
 class SkillValidationIssue(BaseModel):

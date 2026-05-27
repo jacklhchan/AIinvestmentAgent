@@ -1597,7 +1597,7 @@ DASHBOARD_HTML = """
     </section>
     <section class="panel">
       <h2>投資委員會備忘</h2>
-      <div class="empty">Committee Review：bull/bear/risk/missing evidence memo，不能 approve。</div>
+      <div id="committee-reviews" class="empty">Committee Review：bull/bear/risk/missing evidence memo，不能 approve。</div>
     </section>
     <section class="panel">
       <h2>技能 / 指令檢查</h2>
@@ -2263,6 +2263,31 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       `;
     }
 
+    function renderCommitteeReviews(items) {
+      const shell = document.querySelector("#committee-reviews");
+      const reviews = (items || []).slice(0, 3);
+      if (!reviews.length) {
+        shell.innerHTML = `<div class="muted">暫時沒有投資委員會備忘。</div>`;
+        return;
+      }
+      shell.innerHTML = reviews.map(review => {
+        const members = (review.members_json || []).slice(0, 3).map(member => `
+          <div>
+            <div class="item-title">${escapeHtml(member.role || "")}</div>
+            <div class="muted">${escapeHtml(member.memo || "")}</div>
+          </div>
+        `).join("");
+        const blockers = (review.findings_json || []).filter(item => item.severity === "blocking").slice(0, 2).map(item => `<div class="muted">${escapeHtml(item.text)}</div>`).join("");
+        return `<div class="advisor-item">
+          <div class="advisor-meta">${pill(review.conclusion, review.conclusion)} ${pill(review.review_type || "investment_committee", review.review_type || "investment_committee")}</div>
+          <div class="item-title">${escapeHtml(review.topic)}</div>
+          <div class="muted">${escapeHtml((review.symbols || []).join(", ") || "portfolio")}</div>
+          ${members}
+          ${blockers ? `<div><div class="label">Blocking</div>${blockers}</div>` : ""}
+        </div>`;
+      }).join("");
+    }
+
     function groupRecommendations(items) {
       return {
         action: items.filter(item => item.recommendation_type === "action"),
@@ -2621,11 +2646,12 @@ proposal 需要靠 manual override 才能成立</textarea></div>
     }
 
     async function loadAll() {
-      const [advisorBrief, advisorFullBrief, advisorRecommendations, opportunityRadarRuns, marketContext, marketRegime, health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, researchGoals, theses, catalysts, earningsReviews, runCards, behaviorReports, tradeImports, tradeRoundtrips, shadowStrategies, shadowReports, shadowEvents] = await Promise.all([
+      const [advisorBrief, advisorFullBrief, advisorRecommendations, opportunityRadarRuns, committeeReviews, marketContext, marketRegime, health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, researchGoals, theses, catalysts, earningsReviews, runCards, behaviorReports, tradeImports, tradeRoundtrips, shadowStrategies, shadowReports, shadowEvents] = await Promise.all([
         api("/api/advisor/brief"),
         api("/api/advisor/briefs/latest"),
         api("/api/advisor/recommendations?limit=12"),
         api("/api/opportunity-radar/runs?limit=1"),
+        api("/api/committee-reviews?limit=3"),
         api("/api/market-context"),
         api("/api/market-regime"),
         api("/health"),
@@ -2661,6 +2687,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       renderAdvisorFullBrief(advisorFullBrief);
       renderAdvisorRecommendations(advisorRecommendations);
       renderOpportunityRadar(opportunityRadarRuns);
+      renderCommitteeReviews(committeeReviews);
       renderMarketRegime(marketRegime);
       renderMarketContext(marketContext);
       renderSourceStrip(health, portfolio, quotes, futuStatus);

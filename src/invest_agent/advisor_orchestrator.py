@@ -7,6 +7,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from .advisor import AdvisorService
+from .committee_reviews import CommitteeReviewService
 from .config import Settings, get_settings
 from .market_news import economic_exposure_ticker, external_ticker, resolve_watchlist_symbols
 from .market_regime import MarketRegimeService
@@ -29,6 +30,8 @@ from .models import (
     AdvisorRecommendation,
     AdvisorSeverity,
     AdvisorSourceType,
+    CommitteeReview,
+    CommitteeReviewRunRequest,
     OpportunityRadarRequest,
     OpportunityRecommendationType,
     CatalystExpectedImpact,
@@ -173,6 +176,24 @@ PRE_MARKET_TERMS = [
     "今日策略",
     "今日部署",
 ]
+COMMITTEE_QUERY_TERMS = [
+    "committee",
+    "investment committee",
+    "risk committee",
+    "swarm",
+    "bull/bear",
+    "bull bear",
+    "debate",
+    "bear case",
+    "bull case",
+    "投資委員會",
+    "風險委員會",
+    "多角度",
+    "反方",
+    "牛熊",
+    "辯論",
+    "委員會",
+]
 PRIVATE_OFFERING_TERMS = [
     "ipo",
     "pre-ipo",
@@ -230,6 +251,7 @@ class AdvisorOrchestrator:
     ) -> AdvisorAnswer:
         intent = _question_intent(request.question)
         full_study_requested = _wants_full_study(request.question, request.style)
+        committee_requested = _wants_committee_review(request.question, request.style)
         full_brief_type = _full_brief_type_for_question(request.question) if full_study_requested else None
         resolution = self._resolve_question_symbol(request.question, request.symbol, intent=intent)
         symbol = resolution.resolved_symbol
@@ -241,6 +263,7 @@ class AdvisorOrchestrator:
                 "symbol_resolution_status": resolution.status.value,
                 "question_intent": intent,
                 "full_study_requested": full_study_requested,
+                "committee_requested": committee_requested,
                 "full_brief_type": full_brief_type.value if full_brief_type else None,
             }
         )
@@ -264,6 +287,18 @@ class AdvisorOrchestrator:
             if full_brief_type is not None
             else None
         )
+        committee_review = (
+            CommitteeReviewService(self.store, settings=self.settings).run_review(
+                CommitteeReviewRunRequest(
+                    topic=request.question,
+                    symbols=[symbol] if symbol else [],
+                    created_via=_created_via_for_advisor_actor(actor),
+                ),
+                actor=actor,
+            )
+            if committee_requested
+            else None
+        )
         brief = AdvisorService(self.store, settings=self.settings, paper_only=self.paper_only).build_brief(
             AdvisorBriefRequest(max_items=20 if full_study_requested else 12)
         )
@@ -277,6 +312,7 @@ class AdvisorOrchestrator:
             profile,
             actor=actor,
             full_brief=full_brief,
+            committee_review=committee_review,
         )
         question = AdvisorQuestion(
             id=question_id,
@@ -320,12 +356,15 @@ class AdvisorOrchestrator:
                 "full_study_requested": full_study_requested,
                 "full_brief_id": full_brief.id if full_brief else None,
                 "full_brief_type": full_brief.brief_type.value if full_brief else None,
+                "committee_requested": committee_requested,
+                "committee_review_id": committee_review.id if committee_review else None,
             },
             warnings=[],
             outputs=decision.model_dump(mode="json"),
             dataset={
                 "advisor_brief_hash": stable_hash(brief.model_dump(mode="json")),
                 "advisor_full_brief_id": full_brief.id if full_brief else None,
+                "committee_review_id": committee_review.id if committee_review else None,
             },
             write_artifacts=False,
         )
@@ -519,6 +558,7 @@ class AdvisorOrchestrator:
         *,
         actor: RunCardActor | str = RunCardActor.API,
         full_brief: AdvisorFullBrief | None = None,
+        committee_review: CommitteeReview | None = None,
     ) -> AdvisorAnswer:
         symbol = resolution.resolved_symbol
         intent = _question_intent(question)
@@ -557,6 +597,15 @@ class AdvisorOrchestrator:
                     "id": full_brief.id,
                     "brief_type": full_brief.brief_type.value,
                     "run_card_id": full_brief.run_card_id,
+                }
+            )
+        if committee_review:
+            artifacts.append(
+                {
+                    "type": "committee_review",
+                    "id": committee_review.id,
+                    "conclusion": committee_review.conclusion.value,
+                    "run_card_id": committee_review.run_card_id,
                 }
             )
 
@@ -670,6 +719,7 @@ class AdvisorOrchestrator:
                     catalysts=catalysts,
                     profile=profile,
                     full_brief=full_brief,
+                    committee_review=committee_review,
                     opportunity_radar_run_id=radar.id,
                     opportunity_cards_count=len(radar.cards),
                 ),
@@ -812,6 +862,7 @@ class AdvisorOrchestrator:
                 catalysts=catalysts,
                 profile=profile,
                 full_brief=full_brief,
+                committee_review=committee_review,
             ),
             run_card_id=run_card_id,
             paper_only=self.paper_only,
@@ -1146,6 +1197,7 @@ def _advisor_provenance(
     catalysts,
     profile: AdvisorProfile | None,
     full_brief: AdvisorFullBrief | None = None,
+    committee_review: CommitteeReview | None = None,
     opportunity_radar_run_id: str | None = None,
     opportunity_cards_count: int = 0,
 ) -> dict[str, Any]:
@@ -1167,6 +1219,22 @@ def _advisor_provenance(
         executed_layers.extend(["symbol_resolution", "cached_thesis_lookup", "cached_catalyst_lookup"])
     if opportunity_radar_run_id:
         executed_layers.append("opportunity_radar")
+    if committee_review:
+        executed_layers.append("committee_review")
+    not_run = [
+        "research_goal_created",
+        "evidence_gate_run",
+        "new_thesis_update",
+        "new_catalyst_review",
+        "new_earnings_review",
+        "new_trade_journal_behavior_report",
+        "new_shadow_account_report",
+        "proposal_created",
+        "proposal_approved",
+        "trade_executed",
+    ]
+    if not committee_review:
+        not_run.insert(5, "committee_review")
 
     return {
         "answer_scope": "advisor_question",
@@ -1178,21 +1246,12 @@ def _advisor_provenance(
         "full_brief_id": full_brief.id if full_brief else None,
         "full_brief_type": full_brief.brief_type.value if full_brief else None,
         "full_brief_run_card_id": full_brief.run_card_id if full_brief else None,
+        "committee_review_run": bool(committee_review),
+        "committee_review_id": committee_review.id if committee_review else None,
+        "committee_review_conclusion": committee_review.conclusion.value if committee_review else None,
         "external_shell_or_web_used_by_control_plane": False,
         "executed_layers": executed_layers,
-        "not_run": [
-            "research_goal_created",
-            "evidence_gate_run",
-            "new_thesis_update",
-            "new_catalyst_review",
-            "new_earnings_review",
-            "committee_review",
-            "new_trade_journal_behavior_report",
-            "new_shadow_account_report",
-            "proposal_created",
-            "proposal_approved",
-            "trade_executed",
-        ],
+        "not_run": not_run,
         "artifact_counts": {
             "advisor_items": len(getattr(brief, "advice", []) or []),
             "active_theses_for_symbol": len(active_theses or []),
@@ -1213,6 +1272,7 @@ def _advisor_provenance(
             "cached_earnings_reviews": True,
             "cached_behavior_shadow_reports": True,
             "opportunity_radar": bool(opportunity_radar_run_id),
+            "committee_review": bool(committee_review),
         },
         "side_effects": {
             "research_goal_created": False,
@@ -1449,6 +1509,27 @@ def _wants_full_study(question: str, style: str | None = None) -> bool:
         return True
     text = question.lower()
     return any(token in text for token in FULL_STUDY_TERMS)
+
+
+def _wants_committee_review(question: str, style: str | None = None) -> bool:
+    style_text = (style or "").strip().lower()
+    if style_text in {"committee", "swarm", "debate", "bull_bear", "bull-bear"}:
+        return True
+    text = question.lower()
+    return any(token in text for token in COMMITTEE_QUERY_TERMS)
+
+
+def _created_via_for_advisor_actor(actor: RunCardActor | str):
+    value = actor.value if isinstance(actor, RunCardActor) else str(actor)
+    if value == RunCardActor.MCP.value:
+        return "mcp"
+    if value == RunCardActor.API.value:
+        return "rest"
+    if value == RunCardActor.CLI.value:
+        return "cli"
+    if value == RunCardActor.DASHBOARD.value:
+        return "dashboard"
+    return "system"
 
 
 def _full_brief_type_for_question(question: str, now: datetime | None = None) -> AdvisorFullBriefType:

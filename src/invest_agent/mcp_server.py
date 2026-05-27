@@ -928,22 +928,28 @@ def create_idea_candidate_draft(
 @mcp.tool()
 def run_committee_review(
     topic: str,
+    symbols: list[str] | None = None,
+    review_type: Literal["investment_committee", "risk_committee", "macro_committee", "earnings_committee"] = "investment_committee",
     research_goal_id: str | None = None,
     hypothesis_id: str | None = None,
     bull_case: str = "",
     bear_case: str = "",
     risk_memo: str = "",
+    missing_evidence: list[str] | None = None,
 ) -> dict:
     """Create a committee-style research memo. It cannot approve or create pending proposals."""
     return _json(
         CommitteeReviewService(get_store()).run_review(
             CommitteeReviewRunRequest(
                 topic=topic,
+                symbols=symbols or [],
+                review_type=review_type,
                 research_goal_id=research_goal_id,
                 hypothesis_id=hypothesis_id,
                 bull_case=bull_case,
                 bear_case=bear_case,
                 risk_memo=risk_memo,
+                missing_evidence=missing_evidence or [],
             ),
             actor=RunCardActor.MCP,
         )

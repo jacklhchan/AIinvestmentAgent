@@ -459,8 +459,12 @@ def list_ideas_main() -> None:
     print(json.dumps(_json(get_store().list_idea_candidates()), indent=2, ensure_ascii=False))
 
 
-def committee_review_main(topic: str) -> None:
-    result = CommitteeReviewService(get_store()).run_review(CommitteeReviewRunRequest(topic=topic), actor=RunCardActor.CLI)
+def committee_review_main(topic: str, symbols: str | None = None) -> None:
+    parsed_symbols = [item.strip() for item in (symbols or "").split(",") if item.strip()]
+    result = CommitteeReviewService(get_store()).run_review(
+        CommitteeReviewRunRequest(topic=topic, symbols=parsed_symbols),
+        actor=RunCardActor.CLI,
+    )
     print(json.dumps(_json(result), indent=2, ensure_ascii=False))
 
 
@@ -897,7 +901,7 @@ def main() -> None:
     if args.command == "committee-review":
         if not args.topic:
             parser.error("--topic is required for committee-review")
-        committee_review_main(args.topic)
+        committee_review_main(args.topic, args.symbols)
     if args.command == "validate-skills":
         validate_skills_main()
     if args.command == "data-quality-run":
