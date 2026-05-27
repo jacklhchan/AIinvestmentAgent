@@ -91,13 +91,15 @@ python -m invest_agent.cli advisor-scheduler-loop
 
 Hermes daily MCP 只暴露 high-level tools：`ask_advisor`、`get_advisor_profile`、`suggest_advisor_profile_update`、`confirm_advisor_profile_update`、`run_hourly_advisor_pulse`、`run_pre_market_advisor_brief`、`run_post_close_advisor_brief`、`get_latest_advisor_brief`。Advisor Orchestrator 會在本機背後讀取 portfolio、news、market regime、proposal context 與 research artifacts；Hermes 日常不直接看到底層 tools。
 
+Hermes snippets 分開兩種用途：`deploy/hermes/config.daily.snippet.yaml` 只包含上述 daily Advisor tools；`deploy/hermes/config.research-admin.snippet.yaml` 給本機研究/admin 工作使用，仍不包含 proposal approval / create / draft tools。舊的 `deploy/hermes/config.snippet.yaml` 保留為 daily-compatible alias。
+
 `ask_advisor` 會保存 symbol resolution audit trail：`original_symbol`、`resolved_symbol` 與 `symbol_resolution_status`。`WHAT` / `IPO` / `AI` / `US` 這類 common uppercase token 不會被當成 ticker；SpaceX IPO / 未上市問題會回 research-only `blocked` decision card，不會進 proposal pipeline。
 
 Advisor Profile update 必須先由 Hermes 建立 pending suggestion，再由你明確 confirm 後才會寫入版本化 profile。已確認 profile 會影響 Advisor 建議，例如不追高、核心 ETF 優先、單股上限、科技曝險上限、現金底線、IPO/options 偏好；pending suggestion 不會影響 advice。
 
 安全邊界不變：Advisor output 只會寫 advisor question / pulse / brief / recommendation / run card，不會建立 `PENDING` proposal、不會 approve、不會 unlock Futu，也不會送 live order。若你仍想買賣，仍要走 `InvestmentService`、evidence gate、thesis/catalyst invariants、policy engine 與人工確認。
 
-Opportunity Radar 是 Advisor Mode 的內部 service。它使用 market regime、sector/theme ETF、symbol-specific quote/news/fundamentals/thesis/catalyst、portfolio fit、risk gate、behavior/shadow evidence 六層資料做 deterministic scoring。輸出可以是 `watch`、`research`、`blocked`、`avoid` 或 `action_candidate`；`action_candidate` 仍只代表「可考慮建立研究 / proposal candidate」，不是買入指令。
+Opportunity Radar 是 Advisor Mode 的內部 service。它使用 market regime、sector/theme ETF、symbol-specific quote/news/fundamentals/thesis/catalyst、portfolio fit、risk gate、behavior/shadow evidence 六層資料做 deterministic scoring。輸出可以是 `watch`、`research`、`blocked`、`avoid` 或 `action_candidate`；`action_candidate` 仍只代表「可考慮建立研究 / proposal candidate」，不是買入指令。任何包含單股的 radar card 如果完全缺少 source-backed thesis / SEC / IR / fundamentals evidence，最多只能保留為 watch/research/block，不可升級為 `action_candidate`。
 
 REST API：
 

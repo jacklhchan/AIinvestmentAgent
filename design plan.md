@@ -28,6 +28,7 @@
 - Advisor Profile 更新必須先建立 pending suggestion，再由使用者明確 confirm，才會寫入版本化 profile 並影響後續 advice；閒聊不會默默改 risk preference。
 - Opportunity Radar 會處理「今晚市場有無值得留意的新機會？」這類 broad opportunity 問題，輸出 evidence-ranked WATCH / RESEARCH / BLOCKED / AVOID / ACTION_CANDIDATE cards；它是 research-only，不建立 proposal、不 approve、不下單。
 - Opportunity Radar evidence layers：market regime、sector/theme rotation、symbol-specific quote/news/fundamentals/thesis/catalyst、portfolio fit、risk gate、behavior/shadow evidence。
+- 包含單股的 OpportunityCard 若完全缺少 source-backed thesis / SEC / IR / fundamentals evidence，不可升級為 ACTION_CANDIDATE；混合 ETF + 單股 cards 也受這條硬規則約束。
 - Market Context Lens 和 proposal watchlist 分開；market symbols 只影響風險背景與 advisor warning，不自動成為交易 proposal 候選。
 - Market-context quote snapshots 亦被 watchlist resolver 排除，除非該 symbol 是持倉或明確加入 `INVEST_AGENT_WATCHLIST`。
 - 這仍然是 research-only workflow：不自動建立 proposal、不自動 approve、不 unlock Futu、不送 live order。

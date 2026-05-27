@@ -77,6 +77,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MCP_SERVER_PATH = REPO_ROOT / "src" / "invest_agent" / "mcp_server.py"
 PERMISSIONS_DOC = REPO_ROOT / "docs" / "permissions.md"
 HERMES_CONFIG = REPO_ROOT / "deploy" / "hermes" / "config.snippet.yaml"
+HERMES_DAILY_CONFIG = REPO_ROOT / "deploy" / "hermes" / "config.daily.snippet.yaml"
+HERMES_RESEARCH_ADMIN_CONFIG = REPO_ROOT / "deploy" / "hermes" / "config.research-admin.snippet.yaml"
 HERMES_DAILY_ADVISOR_TOOLS = {
     "ask_advisor",
     "get_advisor_profile",
@@ -86,6 +88,12 @@ HERMES_DAILY_ADVISOR_TOOLS = {
     "run_pre_market_advisor_brief",
     "run_post_close_advisor_brief",
     "get_latest_advisor_brief",
+}
+PROPOSAL_ADMIN_TOOLS = {
+    "approve_trade_proposal",
+    "create_trade_proposal",
+    "draft_trade_proposals_from_watchlist",
+    "reject_trade_proposal",
 }
 
 
@@ -163,11 +171,11 @@ def docs_permission_rows() -> dict[str, str]:
     return rows
 
 
-def hermes_included_tools() -> set[str]:
+def hermes_included_tools(path: Path = HERMES_CONFIG) -> set[str]:
     pattern = re.compile(r"^\s*-\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*$")
     return {
         match.group(1)
-        for line in HERMES_CONFIG.read_text(encoding="utf-8").splitlines()
+        for line in path.read_text(encoding="utf-8").splitlines()
         if (match := pattern.match(line))
     }
 
@@ -185,6 +193,25 @@ def test_mcp_permission_matrix_covers_code_docs_and_hermes_config() -> None:
     assert not (decorated_tools & FORBIDDEN_LIVE_EXECUTION_TOOL_NAMES)
     assert not (hermes_tools & FORBIDDEN_LIVE_EXECUTION_TOOL_NAMES)
     assert all(MCP_TOOL_PERMISSIONS[tool] in {"read_only", "research_write"} for tool in NEXT_PHASE_MCP_TOOLS)
+
+
+def test_daily_hermes_snippets_expose_only_high_level_advisor_tools() -> None:
+    decorated_tools = decorated_mcp_tool_names()
+    for path in [HERMES_CONFIG, HERMES_DAILY_CONFIG]:
+        included = hermes_included_tools(path)
+        assert included == HERMES_DAILY_ADVISOR_TOOLS
+        assert included <= decorated_tools
+        assert not (included & PROPOSAL_ADMIN_TOOLS)
+        assert not (included & FORBIDDEN_LIVE_EXECUTION_TOOL_NAMES)
+
+
+def test_research_admin_snippet_keeps_proposal_admin_tools_separate() -> None:
+    included = hermes_included_tools(HERMES_RESEARCH_ADMIN_CONFIG)
+    decorated_tools = decorated_mcp_tool_names()
+
+    assert included <= decorated_tools
+    assert not (included & PROPOSAL_ADMIN_TOOLS)
+    assert not (included & FORBIDDEN_LIVE_EXECUTION_TOOL_NAMES)
 
 
 def test_read_only_mcp_tools_do_not_call_write_paths() -> None:

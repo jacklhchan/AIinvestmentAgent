@@ -569,8 +569,8 @@ def _risk_penalties(
         if ticker in catalyst_blocks:
             blockers.append(f"{ticker}: {catalyst_blocks[ticker]}")
             penalty += 3
-    if has_single_stock and primary_count == 0 and spec.category == OpportunityCategory.SINGLE_STOCK:
-        blockers.append("單股缺少 primary-source / thesis evidence。")
+    if has_single_stock and primary_count == 0:
+        blockers.append("包含單股但缺少 source-backed thesis / SEC / IR / fundamentals evidence；不可升級為 action_candidate。")
         penalty += 3
     return penalty, _clean([*risks, *blockers]), blockers
 

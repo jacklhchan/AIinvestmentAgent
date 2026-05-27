@@ -1,0 +1,26 @@
+model:
+  provider: "openai-codex"
+  default: "gpt-5.2-codex"
+
+agent:
+  reasoning_effort: "high"
+  tool_use_enforcement: "auto"
+
+mcp_servers:
+  invest_agent:
+    command: "/Users/apple/Documents/AIinvestmentAgent/.venv/bin/python"
+    args: ["-m", "invest_agent.mcp_server"]
+    timeout: 30
+    supports_parallel_tool_calls: false
+    tools:
+      include:
+        - ask_advisor
+        - get_advisor_profile
+        - suggest_advisor_profile_update
+        - confirm_advisor_profile_update
+        - run_hourly_advisor_pulse
+        - run_pre_market_advisor_brief
+        - run_post_close_advisor_brief
+        - get_latest_advisor_brief
+      resources: false
+      prompts: false

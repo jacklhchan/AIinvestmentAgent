@@ -10,6 +10,7 @@ from invest_agent.models import (
     AdvisorSeverity,
     OpportunityRadarRequest,
     OpportunityRecommendationType,
+    NewsItem,
     PortfolioSnapshot,
     Position,
     Quote,
@@ -128,3 +129,31 @@ def test_risk_off_downgrades_high_beta_ideas(tmp_path) -> None:
     assert high_beta
     assert all(card.recommendation_type in {OpportunityRecommendationType.BLOCKED, OpportunityRecommendationType.AVOID} for card in high_beta)
 
+
+def test_mixed_etf_single_stock_card_needs_primary_evidence_for_action_candidate(tmp_path) -> None:
+    store = make_store(tmp_path)
+    now = utc_now()
+    for quote in [
+        Quote(symbol="SPY", last_price=700, previous_close=696.5, change_pct=0.5, updated_at=now),
+        Quote(symbol="QQQ", last_price=600, previous_close=597, change_pct=0.5, updated_at=now),
+        Quote(symbol="VIXY", last_price=12, previous_close=12.4, change_pct=-3.2, updated_at=now),
+        Quote(symbol="XLF", last_price=50, previous_close=48.5, change_pct=3.1, updated_at=now),
+    ]:
+        store.upsert_quote(quote)
+    store.upsert_news(
+        NewsItem(
+            id="test_news_xlf_strength",
+            symbol="XLF",
+            title="Financials rally as risk appetite improves",
+            source="test",
+            published_at=now,
+        )
+    )
+
+    radar = OpportunityRadarService(store, settings=Settings(db_path=tmp_path / "test.db")).run(
+        OpportunityRadarRequest(max_blocked=6)
+    )
+    financial = next(card for card in radar.cards if card.title.startswith("Financials / rate-sensitive value"))
+
+    assert financial.recommendation_type == OpportunityRecommendationType.BLOCKED
+    assert any("source-backed" in item for item in financial.risks)
