@@ -14,6 +14,7 @@ This version is intentionally paper-only. It can create trade proposals, run pol
 - AI Advisor Brief first-screen workflow that automatically summarizes portfolio, proposal, thesis, catalyst, earnings, behavior, shadow, and research-goal state into research-only advice.
 - Hermes Advisor Mode with concise Ask Hermes decision cards, hourly urgent pulses, pre-market / post-close full advisor briefs, stored advisor recommendations, REST / CLI / MCP entry points, and quiet-hours notification policy.
 - Opportunity Radar for broad questions like "今晚市場有無值得留意的新機會？"; it creates evidence-ranked WATCH / RESEARCH / BLOCKED / AVOID cards and cannot create proposals.
+- Canonical Accounting + IPS foundation with accounting transactions, FIFO tax lots, accounting snapshots, and Investor Policy Statements generated from confirmed Advisor Profiles.
 - Market Context Lens with broad-market, sector, theme, volatility, rates, gold, oil, and cash-like ETF context; it informs advice but does not create proposal candidates.
 - Market Regime / Risk Budget Lens that deterministically turns broad-market quote/news context into risk appetite, growth/rates/volatility/inflation pressure, and proposal-bias background.
 - Hypothesis Registry / Research Autopilot spine with hypothesis lifecycle, run-card/research/thesis/catalyst links, and MCP-created drafts kept unconfirmed.
@@ -59,6 +60,19 @@ This version is intentionally paper-only. It can create trade proposals, run pol
 - Hermes daily config snippets at `deploy/hermes/config.snippet.yaml` and `deploy/hermes/config.daily.snippet.yaml`; research/admin snippet at `deploy/hermes/config.research-admin.snippet.yaml`.
 - launchd example plists at `deploy/launchd/com.local.invest-agent-api.plist` and `deploy/launchd/com.local.invest-agent-scheduler.plist`.
 - Tests for proposal creation, approval, risk rejection, duplicate proposal blocking, non-pending state handling, Futu adapter mapping, dashboard localization, news parsing, watchlist resolution, market context/regime guardrails, SEC/IR parsing, event replay, proposal draft creation, research evidence gates, thesis tracker behavior, catalyst calendar invariants, earnings review/preview behavior, research run card artifacts, trade journal behavior analytics, quote-history-backed shadow diagnostics, hypothesis/portfolio/backtest/data-bridge/daily-brief/sector/options/dividend/idea/committee/skill-validator/data-quality layers, AI Advisor Brief behavior, and Opportunity Radar guardrails.
+- Accounting / IPS tests cover trade-journal-to-ledger sync, FIFO lot rebuilding, dividend withholding accounting, Advisor Profile to IPS promotion, and schema-check coverage.
+
+## Accounting + IPS Foundation
+
+The app now has the first canonical accounting layer needed before optimizer / tax-aware rebalance work.
+
+- `accounting_transactions` records canonical buys, sells, dividends, fees, tax withholding, cash flows, transfers, and corporate-action placeholders.
+- `accounting_tax_lots` is rebuilt from transactions using FIFO. Splits and corporate actions are recorded as warnings for now.
+- `accounting_snapshots` summarizes cash by currency, open positions, realized PnL, dividend income, fees, withholding tax, warnings, and run-card provenance.
+- `investor_policy_statements` persists a formal IPS from confirmed Advisor Profile updates, including risk profile, horizon, cash floor, single-stock/tech/sector caps, drawdown tolerance, core/satellite target, and prohibited assets.
+- REST: `POST /api/accounting/sync-from-journal`, `GET /api/accounting/snapshots/latest`, `GET /api/accounting/transactions`, `GET /api/accounting/tax-lots`, `POST /api/ips/from-advisor-profile`, `GET /api/ips`.
+- CLI: `accounting-sync-from-journal`, `accounting-snapshot`, `accounting-record`, `ips`, `ips-from-profile`.
+- This layer is accounting/research-only. It cannot create proposals, approve proposals, unlock Futu, or place/modify orders.
 
 ## AI Advisor Brief
 

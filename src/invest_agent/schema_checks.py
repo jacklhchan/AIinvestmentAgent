@@ -6,6 +6,9 @@ from .store import Store
 
 
 EXPECTED_SCHEMA: dict[str, set[str]] = {
+    "accounting_snapshots": {"id", "as_of", "payload"},
+    "accounting_tax_lots": {"id", "account_id", "symbol", "status", "opened_at", "payload"},
+    "accounting_transactions": {"id", "account_id", "symbol", "transaction_type", "occurred_at", "row_hash", "payload"},
     "advisor_briefs": {"id", "brief_type", "market_session_date", "created_at", "payload"},
     "advisor_profile_updates": {"id", "status", "created_at", "payload"},
     "advisor_profiles": {"id", "version", "updated_at", "payload"},
@@ -50,6 +53,7 @@ EXPECTED_SCHEMA: dict[str, set[str]] = {
     "hypothesis_links": {"id", "hypothesis_id", "linked_type", "linked_id", "created_at", "payload"},
     "idea_candidates": {"id", "symbol", "status", "created_at", "payload"},
     "idea_screens": {"id", "created_at", "payload"},
+    "investor_policy_statements": {"id", "version", "updated_at", "payload"},
     "market_regime_snapshots": {"id", "created_at", "risk_appetite", "proposal_bias", "payload"},
     "news": {"id", "symbol", "payload", "published_at"},
     "options_snapshots": {"id", "symbol", "expiry", "created_at", "payload"},

@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from .advisor import AdvisorService
 from .committee_reviews import CommitteeReviewService
 from .config import Settings, get_settings
+from .investor_policy import InvestorPolicyService
 from .market_news import economic_exposure_ticker, external_ticker, resolve_watchlist_symbols
 from .market_regime import MarketRegimeService
 from .models import (
@@ -373,6 +374,7 @@ class AdvisorOrchestrator:
     def get_advisor_profile(self) -> dict[str, Any]:
         return {
             "profile": self.store.get_advisor_profile(),
+            "investor_policy_statement": self.store.get_investor_policy_statement(),
             "pending_updates": self.store.list_advisor_profile_updates(
                 status=AdvisorProfileUpdateStatus.PENDING,
                 limit=10,
@@ -412,6 +414,7 @@ class AdvisorOrchestrator:
         current = self.store.get_advisor_profile()
         profile = _apply_profile_changes(current, update, confirmed_by=request.confirmed_by)
         stored_profile = self.store.upsert_advisor_profile(profile)
+        InvestorPolicyService(self.store).upsert_from_advisor_profile(stored_profile, confirmed_by=request.confirmed_by)
         update.status = AdvisorProfileUpdateStatus.CONFIRMED
         update.confirmed_at = stored_profile.updated_at
         update.confirmed_by = request.confirmed_by

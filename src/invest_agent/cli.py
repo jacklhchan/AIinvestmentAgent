@@ -4,6 +4,7 @@ import argparse
 import json
 from datetime import datetime, timezone
 
+from .accounting import CanonicalAccountingService
 from .advisor_orchestrator import AdvisorOrchestrator
 from .advisor_scheduler import AdvisorSchedulerRunner
 from .backtest_imports import BacktestImportService
@@ -24,6 +25,7 @@ from .futu_adapter import refresh_futu_readonly
 from .hypotheses import HypothesisRegistryService
 from .idea_inbox import IdeaInboxService
 from .ir_feeds import IrFeedIngestor
+from .investor_policy import InvestorPolicyService
 from .market_regime import MarketRegimeService
 from .market_news import MarketNewsIngestor
 from .opportunity_radar import OpportunityRadarService
@@ -32,6 +34,8 @@ from .models import (
     AdvisorProfileConfirmationRequest,
     AdvisorProfileUpdateRequest,
     AdvisorQuestionRequest,
+    AccountingTransactionCreate,
+    AccountingTransactionType,
     BacktestImportRequest,
     EarningsReviewRunRequest,
     BehaviorReportRunRequest,
@@ -235,6 +239,47 @@ def invalidate_hypothesis_main(hypothesis_id: str, note: str) -> None:
 
 def portfolio_risk_main() -> None:
     result = PortfolioStudioService(get_settings(), get_store()).refresh_risk_snapshot(actor=RunCardActor.CLI)
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def accounting_sync_from_journal_main() -> None:
+    result = CanonicalAccountingService(get_store()).sync_from_trade_journal(actor=RunCardActor.CLI)
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def accounting_snapshot_main() -> None:
+    result = get_store().get_latest_accounting_snapshot()
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def accounting_record_main(args) -> None:
+    result = CanonicalAccountingService(get_store()).record_transaction(
+        AccountingTransactionCreate(
+            transaction_type=AccountingTransactionType(args.transaction_type),
+            symbol=args.symbol,
+            quantity=args.quantity,
+            price=args.price,
+            gross_amount=args.gross_amount,
+            fees=args.fees or 0.0,
+            taxes=args.taxes or 0.0,
+            net_cash_flow=args.net_cash_flow,
+            currency=args.currency or "USD",
+            source="cli",
+            source_id=args.source_id,
+        )
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def ips_main() -> None:
+    print(json.dumps(_json(InvestorPolicyService(get_store()).get_current()), indent=2, ensure_ascii=False))
+
+
+def ips_from_profile_main() -> None:
+    profile = get_store().get_advisor_profile()
+    if not profile:
+        raise SystemExit("advisor profile not found")
+    result = InvestorPolicyService(get_store()).upsert_from_advisor_profile(profile)
     print(json.dumps(_json(result), indent=2, ensure_ascii=False))
 
 
@@ -652,6 +697,11 @@ def main() -> None:
             "link-hypothesis",
             "invalidate-hypothesis",
             "portfolio-risk",
+            "accounting-sync-from-journal",
+            "accounting-snapshot",
+            "accounting-record",
+            "ips",
+            "ips-from-profile",
             "rebalance-review",
             "earnings-preview",
             "list-earnings-previews",
@@ -749,6 +799,15 @@ def main() -> None:
     parser.add_argument("--dividend-yield", type=float, default=None)
     parser.add_argument("--payout-ratio", type=float, default=None)
     parser.add_argument("--target-type", default="all")
+    parser.add_argument("--transaction-type", default=None)
+    parser.add_argument("--quantity", type=float, default=None)
+    parser.add_argument("--price", type=float, default=None)
+    parser.add_argument("--gross-amount", type=float, default=None)
+    parser.add_argument("--fees", type=float, default=0.0)
+    parser.add_argument("--taxes", type=float, default=0.0)
+    parser.add_argument("--net-cash-flow", type=float, default=None)
+    parser.add_argument("--currency", default="USD")
+    parser.add_argument("--source-id", default=None)
     parser.add_argument("--refresh", action="store_true")
     parser.add_argument("--use-quote-history", action="store_true")
     parser.add_argument("--prefer-core-etf", action="store_true")
@@ -811,6 +870,18 @@ def main() -> None:
         invalidate_hypothesis_main(args.hypothesis_id, args.note)
     if args.command == "portfolio-risk":
         portfolio_risk_main()
+    if args.command == "accounting-sync-from-journal":
+        accounting_sync_from_journal_main()
+    if args.command == "accounting-snapshot":
+        accounting_snapshot_main()
+    if args.command == "accounting-record":
+        if not args.transaction_type:
+            parser.error("--transaction-type is required for accounting-record")
+        accounting_record_main(args)
+    if args.command == "ips":
+        ips_main()
+    if args.command == "ips-from-profile":
+        ips_from_profile_main()
     if args.command == "rebalance-review":
         rebalance_review_main()
     if args.command == "earnings-preview":

@@ -230,6 +230,7 @@ class RunCardType(StrEnum):
     ADVISOR_PULSE = "advisor_pulse"
     ADVISOR_BRIEF = "advisor_brief"
     OPPORTUNITY_RADAR = "opportunity_radar"
+    ACCOUNTING_REBUILD = "accounting_rebuild"
     FUTURE_BACKTEST_IMPORT = "future_backtest_import"
     FUTURE_BEHAVIOR_REPORT = "future_behavior_report"
 
@@ -353,6 +354,26 @@ class AdvisorProfileUpdateStatus(StrEnum):
     PENDING = "pending"
     CONFIRMED = "confirmed"
     REJECTED = "rejected"
+
+
+class AccountingTransactionType(StrEnum):
+    BUY = "buy"
+    SELL = "sell"
+    DIVIDEND = "dividend"
+    FEE = "fee"
+    TAX_WITHHOLDING = "tax_withholding"
+    CASH_DEPOSIT = "cash_deposit"
+    CASH_WITHDRAWAL = "cash_withdrawal"
+    INTEREST = "interest"
+    TRANSFER_IN = "transfer_in"
+    TRANSFER_OUT = "transfer_out"
+    CORPORATE_ACTION = "corporate_action"
+    SPLIT = "split"
+
+
+class TaxLotStatus(StrEnum):
+    OPEN = "open"
+    CLOSED = "closed"
 
 
 class OpportunityRecommendationType(StrEnum):
@@ -1997,6 +2018,26 @@ class AdvisorProfile(BaseModel):
     updated_at: datetime = Field(default_factory=utc_now)
 
 
+class InvestorPolicyStatement(BaseModel):
+    id: str = "default"
+    version: int = Field(default=1, ge=1)
+    source_profile_version: int | None = None
+    risk_profile: AdvisorRiskProfile = AdvisorRiskProfile.MODERATE
+    investment_horizon: str = "medium_to_long_term"
+    max_single_stock_weight: float | None = Field(default=None, ge=0.0, le=1.0)
+    max_tech_exposure: float | None = Field(default=None, ge=0.0, le=1.0)
+    max_sector_exposure: float | None = Field(default=None, ge=0.0, le=1.0)
+    min_cash_weight: float | None = Field(default=None, ge=0.0, le=1.0)
+    max_drawdown_tolerance: float | None = Field(default=None, ge=0.0, le=1.0)
+    core_satellite_target: dict[str, float] = Field(default_factory=dict)
+    target_allocations: dict[str, dict[str, float]] = Field(default_factory=dict)
+    prohibited_assets: list[str] = Field(default_factory=list)
+    review_cadence: str = "quarterly"
+    notes: list[str] = Field(default_factory=list)
+    confirmed_by: str = "local-user"
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
 class AdvisorProfileUpdateRequest(BaseModel):
     risk_profile: AdvisorRiskProfile | None = None
     max_single_stock_weight: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -2031,6 +2072,118 @@ class AdvisorProfileUpdate(BaseModel):
     confirmed_by: str | None = None
     rejection_reason: str | None = None
     applied_profile_version: int | None = None
+
+
+class AccountingTransactionCreate(BaseModel):
+    account_id: str = "default"
+    transaction_type: AccountingTransactionType
+    symbol: str | None = None
+    quantity: float | None = Field(default=None, gt=0)
+    price: float | None = Field(default=None, ge=0.0)
+    gross_amount: float | None = None
+    fees: float = Field(default=0.0, ge=0.0)
+    taxes: float = Field(default=0.0, ge=0.0)
+    net_cash_flow: float | None = None
+    currency: str = "USD"
+    occurred_at: datetime = Field(default_factory=utc_now)
+    settled_at: datetime | None = None
+    source: str = "manual"
+    source_id: str | None = None
+    raw: dict[str, Any] = Field(default_factory=dict)
+    row_hash: str | None = None
+
+    @field_validator("account_id", "currency")
+    @classmethod
+    def normalize_accounting_create_text(cls, value: str) -> str:
+        return value.strip().upper() if value and value.strip() else "DEFAULT"
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_accounting_create_symbol(cls, value: str | None) -> str | None:
+        return value.strip().upper() if value and value.strip() else None
+
+
+class AccountingTransaction(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("accttx"))
+    account_id: str = "DEFAULT"
+    transaction_type: AccountingTransactionType
+    symbol: str | None = None
+    quantity: float | None = Field(default=None, gt=0)
+    price: float | None = Field(default=None, ge=0.0)
+    gross_amount: float = 0.0
+    fees: float = Field(default=0.0, ge=0.0)
+    taxes: float = Field(default=0.0, ge=0.0)
+    net_cash_flow: float = 0.0
+    currency: str = "USD"
+    occurred_at: datetime = Field(default_factory=utc_now)
+    settled_at: datetime | None = None
+    source: str = "manual"
+    source_id: str | None = None
+    raw: dict[str, Any] = Field(default_factory=dict)
+    row_hash: str
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("account_id", "currency")
+    @classmethod
+    def normalize_accounting_text(cls, value: str) -> str:
+        return value.strip().upper() if value and value.strip() else "DEFAULT"
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_accounting_symbol(cls, value: str | None) -> str | None:
+        return value.strip().upper() if value and value.strip() else None
+
+
+class AccountingTaxLot(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("taxlot"))
+    account_id: str = "DEFAULT"
+    symbol: str
+    source_transaction_id: str
+    opened_at: datetime
+    closed_at: datetime | None = None
+    quantity_original: float = Field(gt=0)
+    quantity_open: float = Field(default=0.0, ge=0.0)
+    cost_basis_original: float = 0.0
+    cost_basis_open: float = 0.0
+    realized_pnl: float = 0.0
+    currency: str = "USD"
+    status: TaxLotStatus = TaxLotStatus.OPEN
+    disposal_transaction_ids: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("account_id", "currency")
+    @classmethod
+    def normalize_tax_lot_text(cls, value: str) -> str:
+        return value.strip().upper() if value and value.strip() else "DEFAULT"
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_tax_lot_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+
+class AccountingPosition(BaseModel):
+    account_id: str = "DEFAULT"
+    symbol: str
+    quantity: float = 0.0
+    cost_basis: float = 0.0
+    avg_cost: float = 0.0
+    currency: str = "USD"
+
+
+class AccountingSnapshot(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("acctsnap"))
+    as_of: datetime = Field(default_factory=utc_now)
+    transaction_count: int = 0
+    open_lot_count: int = 0
+    positions: list[AccountingPosition] = Field(default_factory=list)
+    cash_by_currency: dict[str, float] = Field(default_factory=dict)
+    realized_pnl_by_symbol: dict[str, float] = Field(default_factory=dict)
+    dividend_income_by_symbol: dict[str, float] = Field(default_factory=dict)
+    fees_by_currency: dict[str, float] = Field(default_factory=dict)
+    tax_withheld_by_currency: dict[str, float] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    run_card_id: str | None = None
 
 
 class AdvisorRecommendation(BaseModel):

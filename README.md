@@ -8,6 +8,7 @@
 - AI Advisor Brief：首頁一鍵自動整理 portfolio、proposal、research goals、theses、catalysts、earnings reviews、behavior / shadow reports，直接輸出 research-only 建議
 - Market Context Lens：獨立追蹤 index、sector、theme、volatility、rates、gold、oil 與 cash-like ETF，只作市場背景與風險提醒，不直接產生 proposal
 - Opportunity Radar：回答「今晚市場有無值得留意的新機會？」這類 broad question，輸出 evidence-ranked WATCH / RESEARCH / BLOCKED / AVOID cards，不直接建立 proposal
+- Canonical Accounting + IPS foundation：由交易日誌同步成 accounting transactions、FIFO tax lots、accounting snapshot，並把確認後的 Advisor Profile 固化成 Investor Policy Statement
 - SQLite 狀態儲存：proposal、approval、paper executions、portfolio、quotes、news、fundamentals、research goals、evidence rows、theses、thesis updates、catalysts、catalyst reviews、earnings reviews、research run cards、trade journal、behavior reports、shadow account、audit events
 - 風控/審批狀態機：TTL、重複單、notional、confidence、price drift revalidation
 - Hermes daily MCP surface：日常 Telegram 只暴露 high-level Advisor/Profile/Committee tools；底層 portfolio/news/proposal context 由 Advisor Orchestrator 背後讀取
@@ -82,6 +83,9 @@ CLI：
 ```bash
 python -m invest_agent.cli ask-advisor "Should I buy AAPL now?" --symbol AAPL
 python -m invest_agent.cli opportunity-radar "今晚市場有無值得留意的新機會？"
+python -m invest_agent.cli accounting-sync-from-journal
+python -m invest_agent.cli accounting-snapshot
+python -m invest_agent.cli ips
 python -m invest_agent.cli advisor-pulse
 python -m invest_agent.cli pre-market-brief
 python -m invest_agent.cli post-close-brief
@@ -100,6 +104,28 @@ Advisor Profile update 必須先由 Hermes 建立 pending suggestion，再由你
 安全邊界不變：Advisor output 只會寫 advisor question / pulse / brief / recommendation / run card，不會建立 `PENDING` proposal、不會 approve、不會 unlock Futu，也不會送 live order。若你仍想買賣，仍要走 `InvestmentService`、evidence gate、thesis/catalyst invariants、policy engine 與人工確認。
 
 Opportunity Radar 是 Advisor Mode 的內部 service。它使用 market regime、sector/theme ETF、symbol-specific quote/news/fundamentals/thesis/catalyst、portfolio fit、risk gate、behavior/shadow evidence 六層資料做 deterministic scoring。輸出可以是 `watch`、`research`、`blocked`、`avoid` 或 `action_candidate`；`action_candidate` 仍只代表「可考慮建立研究 / proposal candidate」，不是買入指令。任何包含單股的 radar card 如果完全缺少 source-backed thesis / SEC / IR / fundamentals evidence，最多只能保留為 watch/research/block，不可升級為 `action_candidate`。
+
+## Accounting + IPS Foundation
+
+Canonical Accounting 是 portfolio optimizer / tax-aware rebalance 之前的地基。第一版只做本機可審計 ledger：
+
+- `accounting_transactions`：交易、股息、fee、tax withholding、cash deposit/withdrawal、transfer、corporate action placeholder。
+- `accounting_tax_lots`：由 accounting transactions 以 FIFO 重建 open/closed tax lots。
+- `accounting_snapshots`：保存 cash by currency、open positions、realized PnL、dividend income、fees、withholding tax 與 warnings。
+- `investor_policy_statements`：把確認後的 Advisor Profile 固化成正式 IPS，包括 risk profile、投資期限、現金底線、單股/科技/sector 上限、drawdown tolerance、core/satellite target 與 prohibited assets。
+
+這層仍然 research/accounting-only：不建立 proposal、不 approve、不 unlock Futu、不下單。Corporate actions / split 目前只會記錄與 warning，未自動改 lot。
+
+REST API：
+
+```bash
+curl -X POST http://127.0.0.1:8788/api/accounting/sync-from-journal
+curl http://127.0.0.1:8788/api/accounting/snapshots/latest
+curl http://127.0.0.1:8788/api/accounting/transactions
+curl http://127.0.0.1:8788/api/accounting/tax-lots
+curl -X POST http://127.0.0.1:8788/api/ips/from-advisor-profile
+curl http://127.0.0.1:8788/api/ips
+```
 
 REST API：
 

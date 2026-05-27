@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from .advisor import AdvisorService
 from .advisor_orchestrator import AdvisorOrchestrator
+from .accounting import CanonicalAccountingService
 from .autonomy import SafeAutonomyRunner, autonomy_status
 from .backtest_imports import BacktestImportService
 from .catalysts import CatalystCalendarService
@@ -24,6 +25,7 @@ from .futu_adapter import FutuIntegrationError, get_futu_status, refresh_futu_re
 from .hypotheses import HypothesisRegistryService
 from .idea_inbox import IdeaInboxService
 from .ir_feeds import IrFeedIngestor
+from .investor_policy import InvestorPolicyService
 from .market_news import MarketNewsIngestor, external_ticker, resolve_watchlist_symbols
 from .market_context import MarketContextService
 from .market_regime import MarketRegimeService
@@ -41,6 +43,8 @@ from .models import (
     AdvisorProfileUpdateStatus,
     AdvisorQuestionRequest,
     AdvisorSeverity,
+    AccountingTransactionCreate,
+    AccountingTransactionType,
     BacktestImportRequest,
     CatalystCompleteRequest,
     CatalystCreate,
@@ -88,6 +92,7 @@ from .models import (
     TradeFillSide,
     TradeJournalImportRequest,
     TradeJournalSource,
+    TaxLotStatus,
 )
 from .primary_sources import refresh_primary_sources
 from .proposal_drafts import ProposalDraftEngine
@@ -181,6 +186,62 @@ def health() -> dict:
 @app.get("/api/portfolio")
 def portfolio():
     return get_store().get_portfolio()
+
+
+@app.get("/api/accounting/transactions")
+def accounting_transactions(
+    account_id: str | None = None,
+    symbol: str | None = None,
+    transaction_type: AccountingTransactionType | None = None,
+    limit: int = 200,
+):
+    return get_store().list_accounting_transactions(
+        account_id=account_id,
+        symbol=symbol,
+        transaction_type=transaction_type,
+        limit=limit,
+    )
+
+
+@app.post("/api/accounting/transactions")
+def create_accounting_transaction(request: AccountingTransactionCreate):
+    try:
+        return CanonicalAccountingService(get_store()).record_transaction(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/accounting/tax-lots")
+def accounting_tax_lots(
+    account_id: str | None = None,
+    symbol: str | None = None,
+    status: TaxLotStatus | None = None,
+    limit: int = 200,
+):
+    return get_store().list_accounting_tax_lots(account_id=account_id, symbol=symbol, status=status, limit=limit)
+
+
+@app.post("/api/accounting/sync-from-journal")
+def accounting_sync_from_journal():
+    return CanonicalAccountingService(get_store()).sync_from_trade_journal(actor=RunCardActor.API)
+
+
+@app.get("/api/accounting/snapshots/latest")
+def latest_accounting_snapshot():
+    return get_store().get_latest_accounting_snapshot()
+
+
+@app.get("/api/ips")
+def investor_policy_statement():
+    return InvestorPolicyService(get_store()).get_current()
+
+
+@app.post("/api/ips/from-advisor-profile")
+def investor_policy_from_advisor_profile():
+    profile = get_store().get_advisor_profile()
+    if not profile:
+        raise HTTPException(status_code=404, detail="advisor profile not found")
+    return InvestorPolicyService(get_store()).upsert_from_advisor_profile(profile)
 
 
 @app.get("/api/quotes")

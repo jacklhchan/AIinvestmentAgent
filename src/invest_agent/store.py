@@ -6,6 +6,10 @@ from pathlib import Path
 from typing import Any
 
 from .models import (
+    AccountingSnapshot,
+    AccountingTaxLot,
+    AccountingTransaction,
+    AccountingTransactionType,
     AuditEvent,
     AdvisorFullBrief,
     AdvisorProfile,
@@ -41,6 +45,7 @@ from .models import (
     IdeaCandidate,
     IdeaCandidateStatus,
     IdeaScreen,
+    InvestorPolicyStatement,
     MarketRegimeSnapshot,
     NewsItem,
     OptionsSnapshot,
@@ -74,6 +79,7 @@ from .models import (
     ShadowStrategy,
     ShadowStrategyStatus,
     SymbolClassification,
+    TaxLotStatus,
     Thesis,
     ThesisPillar,
     ThesisRisk,
@@ -281,6 +287,38 @@ class Store:
                 CREATE TABLE IF NOT EXISTS portfolio_targets (
                     id TEXT PRIMARY KEY,
                     asset_class TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS accounting_transactions (
+                    id TEXT PRIMARY KEY,
+                    account_id TEXT NOT NULL,
+                    symbol TEXT,
+                    transaction_type TEXT NOT NULL,
+                    occurred_at TEXT NOT NULL,
+                    row_hash TEXT NOT NULL UNIQUE,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS accounting_tax_lots (
+                    id TEXT PRIMARY KEY,
+                    account_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    opened_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS accounting_snapshots (
+                    id TEXT PRIMARY KEY,
+                    as_of TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS investor_policy_statements (
+                    id TEXT PRIMARY KEY,
+                    version INTEGER NOT NULL,
+                    updated_at TEXT NOT NULL,
                     payload TEXT NOT NULL
                 );
 
@@ -1095,6 +1133,174 @@ class Store:
 
     def list_portfolio_targets(self, limit: int = 100) -> list[PortfolioTarget]:
         return self._list_payloads("portfolio_targets", PortfolioTarget, order_by="asset_class ASC", limit=limit)
+
+    def add_accounting_transactions(self, items: list[AccountingTransaction]) -> list[AccountingTransaction]:
+        inserted: list[AccountingTransaction] = []
+        with self.connect() as conn:
+            for item in items:
+                cursor = conn.execute(
+                    """
+                    INSERT OR IGNORE INTO accounting_transactions(
+                        id, account_id, symbol, transaction_type, occurred_at, row_hash, payload
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        item.id,
+                        item.account_id,
+                        item.symbol,
+                        item.transaction_type.value,
+                        item.occurred_at.isoformat(),
+                        item.row_hash,
+                        self._dump(item),
+                    ),
+                )
+                if cursor.rowcount:
+                    inserted.append(item)
+        if items:
+            self.audit(
+                "accounting_transactions_imported",
+                "accounting_transaction",
+                "batch",
+                {"submitted_count": len(items), "inserted_count": len(inserted)},
+            )
+        return inserted
+
+    def create_accounting_transaction(self, item: AccountingTransaction) -> AccountingTransaction:
+        inserted = self.add_accounting_transactions([item])
+        if inserted:
+            return inserted[0]
+        existing = self.get_accounting_transaction_by_hash(item.row_hash)
+        return existing or item
+
+    def get_accounting_transaction_by_hash(self, row_hash: str) -> AccountingTransaction | None:
+        return self._get_payload("accounting_transactions", AccountingTransaction, "row_hash", row_hash)
+
+    def list_accounting_transactions(
+        self,
+        *,
+        account_id: str | None = None,
+        symbol: str | None = None,
+        transaction_type: AccountingTransactionType | None = None,
+        limit: int = 1000,
+        ascending: bool = False,
+    ) -> list[AccountingTransaction]:
+        clauses: list[str] = []
+        args: list[Any] = []
+        if account_id:
+            clauses.append("account_id = ?")
+            args.append(account_id.upper())
+        if symbol:
+            clauses.append("symbol = ?")
+            args.append(symbol.upper())
+        if transaction_type:
+            clauses.append("transaction_type = ?")
+            args.append(transaction_type.value)
+        order = "ASC" if ascending else "DESC"
+        return self._list_payloads(
+            "accounting_transactions",
+            AccountingTransaction,
+            where=" AND ".join(clauses),
+            args=tuple(args),
+            order_by=f"occurred_at {order}, id {order}",
+            limit=limit,
+        )
+
+    def replace_accounting_tax_lots(self, items: list[AccountingTaxLot]) -> list[AccountingTaxLot]:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM accounting_tax_lots")
+            for item in items:
+                conn.execute(
+                    """
+                    INSERT INTO accounting_tax_lots(id, account_id, symbol, status, opened_at, payload)
+                    VALUES(?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        item.id,
+                        item.account_id,
+                        item.symbol,
+                        item.status.value,
+                        item.opened_at.isoformat(),
+                        self._dump(item),
+                    ),
+                )
+        self.audit("accounting_tax_lots_rebuilt", "accounting_tax_lot", "fifo", {"lot_count": len(items)})
+        return items
+
+    def list_accounting_tax_lots(
+        self,
+        *,
+        account_id: str | None = None,
+        symbol: str | None = None,
+        status: TaxLotStatus | None = None,
+        limit: int = 1000,
+    ) -> list[AccountingTaxLot]:
+        clauses: list[str] = []
+        args: list[Any] = []
+        if account_id:
+            clauses.append("account_id = ?")
+            args.append(account_id.upper())
+        if symbol:
+            clauses.append("symbol = ?")
+            args.append(symbol.upper())
+        if status:
+            clauses.append("status = ?")
+            args.append(status.value)
+        return self._list_payloads(
+            "accounting_tax_lots",
+            AccountingTaxLot,
+            where=" AND ".join(clauses),
+            args=tuple(args),
+            order_by="opened_at ASC, id ASC",
+            limit=limit,
+        )
+
+    def create_accounting_snapshot(self, item: AccountingSnapshot) -> AccountingSnapshot:
+        self._insert_payload(
+            "accounting_snapshots",
+            ["id", "as_of"],
+            [item.id, item.as_of.isoformat()],
+            item,
+            audit_event="accounting_snapshot_created",
+            entity_type="accounting_snapshot",
+            entity_id=item.id,
+            audit_payload={
+                "transaction_count": item.transaction_count,
+                "open_lot_count": item.open_lot_count,
+                "run_card_id": item.run_card_id,
+            },
+        )
+        return item
+
+    def list_accounting_snapshots(self, *, limit: int = 20) -> list[AccountingSnapshot]:
+        return self._list_payloads("accounting_snapshots", AccountingSnapshot, order_by="as_of DESC", limit=limit)
+
+    def get_latest_accounting_snapshot(self) -> AccountingSnapshot | None:
+        items = self.list_accounting_snapshots(limit=1)
+        return items[0] if items else None
+
+    def get_investor_policy_statement(self, policy_id: str = "default") -> InvestorPolicyStatement | None:
+        return self._get_payload("investor_policy_statements", InvestorPolicyStatement, "id", policy_id)
+
+    def upsert_investor_policy_statement(self, item: InvestorPolicyStatement) -> InvestorPolicyStatement:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO investor_policy_statements(id, version, updated_at, payload) VALUES(?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    version=excluded.version,
+                    updated_at=excluded.updated_at,
+                    payload=excluded.payload
+                """,
+                (item.id, item.version, item.updated_at.isoformat(), self._dump(item)),
+            )
+        self.audit(
+            "investor_policy_statement_upserted",
+            "investor_policy_statement",
+            item.id,
+            {"version": item.version, "source_profile_version": item.source_profile_version},
+        )
+        return item
 
     def upsert_symbol_classification(self, item: SymbolClassification) -> SymbolClassification:
         with self.connect() as conn:
