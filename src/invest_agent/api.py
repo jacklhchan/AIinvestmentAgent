@@ -33,6 +33,7 @@ from .options_lens import OptionsLensService
 from .opportunity_radar import OpportunityRadarService
 from .portfolio_studio import PortfolioStudioService
 from .quote_history import QuoteHistoryService
+from .runtime_doctor import RuntimeDoctorService
 from .sector_lens import SectorLensService
 from .skill_validator import SkillValidatorService
 from .models import (
@@ -1107,6 +1108,11 @@ def executions(proposal_id: str | None = None):
 @app.get("/api/audit")
 def audit(limit: int = 100):
     return get_store().list_audit_events(limit=limit)
+
+
+@app.get("/api/runtime/doctor")
+def runtime_doctor():
+    return RuntimeDoctorService(get_settings(), get_store()).run()
 
 
 @app.get("/api/futu/status")
@@ -2391,17 +2397,20 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       `;
     }
 
-    function renderAutonomy(status) {
+    function renderAutonomy(status, doctor) {
       const lastRun = status.last_run;
+      const draftMetrics = status.latest_draft_metrics || {};
       const stepText = lastRun?.steps?.length
         ? `${lastRun.steps.filter(step => step.status === "ok").length}/${lastRun.steps.length} 步成功`
         : "未有紀錄";
       const created = lastRun?.created_count || 0;
+      const doctorStatus = doctor?.severity || "unknown";
+      const mismatchCount = doctor?.checks?.proposal_status_mismatches?.metrics?.count || 0;
       document.querySelector("#autonomy-strip").innerHTML = `
         <div class="source-cell">
           <div class="label">循環頻率</div>
           <div>${pill("PENDING", `${Math.round((status.cycle_seconds || 0) / 60)} 分鐘`)}</div>
-          <div class="muted">由 launchd / CLI 常駐觸發</div>
+          <div class="muted">lock ${escapeHtml(status.lock_path || "")}</div>
         </div>
         <div class="source-cell">
           <div class="label">提案模式</div>
@@ -2414,9 +2423,14 @@ proposal 需要靠 manual override 才能成立</textarea></div>
           <div class="muted">${lastRun ? formatDate(lastRun.finished_at) : "尚未執行"} · 建立 ${created} 個 proposal</div>
         </div>
         <div class="source-cell">
-          <div class="label">安全邊界</div>
-          <div>${status.paper_only ? pill("APPROVED", "paper-only") : pill("PENDING", "live requested")}</div>
-          <div class="muted">不 unlock Futu，不下實盤單</div>
+          <div class="label">草稿門檻</div>
+          <div>${pill("PENDING", `min score ${status.draft_min_score ?? draftMetrics.draft_min_score ?? 0}`)}</div>
+          <div class="muted">低於門檻 ${escapeHtml(draftMetrics.skipped_below_min_score || 0)} · 最高分 ${escapeHtml(draftMetrics.max_score_seen || 0)}</div>
+        </div>
+        <div class="source-cell">
+          <div class="label">Runtime Doctor</div>
+          <div>${pill(doctorStatus === "ok" ? "APPROVED" : doctorStatus === "error" ? "RISK_REJECTED" : "PENDING", doctorStatus)}</div>
+          <div class="muted">status mismatch ${escapeHtml(mismatchCount)} · ${status.paper_only ? "paper-only" : "live requested"}</div>
         </div>
       `;
     }
@@ -2707,7 +2721,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
     }
 
     async function loadAll() {
-      const [advisorBrief, advisorFullBrief, advisorRecommendations, opportunityRadarRuns, committeeReviews, marketContext, marketRegime, health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, researchGoals, theses, catalysts, earningsReviews, runCards, behaviorReports, tradeImports, tradeRoundtrips, shadowStrategies, shadowReports, shadowEvents] = await Promise.all([
+      const [advisorBrief, advisorFullBrief, advisorRecommendations, opportunityRadarRuns, committeeReviews, marketContext, marketRegime, health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, runtimeDoctor, researchGoals, theses, catalysts, earningsReviews, runCards, behaviorReports, tradeImports, tradeRoundtrips, shadowStrategies, shadowReports, shadowEvents] = await Promise.all([
         api("/api/advisor/brief"),
         api("/api/advisor/briefs/latest"),
         api("/api/advisor/recommendations?limit=12"),
@@ -2724,6 +2738,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         apiOptional("/api/futu/status", error => ({ connected: false, message: error.message })),
         api("/api/fundamentals"),
         api("/api/autonomy/status"),
+        api("/api/runtime/doctor"),
         api("/api/research-goals?limit=8"),
         api("/api/theses?limit=8"),
         api("/api/catalysts/upcoming?days=14&limit=8"),
@@ -2752,7 +2767,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       renderMarketRegime(marketRegime);
       renderMarketContext(marketContext);
       renderSourceStrip(health, portfolio, quotes, futuStatus);
-      renderAutonomy(autonomy);
+      renderAutonomy(autonomy, runtimeDoctor);
       renderResearchGoals(researchGoals);
       renderTheses(theses);
       renderCatalysts(catalysts);
@@ -2984,6 +2999,11 @@ proposal 需要靠 manual override 才能成立</textarea></div>
           method: "POST",
           body: JSON.stringify({ include_slow_sources: true })
         });
+        if (result.steps?.some(step => step.name === "single_flight")) {
+          setToast("自治循環已在執行中；這次請求已安全略過。");
+          await loadAll();
+          return;
+        }
         const errorNote = result.errors?.length ? `；${result.errors.length} 個步驟有錯誤` : "";
         setToast(`自治循環完成：${result.steps.length} 個步驟，建立 ${result.created_proposals.length} 個待審批提案${errorNote}`);
         await loadAll();

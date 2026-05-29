@@ -30,7 +30,7 @@ from invest_agent.thesis_tracker import ThesisTrackerService
 
 
 def make_stack(tmp_path: Path, *, watchlist: str = "GOOGL"):
-    settings = Settings(db_path=tmp_path / "test.db", watchlist_symbols=watchlist, draft_notional_usd=1000)
+    settings = Settings(db_path=tmp_path / "test.db", watchlist_symbols=watchlist, draft_notional_usd=1000, draft_min_score=1)
     store = Store(settings.db_path)
     seed_demo_data(store, force=True)
     service = InvestmentService(settings, store)

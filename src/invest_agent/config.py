@@ -27,6 +27,7 @@ class Settings(BaseModel):
     market_context_symbols: str = "SPY,QQQ,IWM,DIA,VIXY,TLT,GLD,USO,XLK,XLF,XLE,XLV,XLY,XLP,XLI,XLU,XLB,XLRE,SMH,SOXX,IGV,XBI,IBB,ITA,KRE,SCHD,SGOV,BIL"
     draft_notional_usd: float = 1000.0
     draft_max_candidates: int = 3
+    draft_min_score: int = 7
     news_lookback_days: int = 3
     news_max_per_symbol: int = 5
     news_max_symbols: int = 12
@@ -119,6 +120,7 @@ def get_settings() -> Settings:
         ),
         draft_notional_usd=_float_env("INVEST_AGENT_DRAFT_NOTIONAL_USD", 1000.0),
         draft_max_candidates=_int_env("INVEST_AGENT_DRAFT_MAX_CANDIDATES", 3),
+        draft_min_score=_int_env("INVEST_AGENT_DRAFT_MIN_SCORE", 7),
         news_lookback_days=_int_env("INVEST_AGENT_NEWS_LOOKBACK_DAYS", 3),
         news_max_per_symbol=_int_env("INVEST_AGENT_NEWS_MAX_PER_SYMBOL", 5),
         news_max_symbols=_int_env("INVEST_AGENT_NEWS_MAX_SYMBOLS", 12),

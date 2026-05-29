@@ -81,6 +81,8 @@ class ProposalDraftEngine:
         draft_limit = max_drafts or self.settings.draft_max_candidates
         skipped: list[str] = []
         drafts: list[ProposalDraft] = []
+        skipped_below_min_score = 0
+        max_score_seen = 0
 
         for symbol in watchlist:
             news = self._recent_news(symbol, lookback_hours=lookback_hours)
@@ -89,8 +91,10 @@ class ProposalDraftEngine:
                 continue
 
             score = sum(_score_news(item) for item in news)
-            if score == 0:
-                skipped.append(f"{symbol}: no directional news score")
+            max_score_seen = max(max_score_seen, abs(score))
+            if abs(score) < self.settings.draft_min_score:
+                skipped_below_min_score += 1
+                skipped.append(f"{symbol}: directional score {score} below threshold {self.settings.draft_min_score}")
                 continue
 
             draft = self._build_draft(symbol, news, score)
@@ -135,10 +139,21 @@ class ProposalDraftEngine:
                 "created_count": len(created),
                 "skipped": skipped[:12],
                 "create_proposals": create_proposals,
+                "draft_min_score": self.settings.draft_min_score,
+                "skipped_below_min_score": skipped_below_min_score,
+                "max_score_seen": max_score_seen,
             },
         )
 
-        return DraftProposalResult(watchlist=watchlist, drafts=drafts, created=created, skipped=skipped)
+        return DraftProposalResult(
+            watchlist=watchlist,
+            drafts=drafts,
+            created=created,
+            skipped=skipped,
+            draft_min_score=self.settings.draft_min_score,
+            skipped_below_min_score=skipped_below_min_score,
+            max_score_seen=max_score_seen,
+        )
 
     def _recent_news(self, symbol: str, *, lookback_hours: int) -> list[NewsItem]:
         cutoff = utc_now() - timedelta(hours=max(1, lookback_hours))

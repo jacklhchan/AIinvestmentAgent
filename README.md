@@ -208,6 +208,7 @@ python -m invest_agent.cli futu-refresh
 INVEST_AGENT_WATCHLIST=AAPL,MSFT,NVDA,GOOGL
 INVEST_AGENT_DRAFT_NOTIONAL_USD=1000
 INVEST_AGENT_DRAFT_MAX_CANDIDATES=3
+INVEST_AGENT_DRAFT_MIN_SCORE=7
 INVEST_AGENT_NEWS_LOOKBACK_DAYS=3
 INVEST_AGENT_NEWS_MAX_PER_SYMBOL=5
 INVEST_AGENT_NEWS_MAX_SYMBOLS=6
@@ -497,6 +498,7 @@ python -m invest_agent.cli event-replay --path artifacts/replay/latest-events.js
 ## Safe Autonomy Loop
 
 自治層會跑一個安全循環：刷新只讀資料、更新新聞與 primary sources、解析 SEC companyfacts、草擬交易提案，並在 evidence gate 與 cooldown 都允許時建立 `PENDING` proposal。它不會批准 proposal、不會 unlock Futu、不會送 live order。
+同一時間只允許一個 safe autonomy cycle 執行；launchd、Dashboard、CLI、MCP 若重疊觸發，後到的請求會回傳 structured skipped result，不會重複刷新或建立 proposal。
 
 ```bash
 INVEST_AGENT_AUTONOMY_CYCLE_SECONDS=900
@@ -515,10 +517,12 @@ INVEST_AGENT_AUTONOMY_PROPOSAL_COOLDOWN_MINUTES=240
 ```bash
 python -m invest_agent.cli autonomy-once
 python -m invest_agent.cli autonomy-status
+python -m invest_agent.cli doctor
 python -m invest_agent.cli autonomy-loop
 ```
 
-macOS 常駐範例在 `deploy/launchd/com.local.invest-agent-scheduler.plist`。Dashboard 也有 `執行自治循環` 按鈕與 `安全自治狀態` 面板。
+macOS 常駐範例在 `deploy/launchd/com.local.invest-agent-scheduler.plist`。Dashboard 也有 `執行自治循環` 按鈕與 `安全自治狀態` 面板。Runtime doctor 會檢查 DB、Futu、autonomy/advisor freshness、draft threshold metrics、proposal status mismatch；若日後加入 repair/migration 指令，必須先建立 timestamped SQLite backup 並記錄 backup path。
+同一份 doctor 實作也由 `GET /api/runtime/doctor` 提供；CLI 版本直接讀本機設定與 SQLite，不依賴 API server 已啟動。
 
 ## Next Phase Research Cockpit
 

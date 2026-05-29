@@ -9,7 +9,7 @@ from invest_agent.store import Store
 
 
 def make_engine(tmp_path):
-    settings = Settings(db_path=tmp_path / "test.db", watchlist_symbols="GOOGL", draft_notional_usd=1000)
+    settings = Settings(db_path=tmp_path / "test.db", watchlist_symbols="GOOGL", draft_notional_usd=1000, draft_min_score=1)
     store = Store(settings.db_path)
     seed_demo_data(store, force=True)
     service = InvestmentService(settings, store)
@@ -67,6 +67,30 @@ def test_macro_news_does_not_create_symbol_directional_draft(tmp_path) -> None:
 
     assert result.drafts == []
     assert "GOOGL: no recent market news" in result.skipped
+
+
+def test_draft_min_score_reports_filtered_scores(tmp_path) -> None:
+    settings = Settings(db_path=tmp_path / "test.db", watchlist_symbols="GOOGL", draft_notional_usd=1000, draft_min_score=7)
+    store = Store(settings.db_path)
+    seed_demo_data(store, force=True)
+    engine = ProposalDraftEngine(settings, store, InvestmentService(settings, store))
+    store.upsert_news(
+        NewsItem(
+            symbol="GOOGL",
+            title="Alphabet shares rise after AI demand update",
+            source="gdelt",
+            published_at=utc_now(),
+            summary="Demand remains strong.",
+        )
+    )
+
+    result = engine.draft_from_watchlist(symbols=["GOOGL"])
+
+    assert result.drafts == []
+    assert result.draft_min_score == 7
+    assert result.skipped_below_min_score == 1
+    assert result.max_score_seen > 0
+    assert any("below threshold 7" in item for item in result.skipped)
 
 
 def test_draft_can_create_policy_checked_proposal(tmp_path) -> None:

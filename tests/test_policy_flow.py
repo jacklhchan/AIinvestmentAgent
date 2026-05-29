@@ -176,3 +176,29 @@ def test_created_proposal_contains_research_goal_id_and_evidence_hash(tmp_path: 
     assert proposal.status == ProposalStatus.PENDING
     assert proposal.research_goal_id == goal_id
     assert len(proposal.evidence_hash) == 64
+
+
+def test_proposal_reads_canonicalize_table_status(tmp_path: Path) -> None:
+    service = make_service(tmp_path)
+    goal_id = create_passed_goal(service)
+    proposal = service.create_proposal(
+        ProposalCreate(
+            symbol="GOOGL",
+            side=Side.BUY,
+            qty=5,
+            limit_price=175.70,
+            thesis="Validate canonical status hydration from table status.",
+            trigger="pytest",
+            confidence=0.65,
+            research_goal_id=goal_id,
+        )
+    )
+    with service.store.connect() as conn:
+        conn.execute("UPDATE proposals SET status = ? WHERE id = ?", (ProposalStatus.REJECTED.value, proposal.id))
+
+    assert service.store.get_proposal(proposal.id).status == ProposalStatus.REJECTED
+    assert service.store.list_proposals(status=ProposalStatus.REJECTED)[0].status == ProposalStatus.REJECTED
+    assert service.store.pending_for_symbol("GOOGL", side="BUY") == []
+    mismatches = service.store.proposal_status_mismatches()
+    assert mismatches["count"] == 1
+    assert mismatches["examples"][0]["payload_status"] == ProposalStatus.PENDING.value

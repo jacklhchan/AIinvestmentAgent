@@ -75,6 +75,7 @@ from .proposal_drafts import ProposalDraftEngine
 from .portfolio_studio import PortfolioStudioService
 from .quote_history import QuoteHistoryService
 from .run_cards import RunCardService
+from .runtime_doctor import RuntimeDoctorService
 from .schema_checks import run_schema_check
 from .sec_companyfacts import SecCompanyFactsIngestor
 from .sec_edgar import SecEdgarIngestor
@@ -179,6 +180,10 @@ def autonomy_loop_main() -> None:
 
 def autonomy_status_main() -> None:
     print(json.dumps(autonomy_status(get_settings(), get_store()), indent=2, ensure_ascii=False))
+
+
+def doctor_main() -> None:
+    print(json.dumps(RuntimeDoctorService(get_settings(), get_store()).run(), indent=2, ensure_ascii=False))
 
 
 def list_theses_main() -> None:
@@ -687,6 +692,7 @@ def main() -> None:
             "autonomy-once",
             "autonomy-loop",
             "autonomy-status",
+            "doctor",
             "market-regime",
             "list-theses",
             "list-catalysts",
@@ -842,6 +848,8 @@ def main() -> None:
         autonomy_loop_main()
     if args.command == "autonomy-status":
         autonomy_status_main()
+    if args.command == "doctor":
+        doctor_main()
     if args.command == "market-regime":
         market_regime_main(args.refresh)
     if args.command == "list-theses":

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import timezone
 from pathlib import Path
 from typing import Any
 
@@ -90,6 +91,7 @@ from .models import (
     TradeImport,
     TradeJournalSource,
     TradeRoundTrip,
+    utc_now,
 )
 
 
@@ -2899,29 +2901,85 @@ class Store:
 
     def get_proposal(self, proposal_id: str) -> Proposal | None:
         with self.connect() as conn:
-            row = conn.execute("SELECT payload FROM proposals WHERE id = ?", (proposal_id,)).fetchone()
-        return Proposal.model_validate_json(row["payload"]) if row else None
+            row = conn.execute("SELECT status, payload FROM proposals WHERE id = ?", (proposal_id,)).fetchone()
+        return self._proposal_from_row(row) if row else None
 
     def list_proposals(self, status: ProposalStatus | None = None, limit: int = 100) -> list[Proposal]:
         if status:
-            query = "SELECT payload FROM proposals WHERE status = ? ORDER BY created_at DESC LIMIT ?"
+            query = "SELECT status, payload FROM proposals WHERE status = ? ORDER BY created_at DESC LIMIT ?"
             args: tuple[Any, ...] = (status.value, limit)
         else:
-            query = "SELECT payload FROM proposals ORDER BY created_at DESC LIMIT ?"
+            query = "SELECT status, payload FROM proposals ORDER BY created_at DESC LIMIT ?"
             args = (limit,)
         with self.connect() as conn:
             rows = conn.execute(query, args).fetchall()
-        return [Proposal.model_validate_json(row["payload"]) for row in rows]
+        return [proposal for row in rows if (proposal := self._proposal_from_row(row)) is not None]
 
     def pending_for_symbol(self, symbol: str, side: str | None = None) -> list[Proposal]:
-        query = "SELECT payload FROM proposals WHERE status = ? AND symbol = ?"
+        query = "SELECT status, payload FROM proposals WHERE status = ? AND symbol = ?"
         args: tuple[Any, ...] = (ProposalStatus.PENDING.value, symbol.upper())
         if side:
             query += " AND side = ?"
             args = (*args, side.upper())
         with self.connect() as conn:
             rows = conn.execute(query, args).fetchall()
-        return [Proposal.model_validate_json(row["payload"]) for row in rows]
+        return [proposal for row in rows if (proposal := self._proposal_from_row(row)) is not None]
+
+    def proposal_status_mismatches(self, limit: int = 20) -> dict[str, Any]:
+        mismatches: list[dict[str, Any]] = []
+        with self.connect() as conn:
+            rows = conn.execute("SELECT id, status, symbol, created_at, payload FROM proposals ORDER BY created_at DESC").fetchall()
+        for row in rows:
+            try:
+                proposal = Proposal.model_validate_json(row["payload"])
+            except Exception as exc:  # pragma: no cover - corrupt payload diagnostic
+                mismatches.append(
+                    {
+                        "id": row["id"],
+                        "symbol": row["symbol"],
+                        "table_status": row["status"],
+                        "payload_status": "unreadable",
+                        "created_at": row["created_at"],
+                        "error": str(exc),
+                    }
+                )
+                continue
+            table_status = str(row["status"])
+            payload_status = proposal.status.value
+            if table_status != payload_status:
+                mismatches.append(
+                    {
+                        "id": row["id"],
+                        "symbol": row["symbol"],
+                        "table_status": table_status,
+                        "payload_status": payload_status,
+                        "created_at": row["created_at"],
+                    }
+                )
+        return {"count": len(mismatches), "examples": mismatches[:limit]}
+
+    def _proposal_from_row(self, row: sqlite3.Row | None) -> Proposal | None:
+        if row is None:
+            return None
+        proposal = Proposal.model_validate_json(row["payload"])
+        try:
+            table_status = ProposalStatus(str(row["status"]))
+        except (KeyError, ValueError):
+            return proposal
+        if proposal.status != table_status:
+            return proposal.model_copy(update={"status": table_status})
+        return proposal
+
+    def create_sqlite_backup(self, label: str = "manual") -> Path:
+        timestamp = utc_now().astimezone(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        safe_label = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in label).strip("-") or "manual"
+        backup_dir = self.db_path.parent / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup_path = backup_dir / f"{self.db_path.stem}-{timestamp}-{safe_label}{self.db_path.suffix or '.db'}"
+        with self.connect() as source, sqlite3.connect(backup_path) as target:
+            source.backup(target)
+        self.audit("sqlite_backup_created", "database", str(self.db_path), {"backup_path": str(backup_path), "label": label})
+        return backup_path
 
     def create_execution(self, execution: ExecutionRecord) -> ExecutionRecord:
         with self.connect() as conn:

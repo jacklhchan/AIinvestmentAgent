@@ -24,7 +24,7 @@ def test_export_and_replay_signal_events(tmp_path) -> None:
     replay_path = tmp_path / "events.jsonl"
     exported = export_event_replay(source_store, replay_path)
 
-    target_settings = Settings(db_path=tmp_path / "target.db", watchlist_symbols="GOOGL")
+    target_settings = Settings(db_path=tmp_path / "target.db", watchlist_symbols="GOOGL", draft_min_score=1)
     target_store = Store(target_settings.db_path)
     result = replay_event_file(target_settings, target_store, replay_path)
 
@@ -56,7 +56,7 @@ def test_replay_accepts_minimal_portfolio_quote_news(tmp_path) -> None:
     replay_path = tmp_path / "events.jsonl"
     export_event_replay(source_store, replay_path)
 
-    target_settings = Settings(db_path=tmp_path / "target.db", watchlist_symbols="AAPL")
+    target_settings = Settings(db_path=tmp_path / "target.db", watchlist_symbols="AAPL", draft_min_score=1)
     target_store = Store(target_settings.db_path)
     result = replay_event_file(target_settings, target_store, replay_path)
 

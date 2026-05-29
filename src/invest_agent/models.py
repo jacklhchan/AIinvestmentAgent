@@ -2365,6 +2365,9 @@ class DraftProposalResult(BaseModel):
     drafts: list[ProposalDraft] = Field(default_factory=list)
     created: list[Proposal] = Field(default_factory=list)
     skipped: list[str] = Field(default_factory=list)
+    draft_min_score: int = 0
+    skipped_below_min_score: int = 0
+    max_score_seen: int = 0
 
 
 class AutomationStepResult(BaseModel):

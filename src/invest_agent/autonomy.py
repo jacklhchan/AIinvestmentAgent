@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import errno
 import json
+import os
 import signal
 import time
+from contextlib import AbstractContextManager
 from datetime import timedelta
+from pathlib import Path
 from typing import Any, Callable
 
+import fcntl
 from fastapi import HTTPException
 
 from .catalysts import CatalystCalendarService
@@ -42,12 +47,40 @@ class SafeAutonomyRunner:
         started = utc_now()
         cycle = cycle_number or self._cycle_number + 1
         create = self.settings.autonomy_create_proposals if create_proposals is None else create_proposals
-        result = AutomationRunResult(mode=mode, started_at=started, cycle_number=cycle)
+        lock_path = _safe_autonomy_lock_path(self.settings)
+        with _SingleFlightLock(lock_path) as lock:
+            if not lock.acquired:
+                return self._skipped_for_single_flight(
+                    started=started,
+                    mode=mode,
+                    cycle_number=cycle,
+                    create_proposals=create,
+                    lock_path=lock_path,
+                    holder=lock.holder,
+                )
+            return self._run_cycle_locked(
+                started=started,
+                mode=mode,
+                create_proposals=create,
+                include_slow_sources=include_slow_sources,
+                cycle_number=cycle,
+            )
+
+    def _run_cycle_locked(
+        self,
+        *,
+        started,
+        mode: str,
+        create_proposals: bool,
+        include_slow_sources: bool,
+        cycle_number: int,
+    ) -> AutomationRunResult:
+        result = AutomationRunResult(mode=mode, started_at=started, cycle_number=cycle_number)
         self.store.audit(
             "autonomy_cycle_started",
             "automation",
             "safe-autonomy",
-            {"mode": mode, "cycle_number": cycle, "create_proposals": create},
+            {"mode": mode, "cycle_number": cycle_number, "create_proposals": create_proposals},
         )
 
         result.steps.append(self._run_step("futu_readonly", self._refresh_futu))
@@ -60,7 +93,7 @@ class SafeAutonomyRunner:
             result.steps.append(_skipped_step("sec_companyfacts", "not due in this cycle"))
 
         result.steps.append(self._run_step("catalyst_calendar", self._review_catalysts))
-        draft_step, created, skipped = self._draft_and_optionally_create(create)
+        draft_step, created, skipped = self._draft_and_optionally_create(create_proposals)
         result.steps.append(draft_step)
         result.created_proposals = created
         result.skipped = skipped
@@ -72,6 +105,46 @@ class SafeAutonomyRunner:
             "automation",
             "safe-autonomy",
             _automation_payload(result),
+        )
+        return result
+
+    def _skipped_for_single_flight(
+        self,
+        *,
+        started,
+        mode: str,
+        cycle_number: int,
+        create_proposals: bool,
+        lock_path: Path,
+        holder: str,
+    ) -> AutomationRunResult:
+        message = "safe autonomy cycle already running"
+        finished = utc_now()
+        step = AutomationStepResult(
+            name="single_flight",
+            status="skipped",
+            started_at=started,
+            finished_at=finished,
+            message=message,
+            metrics={"lock_path": str(lock_path), "holder": holder},
+        )
+        result = AutomationRunResult(
+            mode=mode,
+            started_at=started,
+            finished_at=finished,
+            cycle_number=cycle_number,
+            skipped=[message],
+            steps=[step],
+        )
+        self.store.audit(
+            "autonomy_cycle_skipped",
+            "automation",
+            "safe-autonomy",
+            {
+                **_automation_payload(result),
+                "reason": "single_flight",
+                "create_proposals": create_proposals,
+            },
         )
         return result
 
@@ -206,6 +279,9 @@ class SafeAutonomyRunner:
             "created_count": len(created),
             "watchlist": draft_result.watchlist,
             "draft_skipped": draft_result.skipped,
+            "draft_min_score": draft_result.draft_min_score,
+            "skipped_below_min_score": draft_result.skipped_below_min_score,
+            "max_score_seen": draft_result.max_score_seen,
         }
         return (
             AutomationStepResult(
@@ -245,12 +321,17 @@ class SafeAutonomyRunner:
 
 def autonomy_status(settings: Settings, store: Store) -> dict[str, Any]:
     last_run = store.list_audit_events(limit=1, event_type="autonomy_cycle_completed")
+    last_skipped = store.list_audit_events(limit=1, event_type="autonomy_cycle_skipped")
+    last_draft = store.list_audit_events(limit=1, event_type="proposal_drafts_generated")
+    last_draft_payload = _decode_audit_payload(last_draft[0]) if last_draft else None
     return {
         "mode": "paper" if settings.is_paper else "live-requested",
         "paper_only": settings.is_paper,
         "cycle_seconds": settings.autonomy_cycle_seconds,
         "create_proposals": settings.autonomy_create_proposals,
         "proposal_cooldown_minutes": settings.autonomy_proposal_cooldown_minutes,
+        "draft_min_score": settings.draft_min_score,
+        "lock_path": str(_safe_autonomy_lock_path(settings)),
         "refresh": {
             "futu": settings.autonomy_refresh_futu and settings.futu_read_enabled,
             "news": settings.autonomy_refresh_news,
@@ -258,6 +339,14 @@ def autonomy_status(settings: Settings, store: Store) -> dict[str, Any]:
             "fundamentals": settings.autonomy_refresh_fundamentals,
         },
         "last_run": _decode_audit_payload(last_run[0]) if last_run else None,
+        "last_skipped": _decode_audit_payload(last_skipped[0]) if last_skipped else None,
+        "latest_draft_metrics": {
+            "draft_min_score": settings.draft_min_score,
+            "skipped_below_min_score": (last_draft_payload or {}).get("skipped_below_min_score", 0),
+            "max_score_seen": (last_draft_payload or {}).get("max_score_seen", 0),
+            "draft_count": (last_draft_payload or {}).get("draft_count", 0),
+            "created_count": (last_draft_payload or {}).get("created_count", 0),
+        },
     }
 
 
@@ -297,6 +386,53 @@ def _merge_counts(*sources: dict[str, int]) -> dict[str, int]:
         for key, value in source.items():
             merged[key] = merged.get(key, 0) + value
     return merged
+
+
+def _safe_autonomy_lock_path(settings: Settings) -> Path:
+    return settings.db_path.parent / "safe_autonomy.lock"
+
+
+class _SingleFlightLock(AbstractContextManager["_SingleFlightLock"]):
+    def __init__(self, path: Path):
+        self.path = path
+        self.acquired = False
+        self.holder = ""
+        self._file = None
+
+    def __enter__(self) -> "_SingleFlightLock":
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._file = self.path.open("a+", encoding="utf-8")
+        try:
+            fcntl.flock(self._file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            if exc.errno not in {errno.EACCES, errno.EAGAIN}:
+                raise
+            self._file.seek(0)
+            self.holder = self._file.read().strip()
+            return self
+        self.acquired = True
+        self._file.seek(0)
+        self._file.truncate()
+        self._file.write(
+            json.dumps(
+                {
+                    "pid": os.getpid(),
+                    "started_at": utc_now().isoformat(),
+                }
+            )
+        )
+        self._file.flush()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        if self._file is None:
+            return
+        try:
+            if self.acquired:
+                fcntl.flock(self._file.fileno(), fcntl.LOCK_UN)
+        finally:
+            self._file.close()
+            self._file = None
 
 
 def _decode_audit_payload(event: dict[str, Any]) -> dict[str, Any]:
