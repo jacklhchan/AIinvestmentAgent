@@ -34,6 +34,7 @@ class Settings(BaseModel):
     signal_max_per_run: int = 8
     signal_expiry_hours: int = 24
     signal_duplicate_cooldown_minutes: int = 240
+    paper_advice_committee_freshness_minutes: int = 240
     news_lookback_days: int = 3
     news_max_per_symbol: int = 5
     news_max_symbols: int = 12
@@ -136,6 +137,7 @@ def get_settings() -> Settings:
         signal_max_per_run=_int_env("INVEST_AGENT_SIGNAL_MAX_PER_RUN", 8),
         signal_expiry_hours=_int_env("INVEST_AGENT_SIGNAL_EXPIRY_HOURS", 24),
         signal_duplicate_cooldown_minutes=_int_env("INVEST_AGENT_SIGNAL_DUPLICATE_COOLDOWN_MINUTES", 240),
+        paper_advice_committee_freshness_minutes=_int_env("INVEST_AGENT_PAPER_ADVICE_COMMITTEE_FRESHNESS_MINUTES", 240),
         news_lookback_days=_int_env("INVEST_AGENT_NEWS_LOOKBACK_DAYS", 3),
         news_max_per_symbol=_int_env("INVEST_AGENT_NEWS_MAX_PER_SYMBOL", 5),
         news_max_symbols=_int_env("INVEST_AGENT_NEWS_MAX_SYMBOLS", 12),

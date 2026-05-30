@@ -57,6 +57,8 @@ EXPECTED_SCHEMA: dict[str, set[str]] = {
     "investor_framework_profiles": {"framework_key", "enabled", "weight", "updated_at", "payload"},
     "investor_committee_runs": {"id", "signal_id", "symbol", "final_stance", "created_at", "payload"},
     "investor_committee_votes": {"id", "run_id", "signal_id", "framework_key", "stance", "created_at", "payload"},
+    "paper_advice_runs": {"id", "signal_run_id", "readiness_score", "created_at", "payload"},
+    "paper_advice_items": {"id", "run_id", "signal_id", "committee_run_id", "symbol", "final_status", "created_at", "payload"},
     "market_regime_snapshots": {"id", "created_at", "risk_appetite", "proposal_bias", "payload"},
     "news": {"id", "symbol", "payload", "published_at"},
     "options_snapshots": {"id", "symbol", "expiry", "created_at", "payload"},
@@ -126,6 +128,8 @@ PRESERVED_TABLES = (
     "signal_outcome_rows",
     "investor_committee_runs",
     "investor_committee_votes",
+    "paper_advice_runs",
+    "paper_advice_items",
 )
 
 

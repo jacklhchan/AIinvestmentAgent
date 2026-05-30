@@ -33,6 +33,7 @@ from .investor_committee import InvestorFrameworkCommitteeService
 from .market_regime import MarketRegimeService
 from .market_news import MarketNewsIngestor
 from .opportunity_radar import OpportunityRadarService
+from .paper_advice import PaperAdviceFlowService
 from .models import (
     AdvisorFullBriefType,
     AdvisorProfileConfirmationRequest,
@@ -249,6 +250,17 @@ def signals_evaluate_outcomes_main(limit: int = 200) -> None:
 
 def advice_readiness_main() -> None:
     result = AdviceReadinessService(get_settings(), get_store()).run()
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def paper_advice_main(symbols: str | None = None) -> None:
+    from .models import PaperAdviceRequest
+
+    result = PaperAdviceFlowService(get_settings(), get_store(), get_service()).run(
+        PaperAdviceRequest(symbols=_parse_symbols(symbols)),
+        actor=RunCardActor.CLI,
+        trigger_source=RunCardTriggerSource.MANUAL,
+    )
     print(json.dumps(_json(result), indent=2, ensure_ascii=False))
 
 
@@ -791,6 +803,7 @@ def main() -> None:
             "signals-latest",
             "signals-evaluate-outcomes",
             "advice-readiness",
+            "paper-advice",
             "investor-committee-run",
             "investor-committee-latest",
             "promote-signal",
@@ -967,6 +980,8 @@ def main() -> None:
         signals_evaluate_outcomes_main(args.limit)
     if args.command == "advice-readiness":
         advice_readiness_main()
+    if args.command == "paper-advice":
+        paper_advice_main(args.symbols)
     if args.command == "investor-committee-run":
         if not args.signal_id:
             parser.error("--signal-id is required for investor-committee-run")

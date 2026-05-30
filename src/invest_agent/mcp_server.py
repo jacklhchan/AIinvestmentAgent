@@ -27,6 +27,7 @@ from .market_context import MarketContextService
 from .market_regime import MarketRegimeService
 from .market_news import MarketNewsIngestor, external_ticker, resolve_watchlist_symbols
 from .options_lens import OptionsLensService
+from .paper_advice import PaperAdviceFlowService
 from .portfolio_studio import PortfolioStudioService
 from .quote_history import QuoteHistoryService
 from .sector_lens import SectorLensService
@@ -80,6 +81,7 @@ from .models import (
     ThesisStatus,
     ThesisUpdateCreate,
     OptionsSnapshotCreate,
+    PaperAdviceRequest,
     PeerGroupCreate,
     SectorSnapshotRunRequest,
     IdeaCandidateCreate,
@@ -167,29 +169,33 @@ def get_advisor_brief(run_light_analysis: bool = False, max_items: int = 8) -> d
 
 @mcp.tool()
 def ask_advisor(question: str, symbol: str | None = None, style: str = "concise") -> dict:
-    """Single-symbol research-only advisor card. For portfolio-wide buy/sell signals, call run_paper_signal_engine first."""
+    """Single-symbol research-only advisor card. For buy/sell advice, this routes to get_paper_buy_sell_advice."""
     if _question_asks_buy_sell(question):
-        readiness = AdviceReadinessService(get_settings(), get_store()).run()
-        gate = _advice_gate(readiness)
-        if not gate["actionable"]:
-            return {
-                "recommendation": "blocked",
-                "recommendation_type": "blocked",
-                "conclusion": "Supporting data is insufficient for actionable BUY/SELL guidance.",
-                "summary": "Hermes can discuss research gaps, but must not present BUY/SELL as actionable until advice readiness is at least 75.",
-                "suggested_user_action": "Refresh quotes/news/fundamentals/quote-history, evaluate signal outcomes, then rerun advice readiness.",
-                "reasons": [item["message"] for item in gate["failed_checks"][:5]],
-                "risks": ["Acting on BUY/SELL language below readiness threshold can turn stale or incomplete data into false conviction."],
-                "advice_gate": gate,
-                "readiness": readiness,
-                "paper_only": get_settings().is_paper,
-            }
+        return get_paper_buy_sell_advice(symbols=[symbol] if symbol else None)
     return _json(
         AdvisorOrchestrator(get_store(), settings=get_settings()).answer_user_question(
             AdvisorQuestionRequest(question=question, symbol=symbol, style=style),
             actor=RunCardActor.MCP,
         )
     )
+
+
+@mcp.tool()
+def get_paper_buy_sell_advice(
+    symbols: list[str] | None = None,
+    horizon: Literal["intraday", "swing", "position", "long_term"] = "swing",
+    max_signals: int | None = None,
+) -> dict:
+    """Single high-level tool for Hermes BUY/SELL questions. Runs signal, readiness, committee, and returns gated paper-only advice."""
+    result = PaperAdviceFlowService(get_settings(), get_store(), get_service()).run(
+        PaperAdviceRequest(symbols=symbols, horizon=SignalHorizon(horizon), max_signals=max_signals),
+        actor=RunCardActor.MCP,
+        trigger_source=RunCardTriggerSource.MANUAL,
+    )
+    payload = _json(result)
+    payload["paper_only"] = get_settings().is_paper
+    payload["boundary"] = "Paper advice is not approval, does not unlock Futu, and does not place live orders."
+    return payload
 
 
 @mcp.tool()

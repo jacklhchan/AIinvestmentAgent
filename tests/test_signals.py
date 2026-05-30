@@ -25,6 +25,7 @@ from invest_agent.models import (
 )
 from invest_agent.services import InvestmentService
 from invest_agent.advice_readiness import AdviceReadinessService
+from invest_agent.investor_committee import InvestorFrameworkCommitteeService
 from invest_agent.signal_outcomes import SignalOutcomeEvaluator
 from invest_agent.signals import SignalEngine
 from invest_agent.store import Store
@@ -200,6 +201,7 @@ def test_buy_signal_with_verified_evidence_can_promote_to_pending_proposal(tmp_p
     assert signal.readiness_version
     assert signal.committee_profile_version
 
+    InvestorFrameworkCommitteeService(_settings, store).run_for_signal(signal.id)
     promoted = engine.promote_to_proposal(signal.id)
 
     assert promoted["proposal"].status == ProposalStatus.PENDING
@@ -480,6 +482,10 @@ def test_signal_mcp_tools_surface_proactive_signal_layer(tmp_path, monkeypatch) 
     assert latest["signals"][0]["id"] == signal["id"]
     assert latest["paper_only"] is True
 
+    blocked = mcp_server.promote_signal_to_proposal(signal["id"], approved_by="test")
+    assert "fresh investor committee run required" in blocked["error"]
+
+    mcp_server.run_investor_framework_committee(signal["id"])
     promoted = mcp_server.promote_signal_to_proposal(signal["id"], approved_by="test")
 
     assert promoted["proposal"]["status"] == ProposalStatus.PENDING.value
@@ -500,19 +506,19 @@ def test_mcp_advice_gate_blocks_actionable_english_and_chinese_buy_sell_when_rea
     chinese = mcp_server.ask_advisor("今日我應該買入還是賣出持倉？")
     readiness = mcp_server.get_advice_readiness()
 
-    assert english["recommendation_type"] == "blocked"
-    assert chinese["recommendation_type"] == "blocked"
-    assert english["advice_gate"]["actionable"] is False
-    assert chinese["advice_gate"]["score"] < 75
+    assert english["readiness_ok"] is False
+    assert chinese["readiness_ok"] is False
+    assert english["items"][0]["final_status"] == "blocked"
+    assert chinese["items"][0]["readiness_score"] < 75
     assert readiness["advice_gate"]["actionable"] is False
 
 
 def test_mcp_tool_descriptions_route_buy_sell_to_signal_engine() -> None:
     import invest_agent.mcp_server as mcp_server
 
-    assert "Preferred first tool for portfolio-wide buy/sell signal questions" in (
-        mcp_server.run_paper_signal_engine.__doc__ or ""
+    assert "Single high-level tool for Hermes BUY/SELL questions" in (
+        mcp_server.get_paper_buy_sell_advice.__doc__ or ""
     )
-    assert "For portfolio-wide buy/sell signals, call run_paper_signal_engine first" in (
+    assert "For buy/sell advice, this routes to get_paper_buy_sell_advice" in (
         mcp_server.ask_advisor.__doc__ or ""
     )

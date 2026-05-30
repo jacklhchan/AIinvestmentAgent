@@ -184,6 +184,7 @@ class SignalEngine:
             raise ValueError(f"{reason}; it cannot be promoted until gates pass")
         if signal.suggested_qty <= 0 or not signal.suggested_limit_price:
             raise ValueError("signal has no promotable quantity or limit price")
+        committee = self._require_promotable_committee(signal)
         proposal = self.service.create_proposal(
             ProposalCreate(
                 symbol=signal.symbol,
@@ -205,7 +206,14 @@ class SignalEngine:
             "signal_promotion_requested",
             "signal",
             signal.id,
-            {"proposal_id": proposal.id, "proposal_status": proposal.status.value, "approved_by": request.approved_by},
+            {
+                "proposal_id": proposal.id,
+                "proposal_status": proposal.status.value,
+                "approved_by": request.approved_by,
+                "committee_run_id": committee.id,
+                "committee_adjusted_score": committee.committee_adjusted_score,
+                "committee_final_stance": committee.final_stance,
+            },
         )
         return {"signal": updated, "proposal": proposal}
 
@@ -224,6 +232,25 @@ class SignalEngine:
         if not signal:
             raise ValueError(f"signal not found: {signal_id}")
         return signal
+
+    def _require_promotable_committee(self, signal: Signal):
+        runs = self.store.list_investor_committee_runs(signal_id=signal.id, limit=1)
+        if not runs:
+            raise ValueError("fresh investor committee run required before promotion")
+        committee = runs[0]
+        max_age = timedelta(minutes=max(1, self.settings.paper_advice_committee_freshness_minutes))
+        if utc_now() - committee.created_at > max_age:
+            raise ValueError("fresh investor committee run required before promotion; latest run is stale")
+        if committee.committee_blocked:
+            raise ValueError(f"committee blocked promotion: {', '.join(committee.vetoes) or committee.final_stance}")
+        if committee.final_stance in {"blocked", "research_more", "oppose", "watch"}:
+            raise ValueError(f"committee final stance {committee.final_stance} blocks promotion")
+        threshold = _directional_threshold(self.settings, signal)
+        if committee.committee_adjusted_score < threshold:
+            raise ValueError(
+                f"committee adjusted score {committee.committee_adjusted_score:.1f} below directional threshold {threshold}"
+            )
+        return committee
 
     def _build_signal(
         self,
@@ -716,6 +743,13 @@ def _proposal_side(signal: Signal) -> Side | None:
 
 def _is_promotable_side(side: SignalSide) -> bool:
     return side in {SignalSide.BUY_SIGNAL, SignalSide.ADD_SIGNAL, SignalSide.SELL_SIGNAL, SignalSide.REDUCE_SIGNAL}
+
+
+def _directional_threshold(settings: Settings, signal: Signal) -> int:
+    action = signal.gates.get("blocked_action") or signal.side.value
+    if action in {SignalSide.SELL_SIGNAL.value, SignalSide.REDUCE_SIGNAL.value}:
+        return settings.signal_sell_threshold
+    return settings.signal_buy_threshold
 
 
 def _strength(score: int) -> SignalStrength:

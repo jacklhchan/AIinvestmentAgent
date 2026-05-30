@@ -275,16 +275,13 @@ class InvestorFrameworkCommitteeService:
         if evidence_veto or execution_veto or vetoes:
             final_stance = "blocked"
             actionability_status = "committee_blocked"
-        elif missing:
-            final_stance = "research_more"
-            actionability_status = "research_more"
         elif adjusted < self.settings.signal_watch_threshold:
             final_stance = "research_more"
             actionability_status = "research_more"
         elif adjusted < _directional_threshold(self.settings, signal):
             final_stance = "watch"
             actionability_status = "watch"
-        elif any(vote.stance in {InvestorCommitteeStance.OPPOSE, InvestorCommitteeStance.RESEARCH_MORE} for vote in votes):
+        elif missing or any(vote.stance in {InvestorCommitteeStance.OPPOSE, InvestorCommitteeStance.RESEARCH_MORE} for vote in votes):
             final_stance = "support_with_caution"
             actionability_status = "committee_supported_with_caution"
         else:

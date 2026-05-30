@@ -94,7 +94,7 @@ python -m invest_agent.cli advisor-scheduler-once
 python -m invest_agent.cli advisor-scheduler-loop
 ```
 
-Hermes daily MCP 只暴露 high-level Advisor / Profile / Committee / Signal tools：`run_paper_signal_engine`、`get_latest_paper_signals`、`get_advice_readiness`、`evaluate_signal_outcomes`、`get_signal_outcome_summary`、`get_advisor_profile`、`suggest_advisor_profile_update`、`confirm_advisor_profile_update`、`run_hourly_advisor_pulse`、`run_pre_market_advisor_brief`、`run_post_close_advisor_brief`、`get_latest_advisor_brief`、`run_committee_review`、`list_committee_reviews`、`get_committee_review`。Advisor Orchestrator 會在本機背後讀取 portfolio、news、market regime、proposal context 與 research artifacts；committee tools 只產生 research-only memo / run card，不可建立 proposal、approve 或 execute trades。Hermes 日常不直接看到底層 proposal approval / execution tools。
+Hermes daily MCP 只暴露 high-level Advisor / Profile / Committee / Signal tools：`get_paper_buy_sell_advice`、`run_paper_signal_engine`、`get_latest_paper_signals`、`get_advice_readiness`、`evaluate_signal_outcomes`、`get_signal_outcome_summary`、`run_investor_framework_committee`、`get_latest_investor_committee`、`get_advisor_profile`、`suggest_advisor_profile_update`、`confirm_advisor_profile_update`、`run_hourly_advisor_pulse`、`run_pre_market_advisor_brief`、`run_post_close_advisor_brief`、`get_latest_advisor_brief`、`run_committee_review`、`list_committee_reviews`、`get_committee_review`。Advisor Orchestrator 會在本機背後讀取 portfolio、news、market regime、proposal context 與 research artifacts；committee tools 只產生 research-only memo / run card，不可建立 proposal、approve 或 execute trades。Hermes 日常不直接看到底層 proposal approval / execution tools。
 
 當 Hermes 透過 `run_committee_review`，或 research-admin config 裡的 `ask_advisor` 做 full study / committee 時，系統會先對本機 unknown ticker 做受控 read-only hydration：Finnhub quote / company news、GDELT / Google News fallback、SEC EDGAR filings、SEC companyfacts。這些資料會先寫入本機 store，再凍結成 committee data pack；committee 不會自由瀏覽網頁，也不會把網絡文字直接升級成 proposal / approval。CLI 可用 `committee-review --refresh` 觸發同一條受控 hydration path。
 
@@ -127,6 +127,7 @@ INVEST_AGENT_SIGNAL_WATCH_THRESHOLD=45
 INVEST_AGENT_SIGNAL_MAX_PER_RUN=8
 INVEST_AGENT_SIGNAL_EXPIRY_HOURS=24
 INVEST_AGENT_SIGNAL_DUPLICATE_COOLDOWN_MINUTES=240
+INVEST_AGENT_PAPER_ADVICE_COMMITTEE_FRESHNESS_MINUTES=240
 ```
 
 CLI / REST：
@@ -136,6 +137,7 @@ python -m invest_agent.cli signals-run
 python -m invest_agent.cli signals-latest
 python -m invest_agent.cli signals-evaluate-outcomes --limit 200
 python -m invest_agent.cli advice-readiness
+python -m invest_agent.cli paper-advice
 python -m invest_agent.cli daily-pre-market
 python -m invest_agent.cli daily-post-close
 python -m invest_agent.cli promote-signal --signal-id sig_...
@@ -146,17 +148,20 @@ curl http://127.0.0.1:8788/api/signals/latest
 curl -X POST http://127.0.0.1:8788/api/signals/evaluate-outcomes
 curl http://127.0.0.1:8788/api/signals/outcomes
 curl http://127.0.0.1:8788/api/advice/readiness
+curl -X POST http://127.0.0.1:8788/api/advice/paper -H "Content-Type: application/json" -d '{}'
+curl http://127.0.0.1:8788/api/advice/latest
 curl -X POST http://127.0.0.1:8788/api/signals/sig_.../promote-to-proposal
 ```
 
 Hermes / MCP:
 
+- `get_paper_buy_sell_advice`：Hermes 回答買 / 賣 / 加倉 / 減倉問題時使用的單一高階工具；它會依序跑 signal engine、advice readiness、investor framework committee，再回傳 gated paper advice。
 - `run_paper_signal_engine`：回答「any buy/sell signal」這類問題時先跑 deterministic signal layer，寫入 signal/run-card/audit artifact，但不建立 proposal。
 - `get_latest_paper_signals`：讀取最新 paper signals，適合在 advisor / committee review 前先呈現明確 BUY / SELL / REDUCE / WATCH 狀態。
 - `get_advice_readiness`：讀取 0-100 readiness score；低於 75 時 Hermes 必須說 supporting data 不足，不可把 BUY / SELL 說成 actionable。
 - `evaluate_signal_outcomes`：用本機 price bars 評估 signal outcome，只寫本機 outcome rows，不建立 proposal。
 - `get_signal_outcome_summary`：讀取 by side、score bucket、readiness bucket、blocking reason 的校準摘要。
-- `promote_signal_to_proposal`：只在使用者明確要求後，把 active signal 升級為 `PENDING` paper proposal；仍不會批准或下單。
+- `promote_signal_to_proposal`：只在使用者明確要求後，把 active signal 升級為 `PENDING` paper proposal；必須有 fresh investor framework committee run，且 committee 沒有 veto / blocked / research_more / watch，仍不會批准或下單。
 - `reject_paper_signal`：把 active signal 標記為 rejected，只更新本機 signal state。
 
 安全邊界不變：signal 可以主動、明確、有方向，但不是 approval，不會 unlock Futu，也不會送 live order。升級後的 proposal 仍要走 `InvestmentService`、research evidence gate、thesis/catalyst invariants、policy engine 與人工批准。

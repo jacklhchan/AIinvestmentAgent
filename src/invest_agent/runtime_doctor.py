@@ -94,6 +94,8 @@ class RuntimeDoctorService:
             "investor_framework_profiles",
             "investor_committee_runs",
             "investor_committee_votes",
+            "paper_advice_runs",
+            "paper_advice_items",
             "signal_outcome_rows",
             "signal_runs",
             "signals",

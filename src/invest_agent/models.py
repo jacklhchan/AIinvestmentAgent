@@ -228,6 +228,7 @@ class RunCardType(StrEnum):
     PROPOSAL_DRAFT = "proposal_draft"
     SIGNAL_RUN = "signal_run"
     INVESTOR_COMMITTEE = "investor_committee"
+    PAPER_ADVICE = "paper_advice"
     ADVISOR_QUESTION = "advisor_question"
     ADVISOR_PULSE = "advisor_pulse"
     ADVISOR_BRIEF = "advisor_brief"
@@ -433,6 +434,14 @@ class InvestorCommitteeStance(StrEnum):
     OPPOSE = "oppose"
     RESEARCH_MORE = "research_more"
     VETO = "veto"
+
+
+class PaperAdviceStatus(StrEnum):
+    ACTIONABLE_PAPER = "actionable_paper"
+    SUPPORT_WITH_CAUTION = "support_with_caution"
+    BLOCKED = "blocked"
+    RESEARCH_MORE = "research_more"
+    WATCH = "watch"
 
 
 class OpportunityCategory(StrEnum):
@@ -2546,6 +2555,52 @@ class InvestorCommitteeRun(BaseModel):
     votes: list[InvestorCommitteeVote] = Field(default_factory=list)
     run_card_id: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
+
+
+class PaperAdviceItem(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("padviceitem"))
+    run_id: str
+    signal_id: str | None = None
+    committee_run_id: str | None = None
+    symbol: str | None = None
+    side: SignalSide | None = None
+    readiness_score: float | None = None
+    base_score: int | None = None
+    adjusted_score: float | None = None
+    final_status: PaperAdviceStatus = PaperAdviceStatus.WATCH
+    committee_stance: str = ""
+    committee_blocked: bool = False
+    vetoes: list[str] = Field(default_factory=list)
+    missing_evidence: list[str] = Field(default_factory=list)
+    gates: dict[str, Any] = Field(default_factory=dict)
+    suggested_user_action: str = ""
+    promotable: bool = False
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class PaperAdviceRun(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("padvicerun"))
+    signal_run_id: str | None = None
+    readiness_score: float | None = None
+    readiness_ok: bool = False
+    summary: str = ""
+    items: list[PaperAdviceItem] = Field(default_factory=list)
+    run_card_id: str | None = None
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class PaperAdviceRequest(BaseModel):
+    symbols: list[str] | None = None
+    horizon: SignalHorizon = SignalHorizon.SWING
+    max_signals: int | None = Field(default=None, ge=1, le=50)
+
+    @field_validator("symbols")
+    @classmethod
+    def normalize_paper_advice_symbols(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return [item.strip().upper() for item in value if item and item.strip()]
 
 
 class ProposalDraft(BaseModel):

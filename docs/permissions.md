@@ -31,6 +31,7 @@ Permission classes:
 | `export_event_replay_file` | `research_write` | `execution_forbidden` |
 | `get_advice_readiness` | `read_only` | `execution_forbidden` |
 | `get_advisor_brief` | `research_write` | `execution_forbidden` |
+| `get_paper_buy_sell_advice` | `research_write` | `execution_forbidden` |
 | `get_advisor_profile` | `read_only` | `execution_forbidden` |
 | `get_backtest_import` | `read_only` | `execution_forbidden` |
 | `get_behavior_report` | `read_only` | `execution_forbidden` |

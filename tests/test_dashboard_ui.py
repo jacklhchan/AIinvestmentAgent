@@ -28,6 +28,8 @@ def test_dashboard_is_traditional_chinese_with_data_provenance() -> None:
     assert "執行自治循環" in response.text
     assert "安全自治狀態" in response.text
     assert "產生 Paper Signals" in response.text
+    assert "今日 Paper Advice" in response.text
+    assert "產生 Paper Advice" in response.text
     assert "主動買賣訊號" in response.text
     assert "校準表現" in response.text
     assert "Advice Readiness" in response.text

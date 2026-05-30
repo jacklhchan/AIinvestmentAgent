@@ -33,6 +33,7 @@ from .market_context import MarketContextService
 from .market_regime import MarketRegimeService
 from .options_lens import OptionsLensService
 from .opportunity_radar import OpportunityRadarService
+from .paper_advice import PaperAdviceFlowService
 from .portfolio_studio import PortfolioStudioService
 from .quote_history import QuoteHistoryService
 from .runtime_doctor import RuntimeDoctorService
@@ -75,6 +76,7 @@ from .models import (
     IdeaScreenRunRequest,
     OptionsSnapshotCreate,
     OpportunityRadarRequest,
+    PaperAdviceRequest,
     PeerGroupCreate,
     ProposalCreate,
     ProposalStatus,
@@ -1089,6 +1091,21 @@ def advice_readiness():
     return AdviceReadinessService(get_settings(), get_store()).run()
 
 
+@app.post("/api/advice/paper")
+def paper_advice(request: PaperAdviceRequest | None = None):
+    request = request or PaperAdviceRequest()
+    return PaperAdviceFlowService(get_settings(), get_store(), get_service()).run(
+        request,
+        actor=RunCardActor.API,
+        trigger_source=RunCardTriggerSource.MANUAL,
+    )
+
+
+@app.get("/api/advice/latest")
+def latest_paper_advice():
+    return {"run": PaperAdviceFlowService(get_settings(), get_store(), get_service()).latest()}
+
+
 @app.post("/api/signals/{signal_id}/promote-to-proposal")
 def promote_signal(signal_id: str, request: SignalPromoteRequest | None = None):
     try:
@@ -1794,6 +1811,19 @@ DASHBOARD_HTML = """
     </section>
     <section class="panel">
       <div class="panel-title-row">
+        <h2>今日 Paper Advice</h2>
+        <div class="advisor-actions">
+          <button class="primary" id="paper-advice-run" type="button">產生 Paper Advice</button>
+        </div>
+      </div>
+      <div class="source-strip" id="paper-advice-summary"></div>
+      <table>
+        <thead><tr><th>狀態</th><th>標的 / 分數</th><th>Committee / Readiness</th><th>Veto / 操作</th></tr></thead>
+        <tbody id="paper-advice-items"></tbody>
+      </table>
+    </section>
+    <section class="panel">
+      <div class="panel-title-row">
         <h2>主動買賣訊號</h2>
         <div class="advisor-actions">
           <button class="secondary" id="signals-evaluate" type="button">評估 Outcome</button>
@@ -2131,6 +2161,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       safe_autonomy_cycle: "自治循環",
       proposal_draft: "提案草稿",
       signal_run: "主動訊號",
+      paper_advice: "Paper Advice",
       market_regime: "市場狀態",
       opportunity_radar: "機會雷達",
       future_backtest_import: "Backtest 匯入",
@@ -2905,6 +2936,42 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       `;
     }
 
+    function renderPaperAdvice(payload) {
+      const run = payload?.run || null;
+      const summary = document.querySelector("#paper-advice-summary");
+      const table = document.querySelector("#paper-advice-items");
+      if (!run) {
+        summary.innerHTML = `<div class="source-cell"><div class="label">Paper Advice</div><div class="muted">尚未產生今日 paper advice。</div></div>`;
+        table.innerHTML = `<tr><td colspan="4" class="muted">先產生 Paper Advice，系統會自動跑 signals、readiness、committee。</td></tr>`;
+        return;
+      }
+      const items = run.items || [];
+      summary.innerHTML = `
+        <div class="source-cell">
+          <div class="label">Paper Advice</div>
+          <div>${pill(run.readiness_ok ? "APPROVED" : "RISK_REJECTED", `${Number(run.readiness_score || 0).toFixed(1)}/100`)}</div>
+          <div class="muted">${escapeHtml(run.summary || "已完成 committee-gated advice flow")}</div>
+        </div>
+        <div class="source-cell">
+          <div class="label">Promotion Gate</div>
+          <div>${pill((run.metrics?.promotable_count || 0) ? "APPROVED" : "PENDING", `${run.metrics?.promotable_count || 0} 可升級`)}</div>
+          <div class="muted">items ${escapeHtml(run.metrics?.item_count || items.length)} · veto ${escapeHtml(run.metrics?.veto_count || 0)}</div>
+        </div>
+      `;
+      table.innerHTML = items.map(item => {
+        const promote = item.promotable && item.signal_id
+          ? `<button class="primary" data-promote-signal="${escapeHtml(item.signal_id)}">升級提案</button>`
+          : `<span class="muted">不可升級</span>`;
+        const vetoes = (item.vetoes || []).concat(item.missing_evidence || []).slice(0, 4).join("; ") || "沒有 veto";
+        return `<tr>
+          <td>${pill(item.final_status, item.final_status)}<br><span class="muted">${escapeHtml(item.side || "portfolio")}</span></td>
+          <td><strong>${escapeHtml(item.symbol || "組合")}</strong><br><span class="muted">base ${escapeHtml(item.base_score ?? "n/a")} · adjusted ${item.adjusted_score === null || item.adjusted_score === undefined ? "n/a" : Number(item.adjusted_score).toFixed(1)}</span></td>
+          <td>${pill(item.committee_stance || "not_run", item.committee_stance || "not_run")}<br><span class="muted">readiness ${item.readiness_score === null || item.readiness_score === undefined ? "n/a" : Number(item.readiness_score).toFixed(1)} · committee ${escapeHtml(item.committee_run_id || "n/a")}</span></td>
+          <td><span class="muted">${escapeHtml(vetoes)}</span><br><span class="muted">${escapeHtml(item.suggested_user_action || "")}</span><br><div class="actions">${promote}</div></td>
+        </tr>`;
+      }).join("") || `<tr><td colspan="4" class="muted">今次沒有 BUY/SELL/ADD/REDUCE paper advice。</td></tr>`;
+    }
+
     function renderSignals(payload, readiness, outcomes) {
       renderSignalReadiness(readiness, outcomes);
       renderSignalCalibration(outcomes);
@@ -2917,7 +2984,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         const blockers = signal.gates?.blocking_reasons || [];
         const gateText = blockers.length ? blockers.slice(0, 3).map(escapeHtml).join("; ") : "可送 proposal gate";
         const promote = ["BUY_SIGNAL", "SELL_SIGNAL", "ADD_SIGNAL", "REDUCE_SIGNAL"].includes(signal.side) && signal.status === "active"
-          ? `<button class="primary" data-promote-signal="${escapeHtml(signal.id)}">升級提案</button>`
+          ? `<span class="muted">由 Paper Advice gate 升級</span>`
           : "";
         const reject = signal.status === "active" ? `<button class="danger" data-reject-signal="${escapeHtml(signal.id)}">拒絕</button>` : "";
         const outcomeText = ["1d", "5d", "20d"].map(key => {
@@ -2971,7 +3038,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
     }
 
     async function loadAll() {
-      const [advisorBrief, advisorFullBrief, advisorRecommendations, opportunityRadarRuns, committeeReviews, marketContext, marketRegime, health, portfolio, quotes, proposals, news, auditEvents, futuStatus, futuAccounts, fundamentals, autonomy, runtimeDoctor, signalLatest, signalOutcomes, adviceReadiness, investorCommittee, researchGoals, theses, catalysts, earningsReviews, runCards, behaviorReports, tradeImports, tradeRoundtrips, shadowStrategies, shadowReports, shadowEvents] = await Promise.all([
+      const [advisorBrief, advisorFullBrief, advisorRecommendations, opportunityRadarRuns, committeeReviews, marketContext, marketRegime, health, portfolio, quotes, proposals, news, auditEvents, futuStatus, futuAccounts, fundamentals, autonomy, runtimeDoctor, paperAdvice, signalLatest, signalOutcomes, adviceReadiness, investorCommittee, researchGoals, theses, catalysts, earningsReviews, runCards, behaviorReports, tradeImports, tradeRoundtrips, shadowStrategies, shadowReports, shadowEvents] = await Promise.all([
         api("/api/advisor/brief"),
         api("/api/advisor/briefs/latest"),
         api("/api/advisor/recommendations?limit=12"),
@@ -2990,6 +3057,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         api("/api/fundamentals"),
         api("/api/autonomy/status"),
         api("/api/runtime/doctor"),
+        api("/api/advice/latest"),
         api("/api/signals/latest?limit=12"),
         api("/api/signals/outcomes?limit=200"),
         api("/api/advice/readiness"),
@@ -3023,6 +3091,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       renderMarketContext(marketContext);
       renderSourceStrip(health, portfolio, quotes, futuStatus, futuAccounts);
       renderAutonomy(autonomy, runtimeDoctor);
+      renderPaperAdvice(paperAdvice);
       renderSignals(signalLatest, adviceReadiness, signalOutcomes);
       renderInvestorCommittee(investorCommittee);
       renderResearchGoals(researchGoals);
@@ -3307,6 +3376,22 @@ proposal 需要靠 manual override 才能成立</textarea></div>
     }
     document.querySelector("#signals-run").addEventListener("click", runSignalsFromButton);
     document.querySelector("#signals-panel-run").addEventListener("click", runSignalsFromButton);
+    document.querySelector("#paper-advice-run").addEventListener("click", async event => {
+      event.target.disabled = true;
+      setToast("正在產生 committee-gated paper advice...");
+      try {
+        const result = await api("/api/advice/paper", {
+          method: "POST",
+          body: JSON.stringify({})
+        });
+        setToast(`Paper Advice 完成：${result.metrics.item_count || 0} 項，${result.metrics.promotable_count || 0} 項可升級`);
+        await loadAll();
+      } catch (error) {
+        setToast(error.message);
+      } finally {
+        event.target.disabled = false;
+      }
+    });
     document.querySelector("#signals-evaluate").addEventListener("click", async event => {
       event.target.disabled = true;
       setToast("正在用已匯入 price bars 評估 signal outcome...");

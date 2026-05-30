@@ -14,6 +14,7 @@ mcp_servers:
     supports_parallel_tool_calls: false
     tools:
       include:
+        - get_paper_buy_sell_advice
         - run_paper_signal_engine
         - get_latest_paper_signals
         - get_advice_readiness

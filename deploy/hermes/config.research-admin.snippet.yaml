@@ -89,6 +89,7 @@ mcp_servers:
         - list_shadow_events
         - add_thesis_update_from_research_goal
         - run_paper_signal_engine
+        - get_paper_buy_sell_advice
         - get_latest_paper_signals
         - get_advice_readiness
         - evaluate_signal_outcomes

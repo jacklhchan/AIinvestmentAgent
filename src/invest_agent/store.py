@@ -57,6 +57,8 @@ from .models import (
     OpportunityRadarRun,
     OpportunityRecommendationType,
     PeerGroup,
+    PaperAdviceItem,
+    PaperAdviceRun,
     PortfolioSnapshot,
     PortfolioRiskSnapshot,
     PortfolioTarget,
@@ -125,8 +127,10 @@ class Store:
                 "investor_framework_profiles",
                 "investor_committee_runs",
                 "investor_committee_votes",
+                "paper_advice_runs",
+                "paper_advice_items",
             },
-            label="investor-committee-v1",
+            label="paper-advice-v1",
         )
         with self.connect() as conn:
             conn.executescript(
@@ -712,6 +716,28 @@ class Store:
                     FOREIGN KEY (run_id) REFERENCES investor_committee_runs(id),
                     FOREIGN KEY (signal_id) REFERENCES signals(id)
                 );
+
+                CREATE TABLE IF NOT EXISTS paper_advice_runs (
+                    id TEXT PRIMARY KEY,
+                    signal_run_id TEXT,
+                    readiness_score REAL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS paper_advice_items (
+                    id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    signal_id TEXT,
+                    committee_run_id TEXT,
+                    symbol TEXT,
+                    final_status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    FOREIGN KEY (run_id) REFERENCES paper_advice_runs(id),
+                    FOREIGN KEY (signal_id) REFERENCES signals(id),
+                    FOREIGN KEY (committee_run_id) REFERENCES investor_committee_runs(id)
+                );
                 """
             )
             self._ensure_column(conn, "shadow_rules", "created_at", "TEXT")
@@ -723,7 +749,7 @@ class Store:
                     event_type="sqlite_backup_created",
                     entity_type="database",
                     entity_id=str(self.db_path),
-                    payload={"backup_path": str(schema_backup_path), "label": "investor-committee-v1"},
+                    payload={"backup_path": str(schema_backup_path), "label": "paper-advice-v1"},
                 )
                 conn.execute(
                     """
@@ -2273,6 +2299,80 @@ class Store:
             where=where,
             args=args,
             order_by="framework_key ASC",
+            limit=limit,
+        )
+
+    def create_paper_advice_run(self, item: PaperAdviceRun) -> PaperAdviceRun:
+        run_without_items = item.model_copy(update={"items": []})
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO paper_advice_runs(id, signal_run_id, readiness_score, created_at, payload)
+                VALUES(?, ?, ?, ?, ?)
+                """,
+                (
+                    run_without_items.id,
+                    run_without_items.signal_run_id,
+                    run_without_items.readiness_score,
+                    run_without_items.created_at.isoformat(),
+                    self._dump(run_without_items),
+                ),
+            )
+            for advice_item in item.items:
+                conn.execute(
+                    """
+                    INSERT INTO paper_advice_items(
+                        id, run_id, signal_id, committee_run_id, symbol, final_status, created_at, payload
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        advice_item.id,
+                        advice_item.run_id,
+                        advice_item.signal_id,
+                        advice_item.committee_run_id,
+                        advice_item.symbol,
+                        advice_item.final_status.value,
+                        advice_item.created_at.isoformat(),
+                        self._dump(advice_item),
+                    ),
+                )
+        self.audit(
+            "paper_advice_run_created",
+            "paper_advice_run",
+            item.id,
+            {
+                "signal_run_id": item.signal_run_id,
+                "readiness_score": item.readiness_score,
+                "item_count": len(item.items),
+                "status_counts": item.metrics.get("status_counts", {}),
+            },
+        )
+        return self.get_paper_advice_run(item.id) or item
+
+    def get_paper_advice_run(self, run_id: str) -> PaperAdviceRun | None:
+        run = self._get_payload("paper_advice_runs", PaperAdviceRun, "id", run_id)
+        if not run:
+            return None
+        return run.model_copy(update={"items": self.list_paper_advice_items(run_id=run.id, limit=200)})
+
+    def list_paper_advice_runs(self, *, limit: int = 20) -> list[PaperAdviceRun]:
+        runs = self._list_payloads("paper_advice_runs", PaperAdviceRun, order_by="created_at DESC", limit=limit)
+        return [run.model_copy(update={"items": self.list_paper_advice_items(run_id=run.id, limit=200)}) for run in runs]
+
+    def get_latest_paper_advice_run(self) -> PaperAdviceRun | None:
+        runs = self.list_paper_advice_runs(limit=1)
+        return runs[0] if runs else None
+
+    def list_paper_advice_items(self, *, run_id: str | None = None, limit: int = 100) -> list[PaperAdviceItem]:
+        where = "run_id = ?" if run_id else ""
+        args: tuple[Any, ...] = (run_id,) if run_id else ()
+        return self._list_payloads(
+            "paper_advice_items",
+            PaperAdviceItem,
+            where=where,
+            args=args,
+            order_by="created_at DESC",
             limit=limit,
         )
 
