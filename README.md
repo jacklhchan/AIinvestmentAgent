@@ -141,6 +141,13 @@ curl http://127.0.0.1:8788/api/signals/latest
 curl -X POST http://127.0.0.1:8788/api/signals/sig_.../promote-to-proposal
 ```
 
+Hermes / MCP:
+
+- `run_paper_signal_engine`：回答「any buy/sell signal」這類問題時先跑 deterministic signal layer，寫入 signal/run-card/audit artifact，但不建立 proposal。
+- `get_latest_paper_signals`：讀取最新 paper signals，適合在 advisor / committee review 前先呈現明確 BUY / SELL / REDUCE / WATCH 狀態。
+- `promote_signal_to_proposal`：只在使用者明確要求後，把 active signal 升級為 `PENDING` paper proposal；仍不會批准或下單。
+- `reject_paper_signal`：把 active signal 標記為 rejected，只更新本機 signal state。
+
 安全邊界不變：signal 可以主動、明確、有方向，但不是 approval，不會 unlock Futu，也不會送 live order。升級後的 proposal 仍要走 `InvestmentService`、research evidence gate、thesis/catalyst invariants、policy engine 與人工批准。
 
 ## Accounting + IPS Foundation

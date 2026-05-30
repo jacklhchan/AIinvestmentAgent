@@ -45,6 +45,7 @@ Permission classes:
 | `get_idea_candidate` | `read_only` | `execution_forbidden` |
 | `get_latest_advisor_brief` | `read_only` | `execution_forbidden` |
 | `get_latest_daily_brief` | `read_only` | `execution_forbidden` |
+| `get_latest_paper_signals` | `read_only` | `execution_forbidden` |
 | `get_market_context` | `read_only` | `execution_forbidden` |
 | `get_market_regime` | `read_only` | `execution_forbidden` |
 | `get_news_digest` | `read_only` | `execution_forbidden` |
@@ -90,11 +91,13 @@ Permission classes:
 | `list_shadow_strategies` | `read_only` | `execution_forbidden` |
 | `list_theses` | `read_only` | `execution_forbidden` |
 | `list_trade_roundtrips` | `read_only` | `execution_forbidden` |
+| `promote_signal_to_proposal` | `proposal_write` | `execution_forbidden` |
 | `refresh_futu_readonly_snapshot` | `research_write` | `execution_forbidden` |
 | `refresh_market_context_news` | `research_write` | `execution_forbidden` |
 | `refresh_market_news` | `research_write` | `execution_forbidden` |
 | `refresh_primary_source_filings` | `research_write` | `execution_forbidden` |
 | `refresh_sec_company_facts` | `research_write` | `execution_forbidden` |
+| `reject_paper_signal` | `research_write` | `execution_forbidden` |
 | `reject_trade_proposal` | `approval_write` | `execution_forbidden` |
 | `replay_event_file` | `proposal_write` | `execution_forbidden` |
 | `run_committee_review` | `research_write` | `execution_forbidden` |
@@ -102,6 +105,7 @@ Permission classes:
 | `run_earnings_preview` | `research_write` | `execution_forbidden` |
 | `run_earnings_review` | `research_write` | `execution_forbidden` |
 | `run_hourly_advisor_pulse` | `research_write` | `execution_forbidden` |
+| `run_paper_signal_engine` | `research_write` | `execution_forbidden` |
 | `run_post_close_advisor_brief` | `research_write` | `execution_forbidden` |
 | `run_pre_market_advisor_brief` | `research_write` | `execution_forbidden` |
 | `run_safe_autonomy_cycle` | `proposal_write` | `execution_forbidden` |

@@ -302,3 +302,27 @@ def test_signal_api_routes_share_store_layer(tmp_path, monkeypatch) -> None:
     assert response.json()["signals"][0]["side"] == SignalSide.BUY_SIGNAL.value
     assert latest.status_code == 200
     assert latest.json()["signals"][0]["symbol"] == "GOOGL"
+
+
+def test_signal_mcp_tools_surface_proactive_signal_layer(tmp_path, monkeypatch) -> None:
+    import invest_agent.mcp_server as mcp_server
+
+    _engine, store, settings = make_signal_engine(tmp_path)
+    add_positive_context(store)
+    service = InvestmentService(settings, store)
+    monkeypatch.setattr(mcp_server, "get_settings", lambda: settings)
+    monkeypatch.setattr(mcp_server, "get_store", lambda: store)
+    monkeypatch.setattr(mcp_server, "get_service", lambda: service)
+
+    result = mcp_server.run_paper_signal_engine(symbols=["GOOGL"], max_signals=3)
+    signal = result["signals"][0]
+    latest = mcp_server.get_latest_paper_signals(limit=3)
+
+    assert signal["side"] == SignalSide.BUY_SIGNAL.value
+    assert latest["signals"][0]["id"] == signal["id"]
+    assert latest["paper_only"] is True
+
+    promoted = mcp_server.promote_signal_to_proposal(signal["id"], approved_by="test")
+
+    assert promoted["proposal"]["status"] == ProposalStatus.PENDING.value
+    assert promoted["signal"]["status"] == "promoted"

@@ -61,6 +61,11 @@ from .models import (
     RunCardTriggerSource,
     RunCardType,
     Side,
+    SignalHorizon,
+    SignalPromoteRequest,
+    SignalRejectRequest,
+    SignalRunRequest,
+    SignalStatus,
     CreatedBy,
     CreatedVia,
     ThesisActionBias,
@@ -84,6 +89,7 @@ from .research_goals import ResearchGoalService
 from .run_cards import RunCardService
 from .sec_companyfacts import SecCompanyFactsIngestor
 from .sec_edgar import SecEdgarIngestor
+from .signals import SignalEngine
 from .thesis_tracker import ThesisTrackerService
 
 mcp = FastMCP("AI Investment Agent Control Plane")
@@ -92,6 +98,8 @@ mcp = FastMCP("AI Investment Agent Control Plane")
 def _json(model):
     if isinstance(model, list):
         return [_json(item) for item in model]
+    if isinstance(model, dict):
+        return {key: _json(value) for key, value in model.items()}
     if hasattr(model, "model_dump"):
         return model.model_dump(mode="json")
     return model
@@ -1112,6 +1120,72 @@ def draft_trade_proposals_from_watchlist(
             create_proposals=create_proposals,
         )
     )
+
+
+@mcp.tool()
+def run_paper_signal_engine(
+    symbols: list[str] | None = None,
+    horizon: Literal["intraday", "swing", "position", "long_term"] = "swing",
+    max_signals: int | None = None,
+) -> dict:
+    """Run deterministic paper-only BUY/SELL/REDUCE/WATCH signals. This writes signal artifacts only; it does not approve or execute trades."""
+    result = SignalEngine(get_settings(), get_store(), get_service()).run(
+        SignalRunRequest(
+            symbols=symbols,
+            horizon=SignalHorizon(horizon),
+            max_signals=max_signals,
+        ),
+        actor=RunCardActor.MCP,
+        trigger_source=RunCardTriggerSource.MANUAL,
+    )
+    return _json(result)
+
+
+@mcp.tool()
+def get_latest_paper_signals(
+    limit: int = 12,
+    symbol: str | None = None,
+    status: Literal["active", "expired", "promoted", "rejected", "invalidated"] | None = None,
+) -> dict:
+    """Return latest deterministic paper signals. Prefer this for buy/sell signal questions before research-only advisor tools."""
+    store = get_store()
+    parsed_status = SignalStatus(status) if status else None
+    return _json(
+        {
+            "run": store.get_latest_signal_run(),
+            "signals": store.list_signals(status=parsed_status, symbol=symbol, limit=limit),
+            "paper_only": get_settings().is_paper,
+            "boundary": "Signals are not approvals, do not unlock Futu, and do not place live orders.",
+        }
+    )
+
+
+@mcp.tool()
+def promote_signal_to_proposal(signal_id: str, approved_by: str = "hermes") -> dict:
+    """Promote one active paper signal into a PENDING paper proposal after explicit user request. It does not approve or execute trades."""
+    try:
+        return _json(
+            SignalEngine(get_settings(), get_store(), get_service()).promote_to_proposal(
+                signal_id,
+                SignalPromoteRequest(approved_by=approved_by),
+            )
+        )
+    except ValueError as exc:
+        return {"error": str(exc), "signal_id": signal_id}
+
+
+@mcp.tool()
+def reject_paper_signal(signal_id: str, reason: str = "Rejected from Hermes") -> dict:
+    """Reject one active paper signal. This only updates local signal state and never touches broker orders."""
+    try:
+        return _json(
+            SignalEngine(get_settings(), get_store(), get_service()).reject_signal(
+                signal_id,
+                SignalRejectRequest(reason=reason),
+            )
+        )
+    except ValueError as exc:
+        return {"error": str(exc), "signal_id": signal_id}
 
 
 @mcp.tool()

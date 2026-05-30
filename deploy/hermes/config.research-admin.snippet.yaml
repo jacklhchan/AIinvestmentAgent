@@ -88,6 +88,9 @@ mcp_servers:
         - get_shadow_report
         - list_shadow_events
         - add_thesis_update_from_research_goal
+        - run_paper_signal_engine
+        - get_latest_paper_signals
+        - reject_paper_signal
         - export_event_replay_file
         - replay_event_file
       resources: false
