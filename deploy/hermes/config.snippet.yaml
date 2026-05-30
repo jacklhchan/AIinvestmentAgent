@@ -14,6 +14,8 @@ mcp_servers:
     supports_parallel_tool_calls: false
     tools:
       include:
+        - run_paper_signal_engine
+        - get_latest_paper_signals
         - ask_advisor
         - get_advisor_profile
         - suggest_advisor_profile_update
@@ -22,8 +24,6 @@ mcp_servers:
         - run_pre_market_advisor_brief
         - run_post_close_advisor_brief
         - get_latest_advisor_brief
-        - run_paper_signal_engine
-        - get_latest_paper_signals
         - run_committee_review
         - list_committee_reviews
         - get_committee_review

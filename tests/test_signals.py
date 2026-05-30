@@ -326,3 +326,14 @@ def test_signal_mcp_tools_surface_proactive_signal_layer(tmp_path, monkeypatch) 
 
     assert promoted["proposal"]["status"] == ProposalStatus.PENDING.value
     assert promoted["signal"]["status"] == "promoted"
+
+
+def test_mcp_tool_descriptions_route_buy_sell_to_signal_engine() -> None:
+    import invest_agent.mcp_server as mcp_server
+
+    assert "Preferred first tool for portfolio-wide buy/sell signal questions" in (
+        mcp_server.run_paper_signal_engine.__doc__ or ""
+    )
+    assert "For portfolio-wide buy/sell signals, call run_paper_signal_engine first" in (
+        mcp_server.ask_advisor.__doc__ or ""
+    )

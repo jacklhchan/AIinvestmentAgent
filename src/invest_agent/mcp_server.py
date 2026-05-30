@@ -135,7 +135,7 @@ def get_advisor_brief(run_light_analysis: bool = False, max_items: int = 8) -> d
 
 @mcp.tool()
 def ask_advisor(question: str, symbol: str | None = None, style: str = "concise") -> dict:
-    """Preferred first tool for buy/sell/hold/watch questions. Returns a concise research-only decision card."""
+    """Single-symbol research-only advisor card. For portfolio-wide buy/sell signals, call run_paper_signal_engine first."""
     return _json(
         AdvisorOrchestrator(get_store(), settings=get_settings()).answer_user_question(
             AdvisorQuestionRequest(question=question, symbol=symbol, style=style),
@@ -1128,7 +1128,7 @@ def run_paper_signal_engine(
     horizon: Literal["intraday", "swing", "position", "long_term"] = "swing",
     max_signals: int | None = None,
 ) -> dict:
-    """Run deterministic paper-only BUY/SELL/REDUCE/WATCH signals. This writes signal artifacts only; it does not approve or execute trades."""
+    """Preferred first tool for portfolio-wide buy/sell signal questions. Runs deterministic paper-only BUY/SELL/REDUCE/WATCH signals; it does not approve or execute trades."""
     result = SignalEngine(get_settings(), get_store(), get_service()).run(
         SignalRunRequest(
             symbols=symbols,
