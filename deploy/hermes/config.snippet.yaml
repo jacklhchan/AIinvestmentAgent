@@ -16,7 +16,6 @@ mcp_servers:
       include:
         - run_paper_signal_engine
         - get_latest_paper_signals
-        - ask_advisor
         - get_advisor_profile
         - suggest_advisor_profile_update
         - confirm_advisor_profile_update

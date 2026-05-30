@@ -80,7 +80,6 @@ HERMES_CONFIG = REPO_ROOT / "deploy" / "hermes" / "config.snippet.yaml"
 HERMES_DAILY_CONFIG = REPO_ROOT / "deploy" / "hermes" / "config.daily.snippet.yaml"
 HERMES_RESEARCH_ADMIN_CONFIG = REPO_ROOT / "deploy" / "hermes" / "config.research-admin.snippet.yaml"
 HERMES_DAILY_ADVISOR_TOOLS = {
-    "ask_advisor",
     "get_advisor_profile",
     "suggest_advisor_profile_update",
     "confirm_advisor_profile_update",
