@@ -217,7 +217,7 @@ Hermes MCP exposes `get_market_context`、`get_market_regime` and `refresh_marke
 
 ## Futu OpenD Read-Only
 
-從你目前的 OpenD 畫面來看，API port 是 `11111`，已 connected，交易仍 locked。這個 MVP 只使用 read-only API：
+建議使用 macOS 上已登入的 Futu OpenD GUI client。這個 repo 不需要 Docker 版 OpenD，也不會保存 OpenD XML / account password 這類本機登入設定。從你目前的 OpenD 畫面來看，API port 是 `11111`，交易仍 locked。這個 MVP 只使用 read-only API：
 
 ```bash
 FUTU_READ_ENABLED=true

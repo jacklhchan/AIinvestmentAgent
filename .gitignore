@@ -9,5 +9,6 @@ __pycache__/
 data/*.db
 data/*.db-*
 data/backups/
+deploy/futu-opend-docker/
 logs/
 artifacts/
