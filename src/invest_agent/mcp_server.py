@@ -4,6 +4,7 @@ from typing import Literal
 
 from mcp.server.fastmcp import FastMCP
 
+from .advice_readiness import AdviceReadinessService
 from .advisor import AdvisorService
 from .advisor_orchestrator import AdvisorOrchestrator
 from .autonomy import SafeAutonomyRunner, autonomy_status
@@ -89,6 +90,7 @@ from .research_goals import ResearchGoalService
 from .run_cards import RunCardService
 from .sec_companyfacts import SecCompanyFactsIngestor
 from .sec_edgar import SecEdgarIngestor
+from .signal_outcomes import SignalOutcomeEvaluator
 from .signals import SignalEngine
 from .thesis_tracker import ThesisTrackerService
 
@@ -103,6 +105,35 @@ def _json(model):
     if hasattr(model, "model_dump"):
         return model.model_dump(mode="json")
     return model
+
+
+def _advice_gate(readiness: dict, threshold: float = 75.0) -> dict:
+    failed = [
+        {"check": name, "status": check["status"], "message": check["message"]}
+        for name, check in readiness.get("checks", {}).items()
+        if check.get("status") != "ok"
+    ]
+    score = float(readiness.get("score") or 0.0)
+    actionable = score >= threshold and not failed
+    return {
+        "actionable": actionable,
+        "threshold": threshold,
+        "score": score,
+        "message": "supporting data is sufficient for actionable paper-signal discussion"
+        if actionable
+        else "supporting data is insufficient; do not present BUY/SELL as actionable",
+        "failed_checks": failed,
+    }
+
+
+def _mcp_readiness_payload() -> dict:
+    readiness = AdviceReadinessService(get_settings(), get_store()).run()
+    return {"readiness": readiness, "advice_gate": _advice_gate(readiness)}
+
+
+def _question_asks_buy_sell(question: str) -> bool:
+    text = question.lower()
+    return any(token in text for token in ("buy", "sell", "trim", "reduce", "add", "買", "賣", "沽", "減倉", "加倉"))
 
 
 @mcp.tool()
@@ -136,6 +167,22 @@ def get_advisor_brief(run_light_analysis: bool = False, max_items: int = 8) -> d
 @mcp.tool()
 def ask_advisor(question: str, symbol: str | None = None, style: str = "concise") -> dict:
     """Single-symbol research-only advisor card. For portfolio-wide buy/sell signals, call run_paper_signal_engine first."""
+    if _question_asks_buy_sell(question):
+        readiness = AdviceReadinessService(get_settings(), get_store()).run()
+        gate = _advice_gate(readiness)
+        if not gate["actionable"]:
+            return {
+                "recommendation": "blocked",
+                "recommendation_type": "blocked",
+                "conclusion": "Supporting data is insufficient for actionable BUY/SELL guidance.",
+                "summary": "Hermes can discuss research gaps, but must not present BUY/SELL as actionable until advice readiness is at least 75.",
+                "suggested_user_action": "Refresh quotes/news/fundamentals/quote-history, evaluate signal outcomes, then rerun advice readiness.",
+                "reasons": [item["message"] for item in gate["failed_checks"][:5]],
+                "risks": ["Acting on BUY/SELL language below readiness threshold can turn stale or incomplete data into false conviction."],
+                "advice_gate": gate,
+                "readiness": readiness,
+                "paper_only": get_settings().is_paper,
+            }
     return _json(
         AdvisorOrchestrator(get_store(), settings=get_settings()).answer_user_question(
             AdvisorQuestionRequest(question=question, symbol=symbol, style=style),
@@ -1138,7 +1185,21 @@ def run_paper_signal_engine(
         actor=RunCardActor.MCP,
         trigger_source=RunCardTriggerSource.MANUAL,
     )
-    return _json(result)
+    payload = _json(result)
+    readiness = AdviceReadinessService(get_settings(), get_store()).run()
+    gate = _advice_gate(readiness)
+    for signal in payload.get("signals", []):
+        signal["actionable"] = bool(gate["actionable"]) and signal.get("side") in {
+            "BUY_SIGNAL",
+            "SELL_SIGNAL",
+            "ADD_SIGNAL",
+            "REDUCE_SIGNAL",
+        }
+        if not gate["actionable"]:
+            signal["actionability_reason"] = gate["message"]
+    payload["advice_gate"] = gate
+    payload["readiness"] = readiness
+    return payload
 
 
 @mcp.tool()
@@ -1150,7 +1211,7 @@ def get_latest_paper_signals(
     """Return latest deterministic paper signals. Prefer this for buy/sell signal questions before research-only advisor tools."""
     store = get_store()
     parsed_status = SignalStatus(status) if status else None
-    return _json(
+    payload = _json(
         {
             "run": store.get_latest_signal_run(),
             "signals": store.list_signals(status=parsed_status, symbol=symbol, limit=limit),
@@ -1158,6 +1219,39 @@ def get_latest_paper_signals(
             "boundary": "Signals are not approvals, do not unlock Futu, and do not place live orders.",
         }
     )
+    readiness_payload = _mcp_readiness_payload()
+    readiness = readiness_payload["readiness"]
+    gate = readiness_payload["advice_gate"]
+    for signal in payload.get("signals", []):
+        signal["actionable"] = bool(gate["actionable"]) and signal.get("side") in {
+            "BUY_SIGNAL",
+            "SELL_SIGNAL",
+            "ADD_SIGNAL",
+            "REDUCE_SIGNAL",
+        }
+        if not gate["actionable"]:
+            signal["actionability_reason"] = gate["message"]
+    payload["advice_gate"] = gate
+    payload["readiness"] = readiness
+    return payload
+
+
+@mcp.tool()
+def get_advice_readiness() -> dict:
+    """Return advice readiness. If score is below 75, Hermes must not present BUY/SELL as actionable."""
+    return _mcp_readiness_payload()
+
+
+@mcp.tool()
+def evaluate_signal_outcomes(limit: int = 200) -> dict:
+    """Evaluate saved paper signal outcomes from local price bars. Writes local outcome rows only; no proposal or execution."""
+    return _json(SignalOutcomeEvaluator(get_settings(), get_store()).evaluate(limit=limit))
+
+
+@mcp.tool()
+def get_signal_outcome_summary(limit: int = 200) -> dict:
+    """Return calibrated signal outcome summary grouped by window, side, score, readiness, and blockers."""
+    return _json(SignalOutcomeEvaluator(get_settings(), get_store()).summary(limit=limit))
 
 
 @mcp.tool()

@@ -8,7 +8,7 @@ agent:
 
 mcp_servers:
   invest_agent:
-    command: "/Users/apple/Documents/AIinvestmentAgent/.venv/bin/python"
+    command: "${INVEST_AGENT_REPO_ROOT}/.venv/bin/python"
     args: ["-m", "invest_agent.mcp_server"]
     timeout: 30
     supports_parallel_tool_calls: false
@@ -16,6 +16,9 @@ mcp_servers:
       include:
         - run_paper_signal_engine
         - get_latest_paper_signals
+        - get_advice_readiness
+        - evaluate_signal_outcomes
+        - get_signal_outcome_summary
         - get_advisor_profile
         - suggest_advisor_profile_update
         - confirm_advisor_profile_update

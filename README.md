@@ -33,7 +33,7 @@
 ## 快速啟動
 
 ```bash
-cd /Users/apple/Documents/AIinvestmentAgent
+cd "$INVEST_AGENT_REPO_ROOT"
 /opt/homebrew/bin/python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e ".[dev,futu]"
@@ -94,9 +94,9 @@ python -m invest_agent.cli advisor-scheduler-once
 python -m invest_agent.cli advisor-scheduler-loop
 ```
 
-Hermes daily MCP 只暴露 high-level Advisor / Profile / Committee tools：`ask_advisor`、`get_advisor_profile`、`suggest_advisor_profile_update`、`confirm_advisor_profile_update`、`run_hourly_advisor_pulse`、`run_pre_market_advisor_brief`、`run_post_close_advisor_brief`、`get_latest_advisor_brief`、`run_committee_review`、`list_committee_reviews`、`get_committee_review`。Advisor Orchestrator 會在本機背後讀取 portfolio、news、market regime、proposal context 與 research artifacts；committee tools 只產生 research-only memo / run card，不可建立 proposal、approve 或 execute trades。Hermes 日常不直接看到底層 tools。
+Hermes daily MCP 只暴露 high-level Advisor / Profile / Committee / Signal tools：`run_paper_signal_engine`、`get_latest_paper_signals`、`get_advice_readiness`、`evaluate_signal_outcomes`、`get_signal_outcome_summary`、`get_advisor_profile`、`suggest_advisor_profile_update`、`confirm_advisor_profile_update`、`run_hourly_advisor_pulse`、`run_pre_market_advisor_brief`、`run_post_close_advisor_brief`、`get_latest_advisor_brief`、`run_committee_review`、`list_committee_reviews`、`get_committee_review`。Advisor Orchestrator 會在本機背後讀取 portfolio、news、market regime、proposal context 與 research artifacts；committee tools 只產生 research-only memo / run card，不可建立 proposal、approve 或 execute trades。Hermes 日常不直接看到底層 proposal approval / execution tools。
 
-當 Hermes 透過 `ask_advisor` 或 `run_committee_review` 做 full study / committee 時，系統會先對本機 unknown ticker 做受控 read-only hydration：Finnhub quote / company news、GDELT / Google News fallback、SEC EDGAR filings、SEC companyfacts。這些資料會先寫入本機 store，再凍結成 committee data pack；committee 不會自由瀏覽網頁，也不會把網絡文字直接升級成 proposal / approval。CLI 可用 `committee-review --refresh` 觸發同一條受控 hydration path。
+當 Hermes 透過 `run_committee_review`，或 research-admin config 裡的 `ask_advisor` 做 full study / committee 時，系統會先對本機 unknown ticker 做受控 read-only hydration：Finnhub quote / company news、GDELT / Google News fallback、SEC EDGAR filings、SEC companyfacts。這些資料會先寫入本機 store，再凍結成 committee data pack；committee 不會自由瀏覽網頁，也不會把網絡文字直接升級成 proposal / approval。CLI 可用 `committee-review --refresh` 觸發同一條受控 hydration path。
 
 Hermes snippets 分開兩種用途：`deploy/hermes/config.daily.snippet.yaml` 只包含上述 daily Advisor/Profile/Committee tools；`deploy/hermes/config.research-admin.snippet.yaml` 給本機研究/admin 工作使用，仍不包含 proposal approval / create / draft tools。舊的 `deploy/hermes/config.snippet.yaml` 保留為 daily-compatible alias。
 
@@ -136,7 +136,10 @@ python -m invest_agent.cli signals-run
 python -m invest_agent.cli signals-latest
 python -m invest_agent.cli signals-evaluate-outcomes --limit 200
 python -m invest_agent.cli advice-readiness
+python -m invest_agent.cli daily-pre-market
+python -m invest_agent.cli daily-post-close
 python -m invest_agent.cli promote-signal --signal-id sig_...
+python -m invest_agent.cli hermes-config-generate --kind daily --path ~/.hermes/invest-agent.daily.yaml
 
 curl -X POST http://127.0.0.1:8788/api/signals/run -H "Content-Type: application/json" -d '{}'
 curl http://127.0.0.1:8788/api/signals/latest
@@ -150,12 +153,17 @@ Hermes / MCP:
 
 - `run_paper_signal_engine`：回答「any buy/sell signal」這類問題時先跑 deterministic signal layer，寫入 signal/run-card/audit artifact，但不建立 proposal。
 - `get_latest_paper_signals`：讀取最新 paper signals，適合在 advisor / committee review 前先呈現明確 BUY / SELL / REDUCE / WATCH 狀態。
+- `get_advice_readiness`：讀取 0-100 readiness score；低於 75 時 Hermes 必須說 supporting data 不足，不可把 BUY / SELL 說成 actionable。
+- `evaluate_signal_outcomes`：用本機 price bars 評估 signal outcome，只寫本機 outcome rows，不建立 proposal。
+- `get_signal_outcome_summary`：讀取 by side、score bucket、readiness bucket、blocking reason 的校準摘要。
 - `promote_signal_to_proposal`：只在使用者明確要求後，把 active signal 升級為 `PENDING` paper proposal；仍不會批准或下單。
 - `reject_paper_signal`：把 active signal 標記為 rejected，只更新本機 signal state。
 
 安全邊界不變：signal 可以主動、明確、有方向，但不是 approval，不會 unlock Futu，也不會送 live order。升級後的 proposal 仍要走 `InvestmentService`、research evidence gate、thesis/catalyst invariants、policy engine 與人工批准。
 
-Outcome evaluator 會用已匯入的 `price_bars` 更新每個 signal 的 1d / 5d / 20d `outcome_windows`，包括 signal return、benchmark excess return、drawdown 與方向是否命中。Advice readiness 會把 quote freshness、account snapshot、fundamentals coverage、verified evidence、news freshness、latest signal run、committee review 與 outcome validation 合成 0-100 分，Dashboard 和 Runtime Doctor 都會顯示這個分數；沒有 price bars 或 outcome 尚未評估時會明確顯示為資料覆蓋不足，而不是看起來像 app 壞掉。
+Outcome evaluator 會用已匯入的 `price_bars` 更新每個 signal 的 1d / 5d / 20d trading-day `outcome_windows`：entry bar 是 signal time 之後第一根交易 bar，target 是 entry 後第 N 根交易 bar，calendar due date 只作顯示。結果同時寫入 normalized `signal_outcome_rows`，包含 raw / directional return、raw / directional excess return、方向命中、bullish drawdown/favorable excursion、bearish adverse upside/favorable downside。Dashboard calibration 會按 side、score bucket、readiness bucket、blocking reason 顯示 sample size、hit rate、平均 directional return / excess return、最差 adverse excursion。
+
+Advice readiness 會把 quote freshness、account snapshot、fundamentals coverage、verified evidence、news freshness、latest signal run、committee review 與 outcome validation 合成 0-100 分，Dashboard 和 Runtime Doctor 都會顯示這個分數；沒有 price bars 或 outcome 尚未評估時會明確顯示為資料覆蓋不足，而不是看起來像 app 壞掉。
 
 ## Accounting + IPS Foundation
 
@@ -469,7 +477,7 @@ REST API：
 ```bash
 curl -X POST http://127.0.0.1:8788/api/trade-journal/import \
   -H "Content-Type: application/json" \
-  -d '{"source":"futu_csv","path":"/Users/apple/Downloads/futu_trades.csv"}'
+  -d '{"source":"futu_csv","path":"~/Downloads/futu_trades.csv"}'
 curl -X POST http://127.0.0.1:8788/api/behavior-reports/run \
   -H "Content-Type: application/json" \
   -d '{"period_start":"2026-01-01T00:00:00Z","period_end":"2026-05-26T23:59:59Z"}'
@@ -643,13 +651,17 @@ agent:
 
 mcp_servers:
   invest_agent:
-    command: "/Users/apple/Documents/AIinvestmentAgent/.venv/bin/python"
+    command: "${INVEST_AGENT_REPO_ROOT}/.venv/bin/python"
     args: ["-m", "invest_agent.mcp_server"]
     timeout: 30
     supports_parallel_tool_calls: false
     tools:
       include:
-        - ask_advisor
+        - run_paper_signal_engine
+        - get_latest_paper_signals
+        - get_advice_readiness
+        - evaluate_signal_outcomes
+        - get_signal_outcome_summary
         - get_advisor_profile
         - suggest_advisor_profile_update
         - confirm_advisor_profile_update
@@ -665,6 +677,13 @@ mcp_servers:
 ```
 
 如果 `hermes model` 顯示你的帳戶有更新的 Codex model，可用互動選單覆蓋 `model.default`，MCP 設定不用改。
+
+建議用 generator 產生本機絕對路徑版本，避免把 repo path 寫死在 config：
+
+```bash
+export INVEST_AGENT_REPO_ROOT="$(pwd)"
+python -m invest_agent.cli hermes-config-generate --kind daily --path ~/.hermes/invest-agent.daily.yaml
+```
 
 在 Hermes 裡可以問：
 

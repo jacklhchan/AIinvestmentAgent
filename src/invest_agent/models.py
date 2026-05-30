@@ -2404,6 +2404,11 @@ class Signal(BaseModel):
     suggested_limit_price: float | None = None
     suggested_notional_usd: float = 0.0
     outcome_windows: dict[str, Any] = Field(default_factory=dict)
+    signal_engine_version: str = ""
+    feature_weight_version: str = ""
+    threshold_profile: dict[str, Any] = Field(default_factory=dict)
+    readiness_version: str = ""
+    committee_profile_version: str = ""
     expires_at: datetime
     created_at: datetime = Field(default_factory=utc_now)
     rejected_at: datetime | None = None
@@ -2460,6 +2465,29 @@ class SignalRejectRequest(BaseModel):
 
 class SignalPromoteRequest(BaseModel):
     approved_by: str = "local-user"
+
+
+class SignalOutcomeRow(BaseModel):
+    signal_id: str
+    side: SignalSide
+    blocked_action: str | None = None
+    window: str
+    window_type: str = "trading_days"
+    entry_bar_ts: datetime
+    target_bar_ts: datetime
+    raw_return_pct: float
+    directional_return_pct: float
+    raw_excess_return_pct: float | None = None
+    directional_excess_return_pct: float | None = None
+    hit_direction: bool
+    evaluated_at: datetime = Field(default_factory=utc_now)
+    max_drawdown_pct: float | None = None
+    max_favorable_excursion_pct: float | None = None
+    max_adverse_upside_pct: float | None = None
+    max_favorable_downside_pct: float | None = None
+    score: int | None = None
+    readiness_score: float | None = None
+    blocking_reasons: list[str] = Field(default_factory=list)
 
 
 class ProposalDraft(BaseModel):

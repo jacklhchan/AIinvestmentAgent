@@ -1779,6 +1779,8 @@ DASHBOARD_HTML = """
         <thead><tr><th>訊號</th><th>標的 / 分數</th><th>Feature Breakdown</th><th>Gate / 操作</th></tr></thead>
         <tbody id="signals"></tbody>
       </table>
+      <h3>校準表現</h3>
+      <div class="source-strip" id="signal-calibration"></div>
     </section>
     <section class="panel">
       <h2>研究目標與證據帳本</h2>
@@ -1878,7 +1880,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       <div class="panel">
         <h2>匯入交易日誌</h2>
         <form id="trade-import-form">
-          <div class="field"><label for="trade_import_path">CSV 路徑</label><input id="trade_import_path" name="path" placeholder="/Users/apple/Downloads/futu_trades.csv" required /></div>
+          <div class="field"><label for="trade_import_path">CSV 路徑</label><input id="trade_import_path" name="path" placeholder="~/Downloads/futu_trades.csv" required /></div>
           <div class="field"><label for="trade_import_source">來源格式</label><select id="trade_import_source" name="source"><option value="futu_csv">Futu CSV</option><option value="generic_csv">Generic CSV</option></select></div>
           <button class="primary" type="submit">匯入交易紀錄</button>
         </form>
@@ -2820,8 +2822,27 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       `;
     }
 
+    function renderSignalCalibration(outcomes) {
+      const groups = [
+        ["Side", outcomes?.by_side || {}],
+        ["Score", outcomes?.by_score_bucket || {}],
+        ["Readiness", outcomes?.by_readiness_bucket || {}],
+        ["Blockers", outcomes?.by_blocking_reason || {}]
+      ];
+      document.querySelector("#signal-calibration").innerHTML = groups.map(([label, data]) => {
+        const top = Object.entries(data).slice(0, 4).map(([bucket, metrics]) =>
+          `${escapeHtml(bucket)} n=${escapeHtml(metrics.sample_size || 0)} hit=${Math.round((metrics.hit_rate || 0) * 100)}% dir=${Number(metrics.avg_directional_return_pct || 0).toFixed(2)}% excess=${metrics.avg_directional_excess_return_pct === null || metrics.avg_directional_excess_return_pct === undefined ? "n/a" : Number(metrics.avg_directional_excess_return_pct).toFixed(2) + "%"} adverse=${metrics.worst_adverse_excursion_pct === null || metrics.worst_adverse_excursion_pct === undefined ? "n/a" : Number(metrics.worst_adverse_excursion_pct).toFixed(2) + "%"}`
+        ).join("<br>");
+        return `<div class="source-cell">
+          <div class="label">${escapeHtml(label)}</div>
+          <div class="muted">${top || "未有 outcome rows"}</div>
+        </div>`;
+      }).join("");
+    }
+
     function renderSignals(payload, readiness, outcomes) {
       renderSignalReadiness(readiness, outcomes);
+      renderSignalCalibration(outcomes);
       const signals = payload?.signals || [];
       document.querySelector("#signals").innerHTML = signals.slice(0, 12).map(signal => {
         const features = signal.feature_breakdown || {};
@@ -2836,8 +2857,8 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         const reject = signal.status === "active" ? `<button class="danger" data-reject-signal="${escapeHtml(signal.id)}">拒絕</button>` : "";
         const outcomeText = ["1d", "5d", "20d"].map(key => {
           const window = signal.outcome_windows?.[key] || {};
-          const status = window.status || (window.return_pct === null || window.return_pct === undefined ? "pending" : "ok");
-          return status === "ok" ? `${key} ${Number(window.return_pct || 0).toFixed(2)}%` : `${key} ${status}`;
+          const status = window.status || (window.directional_return_pct === null || window.directional_return_pct === undefined ? "pending" : "ok");
+          return status === "ok" ? `${key} dir ${Number(window.directional_return_pct || window.return_pct || 0).toFixed(2)}%` : `${key} ${status}`;
         }).join(" · ");
         return `<tr>
           <td>${pill(signal.side, signalSideLabels[signal.side] || signal.side)}<br><span class="muted">${escapeHtml(signal.status)} · ${escapeHtml(signal.horizon)}</span></td>

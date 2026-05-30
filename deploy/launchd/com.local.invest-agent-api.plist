@@ -9,14 +9,14 @@
   <array>
     <string>/bin/zsh</string>
     <string>-lc</string>
-    <string>cd /Users/apple/Documents/AIinvestmentAgent &amp;&amp; exec /Users/apple/Documents/AIinvestmentAgent/.venv/bin/python -m invest_agent.api</string>
+    <string>cd ${INVEST_AGENT_REPO_ROOT} &amp;&amp; exec ${INVEST_AGENT_REPO_ROOT}/.venv/bin/python -m invest_agent.api</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/Users/apple/Documents/AIinvestmentAgent</string>
+  <string>${INVEST_AGENT_REPO_ROOT}</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>/Users/apple/Documents/AIinvestmentAgent/.venv/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <string>${INVEST_AGENT_REPO_ROOT}/.venv/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
   <key>SoftResourceLimits</key>
   <dict>
@@ -28,8 +28,8 @@
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/Users/apple/Documents/AIinvestmentAgent/logs/invest-agent-api.out.log</string>
+  <string>${INVEST_AGENT_REPO_ROOT}/logs/invest-agent-api.out.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/apple/Documents/AIinvestmentAgent/logs/invest-agent-api.err.log</string>
+  <string>${INVEST_AGENT_REPO_ROOT}/logs/invest-agent-api.err.log</string>
 </dict>
 </plist>

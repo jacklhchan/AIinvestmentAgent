@@ -80,6 +80,7 @@ from .models import (
     ShadowStrategy,
     ShadowStrategyStatus,
     Signal,
+    SignalOutcomeRow,
     SignalRun,
     SignalSide,
     SignalStatus,
@@ -114,8 +115,8 @@ class Store:
 
     def init(self) -> None:
         schema_backup_path = self._backup_before_schema_change_if_needed(
-            missing_any_of={"signal_runs", "signals"},
-            label="signals-schema-v1",
+            missing_any_of={"signal_runs", "signals", "signal_outcome_rows"},
+            label="signal-outcomes-v1",
         )
         with self.connect() as conn:
             conn.executescript(
@@ -645,6 +646,32 @@ class Store:
                     payload TEXT NOT NULL,
                     FOREIGN KEY (run_id) REFERENCES signal_runs(id)
                 );
+
+                CREATE TABLE IF NOT EXISTS signal_outcome_rows (
+                    signal_id TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    blocked_action TEXT,
+                    window TEXT NOT NULL,
+                    window_type TEXT NOT NULL,
+                    entry_bar_ts TEXT NOT NULL,
+                    target_bar_ts TEXT NOT NULL,
+                    raw_return_pct REAL NOT NULL,
+                    directional_return_pct REAL NOT NULL,
+                    raw_excess_return_pct REAL,
+                    directional_excess_return_pct REAL,
+                    hit_direction INTEGER NOT NULL,
+                    evaluated_at TEXT NOT NULL,
+                    max_drawdown_pct REAL,
+                    max_favorable_excursion_pct REAL,
+                    max_adverse_upside_pct REAL,
+                    max_favorable_downside_pct REAL,
+                    score INTEGER,
+                    readiness_score REAL,
+                    blocking_reasons TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    PRIMARY KEY (signal_id, window, window_type),
+                    FOREIGN KEY (signal_id) REFERENCES signals(id)
+                );
                 """
             )
             self._ensure_column(conn, "shadow_rules", "created_at", "TEXT")
@@ -656,7 +683,7 @@ class Store:
                     event_type="sqlite_backup_created",
                     entity_type="database",
                     entity_id=str(self.db_path),
-                    payload={"backup_path": str(schema_backup_path), "label": "signals-schema-v1"},
+                    payload={"backup_path": str(schema_backup_path), "label": "signal-outcomes-v1"},
                 )
                 conn.execute(
                     """
@@ -2015,6 +2042,81 @@ class Store:
             {"symbol": item.symbol, "side": item.side.value, "status": item.status.value, "proposal_id": item.proposal_id},
         )
         return item
+
+    def upsert_signal_outcome_rows(self, rows: list[SignalOutcomeRow]) -> None:
+        if not rows:
+            return
+        with self.connect() as conn:
+            for row in rows:
+                conn.execute(
+                    """
+                    INSERT INTO signal_outcome_rows(
+                        signal_id, side, blocked_action, window, window_type, entry_bar_ts, target_bar_ts,
+                        raw_return_pct, directional_return_pct, raw_excess_return_pct, directional_excess_return_pct,
+                        hit_direction, evaluated_at, max_drawdown_pct, max_favorable_excursion_pct,
+                        max_adverse_upside_pct, max_favorable_downside_pct, score, readiness_score,
+                        blocking_reasons, payload
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(signal_id, window, window_type) DO UPDATE SET
+                        side=excluded.side,
+                        blocked_action=excluded.blocked_action,
+                        entry_bar_ts=excluded.entry_bar_ts,
+                        target_bar_ts=excluded.target_bar_ts,
+                        raw_return_pct=excluded.raw_return_pct,
+                        directional_return_pct=excluded.directional_return_pct,
+                        raw_excess_return_pct=excluded.raw_excess_return_pct,
+                        directional_excess_return_pct=excluded.directional_excess_return_pct,
+                        hit_direction=excluded.hit_direction,
+                        evaluated_at=excluded.evaluated_at,
+                        max_drawdown_pct=excluded.max_drawdown_pct,
+                        max_favorable_excursion_pct=excluded.max_favorable_excursion_pct,
+                        max_adverse_upside_pct=excluded.max_adverse_upside_pct,
+                        max_favorable_downside_pct=excluded.max_favorable_downside_pct,
+                        score=excluded.score,
+                        readiness_score=excluded.readiness_score,
+                        blocking_reasons=excluded.blocking_reasons,
+                        payload=excluded.payload
+                    """,
+                    (
+                        row.signal_id,
+                        row.side.value,
+                        row.blocked_action,
+                        row.window,
+                        row.window_type,
+                        row.entry_bar_ts.isoformat(),
+                        row.target_bar_ts.isoformat(),
+                        row.raw_return_pct,
+                        row.directional_return_pct,
+                        row.raw_excess_return_pct,
+                        row.directional_excess_return_pct,
+                        1 if row.hit_direction else 0,
+                        row.evaluated_at.isoformat(),
+                        row.max_drawdown_pct,
+                        row.max_favorable_excursion_pct,
+                        row.max_adverse_upside_pct,
+                        row.max_favorable_downside_pct,
+                        row.score,
+                        row.readiness_score,
+                        json.dumps(row.blocking_reasons, default=str),
+                        self._dump(row),
+                    ),
+                )
+
+    def list_signal_outcome_rows(self, *, limit: int = 1000, signal_id: str | None = None) -> list[SignalOutcomeRow]:
+        clauses: list[str] = []
+        args: list[Any] = []
+        if signal_id:
+            clauses.append("signal_id = ?")
+            args.append(signal_id)
+        return self._list_payloads(
+            "signal_outcome_rows",
+            SignalOutcomeRow,
+            where=" AND ".join(clauses),
+            args=tuple(args),
+            order_by="evaluated_at DESC",
+            limit=limit,
+        )
 
     def list_signals(
         self,

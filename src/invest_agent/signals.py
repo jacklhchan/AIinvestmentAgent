@@ -48,6 +48,9 @@ from .store import Store
 
 
 SIGNAL_RULE_VERSION = "signal_engine_v1"
+FEATURE_WEIGHT_VERSION = "feature_weights_v1"
+THRESHOLD_PROFILE_VERSION = "threshold_profile_v1"
+COMMITTEE_PROFILE_VERSION = "committee_profile_v1"
 FRESH_QUOTE_SECONDS = DEFAULT_QUOTE_FRESH_SECONDS
 SECTOR_PROXIES = {
     "technology": ["XLK", "QQQ"],
@@ -303,6 +306,17 @@ class SignalEngine:
             suggested_limit_price=limit_price,
             suggested_notional_usd=round(qty * (limit_price or 0.0), 2),
             outcome_windows=_outcome_windows(created_at),
+            signal_engine_version=SIGNAL_RULE_VERSION,
+            feature_weight_version=FEATURE_WEIGHT_VERSION,
+            threshold_profile={
+                "version": THRESHOLD_PROFILE_VERSION,
+                "buy_threshold": self.settings.signal_buy_threshold,
+                "sell_threshold": self.settings.signal_sell_threshold,
+                "watch_threshold": self.settings.signal_watch_threshold,
+                "duplicate_cooldown_minutes": self.settings.signal_duplicate_cooldown_minutes,
+            },
+            readiness_version="advice_readiness_v1",
+            committee_profile_version=COMMITTEE_PROFILE_VERSION,
             expires_at=created_at + timedelta(hours=max(1, self.settings.signal_expiry_hours)),
             created_at=created_at,
         )
@@ -773,9 +787,24 @@ def _quote_age_seconds(quote: Quote | None, now) -> float | None:
 
 def _outcome_windows(created_at) -> dict[str, Any]:
     return {
-        "1d": {"due_at": (created_at + timedelta(days=1)).isoformat(), "return_pct": None},
-        "5d": {"due_at": (created_at + timedelta(days=5)).isoformat(), "return_pct": None},
-        "20d": {"due_at": (created_at + timedelta(days=20)).isoformat(), "return_pct": None},
+        "1d": {
+            "window_type": "trading_days",
+            "calendar_due_at": (created_at + timedelta(days=1)).isoformat(),
+            "due_at": (created_at + timedelta(days=1)).isoformat(),
+            "directional_return_pct": None,
+        },
+        "5d": {
+            "window_type": "trading_days",
+            "calendar_due_at": (created_at + timedelta(days=5)).isoformat(),
+            "due_at": (created_at + timedelta(days=5)).isoformat(),
+            "directional_return_pct": None,
+        },
+        "20d": {
+            "window_type": "trading_days",
+            "calendar_due_at": (created_at + timedelta(days=20)).isoformat(),
+            "due_at": (created_at + timedelta(days=20)).isoformat(),
+            "directional_return_pct": None,
+        },
     }
 
 

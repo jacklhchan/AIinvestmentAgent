@@ -79,6 +79,29 @@ EXPECTED_SCHEMA: dict[str, set[str]] = {
     "shadow_rules": {"id", "strategy_id", "rule_type", "created_at", "payload"},
     "shadow_strategies": {"id", "source_behavior_report_id", "status", "created_at", "updated_at", "payload"},
     "signal_runs": {"id", "source", "horizon", "created_at", "payload"},
+    "signal_outcome_rows": {
+        "signal_id",
+        "side",
+        "blocked_action",
+        "window",
+        "window_type",
+        "entry_bar_ts",
+        "target_bar_ts",
+        "raw_return_pct",
+        "directional_return_pct",
+        "raw_excess_return_pct",
+        "directional_excess_return_pct",
+        "hit_direction",
+        "evaluated_at",
+        "max_drawdown_pct",
+        "max_favorable_excursion_pct",
+        "max_adverse_upside_pct",
+        "max_favorable_downside_pct",
+        "score",
+        "readiness_score",
+        "blocking_reasons",
+        "payload",
+    },
     "signals": {"id", "run_id", "symbol", "side", "status", "score", "created_at", "expires_at", "payload"},
     "symbol_classifications": {"symbol", "asset_class", "payload"},
     "theses": {"id", "symbol", "side", "status", "updated_at", "payload"},
@@ -90,7 +113,7 @@ EXPECTED_SCHEMA: dict[str, set[str]] = {
     "trade_roundtrips": {"id", "import_id", "symbol", "opened_at", "closed_at", "payload"},
 }
 
-PRESERVED_TABLES = ("proposals", "executions", "research_goals", "research_run_cards", "signal_runs", "signals")
+PRESERVED_TABLES = ("proposals", "executions", "research_goals", "research_run_cards", "signal_runs", "signals", "signal_outcome_rows")
 
 
 def run_schema_check(store: Store) -> dict[str, Any]:

@@ -13,6 +13,9 @@ from .signal_outcomes import SignalOutcomeEvaluator, _symbol_candidates
 from .store import Store
 
 
+READINESS_RULE_VERSION = "advice_readiness_v1"
+
+
 class AdviceReadinessService:
     """Summarizes whether proactive signals have enough local data for useful advice."""
 
@@ -40,6 +43,7 @@ class AdviceReadinessService:
             "ok": severity != "error" and score >= 60,
             "severity": severity,
             "score": score,
+            "readiness_version": READINESS_RULE_VERSION,
             "checked_at": checked_at.isoformat(),
             "checks": checks,
             "summary": _summary(checks, score),

@@ -22,6 +22,7 @@ from invest_agent.earnings_preview import EarningsPreviewService
 from invest_agent.earnings_review import EarningsReviewService
 from invest_agent.hypotheses import HypothesisRegistryService
 from invest_agent.idea_inbox import IdeaInboxService
+from invest_agent.hermes_config import render_hermes_config
 from invest_agent.market_regime import MarketRegimeService
 from invest_agent.models import (
     BacktestImportRequest,
@@ -89,6 +90,9 @@ HERMES_DAILY_ADVISOR_TOOLS = {
     "get_latest_advisor_brief",
     "run_paper_signal_engine",
     "get_latest_paper_signals",
+    "get_advice_readiness",
+    "evaluate_signal_outcomes",
+    "get_signal_outcome_summary",
     "run_committee_review",
     "list_committee_reviews",
     "get_committee_review",
@@ -208,6 +212,14 @@ def test_daily_hermes_snippets_expose_only_high_level_advisor_tools() -> None:
         assert included <= decorated_tools
         assert not (included & PROPOSAL_ADMIN_TOOLS)
         assert not (included & FORBIDDEN_LIVE_EXECUTION_TOOL_NAMES)
+
+
+def test_hermes_config_generator_uses_repo_root_instead_of_hard_coded_user_path() -> None:
+    rendered = render_hermes_config(kind="daily", root=REPO_ROOT)
+
+    assert str(REPO_ROOT) in rendered
+    assert "/Users/apple/Documents/AIinvestmentAgent" not in rendered
+    assert "${INVEST_AGENT_REPO_ROOT}" in HERMES_DAILY_CONFIG.read_text(encoding="utf-8")
 
 
 def test_research_admin_snippet_keeps_proposal_admin_tools_separate() -> None:

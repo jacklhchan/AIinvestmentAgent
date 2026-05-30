@@ -194,6 +194,11 @@ def test_buy_signal_with_verified_evidence_can_promote_to_pending_proposal(tmp_p
     assert signal.research_goal_id
     assert signal.signal_price == 200.0
     assert set(signal.outcome_windows) == {"1d", "5d", "20d"}
+    assert signal.signal_engine_version
+    assert signal.feature_weight_version
+    assert signal.threshold_profile["buy_threshold"] == 70
+    assert signal.readiness_version
+    assert signal.committee_profile_version
 
     promoted = engine.promote_to_proposal(signal.id)
 
@@ -216,8 +221,8 @@ def test_signal_outcome_evaluator_updates_signal_windows(tmp_path) -> None:
         }
     )
     store.update_signal(signal, "test_signal_backdated")
-    add_price_history(store, "GOOGL", created_at, {0: 200.0, 1: 210.0, 5: 220.0, 20: 240.0})
-    add_price_history(store, "SPY", created_at, {0: 100.0, 1: 101.0, 5: 105.0, 20: 110.0})
+    add_price_history(store, "GOOGL", created_at, {day: 200.0 + day * 2 for day in range(21)})
+    add_price_history(store, "SPY", created_at, {day: 100.0 + day for day in range(21)})
 
     outcome = SignalOutcomeEvaluator(settings, store).evaluate(limit=10)
     refreshed = store.get_signal(signal.id)
@@ -225,9 +230,11 @@ def test_signal_outcome_evaluator_updates_signal_windows(tmp_path) -> None:
     assert outcome["evaluated_window_count"] == 3
     assert refreshed is not None
     assert refreshed.outcome_windows["1d"]["status"] == "ok"
-    assert refreshed.outcome_windows["1d"]["return_pct"] == 5.0
-    assert refreshed.outcome_windows["1d"]["excess_return_pct"] == 4.0
+    assert refreshed.outcome_windows["1d"]["raw_return_pct"] == 1.0
+    assert refreshed.outcome_windows["1d"]["directional_return_pct"] == 1.0
+    assert refreshed.outcome_windows["1d"]["directional_excess_return_pct"] == 0.0
     assert refreshed.outcome_windows["20d"]["hit_direction"] is True
+    assert store.list_signal_outcome_rows(signal_id=signal.id)[0].window_type == "trading_days"
 
 
 def test_advice_readiness_reports_outcome_validation(tmp_path) -> None:
@@ -243,13 +250,49 @@ def test_advice_readiness_reports_outcome_validation(tmp_path) -> None:
         }
     )
     store.update_signal(signal, "test_signal_backdated")
-    add_price_history(store, "GOOGL", created_at, {0: 200.0, 1: 210.0, 5: 220.0, 20: 240.0})
+    add_price_history(store, "GOOGL", created_at, {day: 200.0 + day * 2 for day in range(21)})
     SignalOutcomeEvaluator(settings, store).evaluate(limit=10)
 
     readiness = AdviceReadinessService(settings, store).run()
 
     assert readiness["checks"]["outcome_validation"]["status"] == "ok"
     assert readiness["checks"]["latest_signal_run"]["metrics"]["signal_count"] == 1
+
+
+def test_bearish_signal_outcomes_use_directional_return_and_bearish_excursions(tmp_path) -> None:
+    engine, store, settings = make_signal_engine(tmp_path, watchlist="TSLA")
+    store.upsert_portfolio(
+        PortfolioSnapshot(
+            cash_usd=5_000,
+            total_value_usd=100_000,
+            positions=[Position(symbol="TSLA", qty=500, market_value=60_000, avg_cost=120, last_price=100)],
+            source="test",
+        )
+    )
+    add_negative_context(store)
+    result = engine.run(SignalRunRequest(symbols=["TSLA"], source=SignalSource.CLI))
+    created_at = utc_now() - timedelta(days=30)
+    signal = result.signals[0].model_copy(
+        update={
+            "created_at": created_at,
+            "expires_at": created_at + timedelta(hours=24),
+            "outcome_windows": {},
+        }
+    )
+    store.update_signal(signal, "test_signal_backdated")
+    add_price_history(store, "TSLA", created_at, {day: 100.0 - day for day in range(21)})
+
+    SignalOutcomeEvaluator(settings, store).evaluate(limit=10)
+    refreshed = store.get_signal(signal.id)
+    rows = store.list_signal_outcome_rows(signal_id=signal.id)
+
+    assert refreshed is not None
+    assert refreshed.outcome_windows["1d"]["raw_return_pct"] == -1.0
+    assert refreshed.outcome_windows["1d"]["directional_return_pct"] == 1.0
+    assert refreshed.outcome_windows["1d"]["max_adverse_upside_pct"] is not None
+    assert refreshed.outcome_windows["1d"]["max_favorable_downside_pct"] > 0
+    assert rows[0].directional_return_pct > 0
+    assert rows[0].max_drawdown_pct is None
 
 
 def test_reduce_signal_for_overweight_negative_position(tmp_path) -> None:
@@ -407,7 +450,7 @@ def test_signal_outcome_and_readiness_api_routes_share_services(tmp_path, monkey
         signal.model_copy(update={"created_at": created_at, "expires_at": created_at + timedelta(hours=24), "outcome_windows": {}}),
         "test_signal_backdated",
     )
-    add_price_history(store, "GOOGL", created_at, {0: 200.0, 1: 210.0, 5: 220.0, 20: 240.0})
+    add_price_history(store, "GOOGL", created_at, {day: 200.0 + day * 2 for day in range(21)})
 
     evaluated = client.post("/api/signals/evaluate-outcomes")
     outcomes = client.get("/api/signals/outcomes")
@@ -441,6 +484,27 @@ def test_signal_mcp_tools_surface_proactive_signal_layer(tmp_path, monkeypatch) 
 
     assert promoted["proposal"]["status"] == ProposalStatus.PENDING.value
     assert promoted["signal"]["status"] == "promoted"
+
+
+def test_mcp_advice_gate_blocks_actionable_english_and_chinese_buy_sell_when_readiness_low(tmp_path, monkeypatch) -> None:
+    import invest_agent.mcp_server as mcp_server
+
+    settings = Settings(db_path=tmp_path / "test.db", watchlist_symbols="GOOGL")
+    store = Store(settings.db_path)
+    service = InvestmentService(settings, store)
+    monkeypatch.setattr(mcp_server, "get_settings", lambda: settings)
+    monkeypatch.setattr(mcp_server, "get_store", lambda: store)
+    monkeypatch.setattr(mcp_server, "get_service", lambda: service)
+
+    english = mcp_server.ask_advisor("Should I buy or sell anything in my portfolio today?")
+    chinese = mcp_server.ask_advisor("今日我應該買入還是賣出持倉？")
+    readiness = mcp_server.get_advice_readiness()
+
+    assert english["recommendation_type"] == "blocked"
+    assert chinese["recommendation_type"] == "blocked"
+    assert english["advice_gate"]["actionable"] is False
+    assert chinese["advice_gate"]["score"] < 75
+    assert readiness["advice_gate"]["actionable"] is False
 
 
 def test_mcp_tool_descriptions_route_buy_sell_to_signal_engine() -> None:

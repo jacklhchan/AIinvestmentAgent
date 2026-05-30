@@ -91,6 +91,7 @@ class RuntimeDoctorService:
             "quotes",
             "research_evidence",
             "research_goals",
+            "signal_outcome_rows",
             "signal_runs",
             "signals",
         }

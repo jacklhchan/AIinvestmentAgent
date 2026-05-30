@@ -18,11 +18,13 @@ from .data_bridge import DataBridgeService
 from .data_quality import DataQualityService
 from .demo_data import seed_demo_data
 from .deps import get_service, get_store
+from .daily_pipeline import DailySignalPipeline
 from .dividend_lens import DividendLensService
 from .earnings_preview import EarningsPreviewService
 from .earnings_review import EarningsReviewService
 from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event_file
 from .futu_adapter import discover_futu_accounts, refresh_futu_readonly
+from .hermes_config import write_hermes_config
 from .hypotheses import HypothesisRegistryService
 from .idea_inbox import IdeaInboxService
 from .ir_feeds import IrFeedIngestor
@@ -199,6 +201,24 @@ def autonomy_status_main() -> None:
 
 def doctor_main() -> None:
     print(json.dumps(RuntimeDoctorService(get_settings(), get_store()).run(), indent=2, ensure_ascii=False))
+
+
+def hermes_config_generate_main(kind: str | None = None, path: str | None = None) -> None:
+    rendered = write_hermes_config(kind=kind or "daily", output_path=path)
+    if path:
+        print(json.dumps({"path": path, "kind": kind or "daily"}, indent=2, ensure_ascii=False))
+    else:
+        print(rendered)
+
+
+def daily_pre_market_main() -> None:
+    result = DailySignalPipeline(get_settings(), get_store()).pre_market()
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def daily_post_close_main() -> None:
+    result = DailySignalPipeline(get_settings(), get_store()).post_close()
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
 
 
 def signals_run_main(symbols: str | None = None) -> None:
@@ -755,6 +775,7 @@ def main() -> None:
             "autonomy-loop",
             "autonomy-status",
             "doctor",
+            "hermes-config-generate",
             "signals-run",
             "signals-latest",
             "signals-evaluate-outcomes",
@@ -798,6 +819,8 @@ def main() -> None:
             "post-close-brief",
             "advisor-scheduler-once",
             "advisor-scheduler-loop",
+            "daily-pre-market",
+            "daily-post-close",
             "morning-brief",
             "close-brief",
             "weekly-brief",
@@ -921,6 +944,8 @@ def main() -> None:
         autonomy_status_main()
     if args.command == "doctor":
         doctor_main()
+    if args.command == "hermes-config-generate":
+        hermes_config_generate_main(args.kind, args.path)
     if args.command == "signals-run":
         signals_run_main(args.symbols)
     if args.command == "signals-latest":
@@ -1040,6 +1065,10 @@ def main() -> None:
         advisor_scheduler_once_main()
     if args.command == "advisor-scheduler-loop":
         advisor_scheduler_loop_main()
+    if args.command == "daily-pre-market":
+        daily_pre_market_main()
+    if args.command == "daily-post-close":
+        daily_post_close_main()
     if args.command == "morning-brief":
         daily_brief_main("morning")
     if args.command == "close-brief":
