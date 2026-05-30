@@ -6,11 +6,13 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 
+from .advice_readiness import AdviceReadinessService
 from .config import Settings
 from .futu_adapter import discover_futu_accounts, get_futu_status
 from .store import Store
 from .models import utc_now
 from .quote_freshness import quote_age_seconds, quote_freshness_limit_seconds, quote_is_fresh
+from .signal_outcomes import SignalOutcomeEvaluator
 
 
 class RuntimeDoctorService:
@@ -36,6 +38,8 @@ class RuntimeDoctorService:
             "fundamental_freshness": self._check_fundamental_freshness(checked_at),
             "latest_proposal_draft": self._check_latest_proposal_draft(checked_at),
             "latest_signal_run": self._check_latest_signal_run(checked_at),
+            "signal_outcomes": self._check_signal_outcomes(),
+            "advice_readiness": self._check_advice_readiness(),
             "skipped_reasons": self._check_skipped_reasons(),
             "draft_min_score": self._check_draft_min_score(),
             "proposal_status_mismatches": self._check_proposal_status_mismatches(),
@@ -336,6 +340,30 @@ class RuntimeDoctorService:
                 "blocked_count": run.metrics.get("blocked_count", 0),
                 "watch_count": run.metrics.get("watch_count", 0),
                 "summary": run.summary,
+            },
+        )
+
+    def _check_signal_outcomes(self) -> dict[str, Any]:
+        summary = SignalOutcomeEvaluator(self.settings, self.store).summary(limit=200)
+        evaluated = int(summary.get("evaluated_window_count") or 0)
+        return _check(
+            "ok" if evaluated else "warn",
+            "Signal outcome windows have evaluated results."
+            if evaluated
+            else "No evaluated signal outcome windows found; import price bars and run outcome evaluation.",
+            summary,
+        )
+
+    def _check_advice_readiness(self) -> dict[str, Any]:
+        readiness = AdviceReadinessService(self.settings, self.store).run()
+        return _check(
+            readiness["severity"],
+            f"Advice readiness score is {readiness['score']}/100.",
+            {
+                "score": readiness["score"],
+                "ok": readiness["ok"],
+                "summary": readiness["summary"],
+                "checks": readiness["checks"],
             },
         )
 

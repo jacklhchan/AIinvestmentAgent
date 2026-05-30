@@ -134,10 +134,15 @@ CLI / REST：
 ```bash
 python -m invest_agent.cli signals-run
 python -m invest_agent.cli signals-latest
+python -m invest_agent.cli signals-evaluate-outcomes --limit 200
+python -m invest_agent.cli advice-readiness
 python -m invest_agent.cli promote-signal --signal-id sig_...
 
 curl -X POST http://127.0.0.1:8788/api/signals/run -H "Content-Type: application/json" -d '{}'
 curl http://127.0.0.1:8788/api/signals/latest
+curl -X POST http://127.0.0.1:8788/api/signals/evaluate-outcomes
+curl http://127.0.0.1:8788/api/signals/outcomes
+curl http://127.0.0.1:8788/api/advice/readiness
 curl -X POST http://127.0.0.1:8788/api/signals/sig_.../promote-to-proposal
 ```
 
@@ -149,6 +154,8 @@ Hermes / MCP:
 - `reject_paper_signal`：把 active signal 標記為 rejected，只更新本機 signal state。
 
 安全邊界不變：signal 可以主動、明確、有方向，但不是 approval，不會 unlock Futu，也不會送 live order。升級後的 proposal 仍要走 `InvestmentService`、research evidence gate、thesis/catalyst invariants、policy engine 與人工批准。
+
+Outcome evaluator 會用已匯入的 `price_bars` 更新每個 signal 的 1d / 5d / 20d `outcome_windows`，包括 signal return、benchmark excess return、drawdown 與方向是否命中。Advice readiness 會把 quote freshness、account snapshot、fundamentals coverage、verified evidence、news freshness、latest signal run、committee review 與 outcome validation 合成 0-100 分，Dashboard 和 Runtime Doctor 都會顯示這個分數；沒有 price bars 或 outcome 尚未評估時會明確顯示為資料覆蓋不足，而不是看起來像 app 壞掉。
 
 ## Accounting + IPS Foundation
 

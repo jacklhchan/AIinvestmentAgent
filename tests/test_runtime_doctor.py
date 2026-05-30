@@ -88,6 +88,8 @@ def test_runtime_doctor_reports_core_checks_without_api(tmp_path, monkeypatch) -
     assert result["checks"]["draft_min_score"]["metrics"]["skipped_below_min_score"] == 1
     assert result["checks"]["draft_min_score"]["metrics"]["max_score_seen"] == 2
     assert "latest_signal_run" in result["checks"]
+    assert "signal_outcomes" in result["checks"]
+    assert "advice_readiness" in result["checks"]
     assert result["checks"]["skipped_reasons"]["metrics"]["top_reasons"]
 
 

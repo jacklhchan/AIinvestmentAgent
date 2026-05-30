@@ -5,6 +5,7 @@ import json
 from datetime import datetime, timezone
 
 from .accounting import CanonicalAccountingService
+from .advice_readiness import AdviceReadinessService
 from .advisor_orchestrator import AdvisorOrchestrator
 from .advisor_scheduler import AdvisorSchedulerRunner
 from .backtest_imports import BacktestImportService
@@ -85,6 +86,7 @@ from .sec_companyfacts import SecCompanyFactsIngestor
 from .sec_edgar import SecEdgarIngestor
 from .sector_lens import SectorLensService
 from .shadow_account import ShadowAccountService
+from .signal_outcomes import SignalOutcomeEvaluator
 from .signals import SignalEngine
 from .skill_validator import SkillValidatorService
 from .trade_journal import TradeJournalService
@@ -217,6 +219,16 @@ def signals_latest_main(limit: int = 20) -> None:
             ensure_ascii=False,
         )
     )
+
+
+def signals_evaluate_outcomes_main(limit: int = 200) -> None:
+    result = SignalOutcomeEvaluator(get_settings(), get_store()).evaluate(limit=limit)
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def advice_readiness_main() -> None:
+    result = AdviceReadinessService(get_settings(), get_store()).run()
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
 
 
 def promote_signal_main(signal_id: str) -> None:
@@ -745,6 +757,8 @@ def main() -> None:
             "doctor",
             "signals-run",
             "signals-latest",
+            "signals-evaluate-outcomes",
+            "advice-readiness",
             "promote-signal",
             "reject-signal",
             "market-regime",
@@ -911,6 +925,10 @@ def main() -> None:
         signals_run_main(args.symbols)
     if args.command == "signals-latest":
         signals_latest_main(args.limit)
+    if args.command == "signals-evaluate-outcomes":
+        signals_evaluate_outcomes_main(args.limit)
+    if args.command == "advice-readiness":
+        advice_readiness_main()
     if args.command == "promote-signal":
         signal_id = args.signal_id or args.question
         if not signal_id:

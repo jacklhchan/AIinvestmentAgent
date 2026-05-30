@@ -5,6 +5,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pydantic import BaseModel
 
+from .advice_readiness import AdviceReadinessService
 from .advisor import AdvisorService
 from .advisor_orchestrator import AdvisorOrchestrator
 from .accounting import CanonicalAccountingService
@@ -35,6 +36,7 @@ from .portfolio_studio import PortfolioStudioService
 from .quote_history import QuoteHistoryService
 from .runtime_doctor import RuntimeDoctorService
 from .sector_lens import SectorLensService
+from .signal_outcomes import SignalOutcomeEvaluator
 from .signals import SignalEngine
 from .skill_validator import SkillValidatorService
 from .models import (
@@ -1067,6 +1069,21 @@ def signals(status: SignalStatus | None = None, symbol: str | None = None, limit
     return get_store().list_signals(status=status, symbol=symbol, limit=limit)
 
 
+@app.post("/api/signals/evaluate-outcomes")
+def evaluate_signal_outcomes(limit: int = 200):
+    return SignalOutcomeEvaluator(get_settings(), get_store()).evaluate(limit=limit)
+
+
+@app.get("/api/signals/outcomes")
+def signal_outcomes(limit: int = 200):
+    return SignalOutcomeEvaluator(get_settings(), get_store()).summary(limit=limit)
+
+
+@app.get("/api/advice/readiness")
+def advice_readiness():
+    return AdviceReadinessService(get_settings(), get_store()).run()
+
+
 @app.post("/api/signals/{signal_id}/promote-to-proposal")
 def promote_signal(signal_id: str, request: SignalPromoteRequest | None = None):
     try:
@@ -1753,9 +1770,11 @@ DASHBOARD_HTML = """
       <div class="panel-title-row">
         <h2>主動買賣訊號</h2>
         <div class="advisor-actions">
+          <button class="secondary" id="signals-evaluate" type="button">評估 Outcome</button>
           <button class="primary" id="signals-panel-run" type="button">重新產生</button>
         </div>
       </div>
+      <div class="source-strip" id="signal-readiness"></div>
       <table>
         <thead><tr><th>訊號</th><th>標的 / 分數</th><th>Feature Breakdown</th><th>Gate / 操作</th></tr></thead>
         <tbody id="signals"></tbody>
@@ -2779,7 +2798,30 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       }).join("") || `<tr><td colspan="2" class="muted">尚未建立反事實報告；確認 shadow strategy 後再執行。</td></tr>`;
     }
 
-    function renderSignals(payload) {
+    function renderSignalReadiness(readiness, outcomes) {
+      const score = readiness?.score ?? 0;
+      const severity = readiness?.severity || "unknown";
+      const outcomeCount = outcomes?.evaluated_window_count || 0;
+      const statusCounts = outcomes?.status_counts || {};
+      const oneDay = outcomes?.by_window?.["1d"];
+      const hitRate = oneDay ? `${Math.round((oneDay.hit_rate || 0) * 100)}%` : "n/a";
+      const attention = (readiness?.summary?.attention || []).slice(0, 2).map(item => item.message).join("；") || "資料狀態足夠";
+      document.querySelector("#signal-readiness").innerHTML = `
+        <div class="source-cell">
+          <div class="label">Advice Readiness</div>
+          <div>${pill(severity === "ok" ? "APPROVED" : severity === "error" ? "RISK_REJECTED" : "PENDING", `${score}/100`)}</div>
+          <div class="muted">${escapeHtml(attention)}</div>
+        </div>
+        <div class="source-cell">
+          <div class="label">Outcome Validation</div>
+          <div>${pill(outcomeCount ? "APPROVED" : "PENDING", `${outcomeCount} windows`)}</div>
+          <div class="muted">1d hit ${escapeHtml(hitRate)} · pending ${escapeHtml(statusCounts.pending || 0)}</div>
+        </div>
+      `;
+    }
+
+    function renderSignals(payload, readiness, outcomes) {
+      renderSignalReadiness(readiness, outcomes);
       const signals = payload?.signals || [];
       document.querySelector("#signals").innerHTML = signals.slice(0, 12).map(signal => {
         const features = signal.feature_breakdown || {};
@@ -2792,11 +2834,16 @@ proposal 需要靠 manual override 才能成立</textarea></div>
           ? `<button class="primary" data-promote-signal="${escapeHtml(signal.id)}">升級提案</button>`
           : "";
         const reject = signal.status === "active" ? `<button class="danger" data-reject-signal="${escapeHtml(signal.id)}">拒絕</button>` : "";
+        const outcomeText = ["1d", "5d", "20d"].map(key => {
+          const window = signal.outcome_windows?.[key] || {};
+          const status = window.status || (window.return_pct === null || window.return_pct === undefined ? "pending" : "ok");
+          return status === "ok" ? `${key} ${Number(window.return_pct || 0).toFixed(2)}%` : `${key} ${status}`;
+        }).join(" · ");
         return `<tr>
           <td>${pill(signal.side, signalSideLabels[signal.side] || signal.side)}<br><span class="muted">${escapeHtml(signal.status)} · ${escapeHtml(signal.horizon)}</span></td>
           <td><strong>${escapeHtml(signal.symbol)} · ${escapeHtml(signal.score)}/100</strong><br><span class="muted">${smallMoney(signal.signal_price || 0)} · 信心 ${Math.round((signal.confidence || 0) * 100)}% · qty ${escapeHtml(signal.suggested_qty || 0)}</span></td>
           <td><span class="muted">${escapeHtml(featureText)}</span><br><span class="muted">raw ${escapeHtml(features.raw_score ?? 0)} · proposed ${escapeHtml(features.proposed_side || signal.side)}</span></td>
-          <td><span class="muted">${gateText}</span><br><div class="actions">${promote}${reject}</div></td>
+          <td><span class="muted">${gateText}</span><br><span class="muted">${escapeHtml(outcomeText)}</span><br><div class="actions">${promote}${reject}</div></td>
         </tr>`;
       }).join("") || `<tr><td colspan="4" class="muted">尚未建立主動 paper signals。</td></tr>`;
     }
@@ -2838,7 +2885,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
     }
 
     async function loadAll() {
-      const [advisorBrief, advisorFullBrief, advisorRecommendations, opportunityRadarRuns, committeeReviews, marketContext, marketRegime, health, portfolio, quotes, proposals, news, auditEvents, futuStatus, futuAccounts, fundamentals, autonomy, runtimeDoctor, signalLatest, researchGoals, theses, catalysts, earningsReviews, runCards, behaviorReports, tradeImports, tradeRoundtrips, shadowStrategies, shadowReports, shadowEvents] = await Promise.all([
+      const [advisorBrief, advisorFullBrief, advisorRecommendations, opportunityRadarRuns, committeeReviews, marketContext, marketRegime, health, portfolio, quotes, proposals, news, auditEvents, futuStatus, futuAccounts, fundamentals, autonomy, runtimeDoctor, signalLatest, signalOutcomes, adviceReadiness, researchGoals, theses, catalysts, earningsReviews, runCards, behaviorReports, tradeImports, tradeRoundtrips, shadowStrategies, shadowReports, shadowEvents] = await Promise.all([
         api("/api/advisor/brief"),
         api("/api/advisor/briefs/latest"),
         api("/api/advisor/recommendations?limit=12"),
@@ -2858,6 +2905,8 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         api("/api/autonomy/status"),
         api("/api/runtime/doctor"),
         api("/api/signals/latest?limit=12"),
+        api("/api/signals/outcomes?limit=200"),
+        api("/api/advice/readiness"),
         api("/api/research-goals?limit=8"),
         api("/api/theses?limit=8"),
         api("/api/catalysts/upcoming?days=14&limit=8"),
@@ -2887,7 +2936,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       renderMarketContext(marketContext);
       renderSourceStrip(health, portfolio, quotes, futuStatus, futuAccounts);
       renderAutonomy(autonomy, runtimeDoctor);
-      renderSignals(signalLatest);
+      renderSignals(signalLatest, adviceReadiness, signalOutcomes);
       renderResearchGoals(researchGoals);
       renderTheses(theses);
       renderCatalysts(catalysts);
@@ -3170,6 +3219,19 @@ proposal 需要靠 manual override 才能成立</textarea></div>
     }
     document.querySelector("#signals-run").addEventListener("click", runSignalsFromButton);
     document.querySelector("#signals-panel-run").addEventListener("click", runSignalsFromButton);
+    document.querySelector("#signals-evaluate").addEventListener("click", async event => {
+      event.target.disabled = true;
+      setToast("正在用已匯入 price bars 評估 signal outcome...");
+      try {
+        const result = await api("/api/signals/evaluate-outcomes", { method: "POST" });
+        setToast(`Outcome 評估完成：${result.evaluated_window_count} 個 windows，更新 ${result.signals_updated} 個 signals`);
+        await loadAll();
+      } catch (error) {
+        setToast(error.message);
+      } finally {
+        event.target.disabled = false;
+      }
+    });
     document.querySelector("#draft-proposals").addEventListener("click", async event => {
       event.target.disabled = true;
       setToast("正在根據新聞草擬提案並送入風控...");

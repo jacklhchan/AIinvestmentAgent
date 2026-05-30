@@ -13,14 +13,19 @@ from invest_agent.models import (
     NewsItem,
     PortfolioSnapshot,
     Position,
+    PriceBar,
     ProposalStatus,
     Quote,
+    QuoteHistoryImport,
+    QuoteHistorySource,
     SignalRunRequest,
     SignalSide,
     SignalSource,
     utc_now,
 )
 from invest_agent.services import InvestmentService
+from invest_agent.advice_readiness import AdviceReadinessService
+from invest_agent.signal_outcomes import SignalOutcomeEvaluator
 from invest_agent.signals import SignalEngine
 from invest_agent.store import Store
 from invest_agent.quote_freshness import quote_is_fresh
@@ -146,7 +151,34 @@ def add_negative_context(store: Store, symbol: str = "TSLA") -> None:
                 "net_income": FundamentalMetric(name="net_income", label="Net income", value=500_000_000, unit="USD", yoy_change_pct=-25),
             },
         )
+        )
+
+
+def add_price_history(store: Store, symbol: str, start: datetime, closes: dict[int, float]) -> None:
+    item = QuoteHistoryImport(
+        source=QuoteHistorySource.MANUAL_CSV,
+        symbol=symbol,
+        start_date=start,
+        end_date=start + timedelta(days=max(closes)),
+        row_count=len(closes),
+        input_hash=f"test-input-{symbol}-{start.isoformat()}",
+        dataset_hash=f"test-dataset-{symbol}-{start.isoformat()}",
     )
+    bars = [
+        PriceBar(
+            import_id=item.id,
+            symbol=symbol,
+            ts=start + timedelta(days=days),
+            open=close,
+            high=close * 1.01,
+            low=close * 0.99,
+            close=close,
+            source=QuoteHistorySource.MANUAL_CSV,
+            row_hash=f"{item.id}-{symbol}-{days}-{close}",
+        )
+        for days, close in sorted(closes.items())
+    ]
+    store.create_quote_history_import(item, bars)
 
 
 def test_buy_signal_with_verified_evidence_can_promote_to_pending_proposal(tmp_path) -> None:
@@ -168,6 +200,56 @@ def test_buy_signal_with_verified_evidence_can_promote_to_pending_proposal(tmp_p
     assert promoted["proposal"].status == ProposalStatus.PENDING
     assert promoted["signal"].proposal_id == promoted["proposal"].id
     assert promoted["signal"].status == "promoted"
+
+
+def test_signal_outcome_evaluator_updates_signal_windows(tmp_path) -> None:
+    engine, store, settings = make_signal_engine(tmp_path)
+    add_positive_context(store)
+    result = engine.run(SignalRunRequest(symbols=["GOOGL"], source=SignalSource.CLI))
+    original = result.signals[0]
+    created_at = utc_now() - timedelta(days=30)
+    signal = original.model_copy(
+        update={
+            "created_at": created_at,
+            "expires_at": created_at + timedelta(hours=24),
+            "outcome_windows": {},
+        }
+    )
+    store.update_signal(signal, "test_signal_backdated")
+    add_price_history(store, "GOOGL", created_at, {0: 200.0, 1: 210.0, 5: 220.0, 20: 240.0})
+    add_price_history(store, "SPY", created_at, {0: 100.0, 1: 101.0, 5: 105.0, 20: 110.0})
+
+    outcome = SignalOutcomeEvaluator(settings, store).evaluate(limit=10)
+    refreshed = store.get_signal(signal.id)
+
+    assert outcome["evaluated_window_count"] == 3
+    assert refreshed is not None
+    assert refreshed.outcome_windows["1d"]["status"] == "ok"
+    assert refreshed.outcome_windows["1d"]["return_pct"] == 5.0
+    assert refreshed.outcome_windows["1d"]["excess_return_pct"] == 4.0
+    assert refreshed.outcome_windows["20d"]["hit_direction"] is True
+
+
+def test_advice_readiness_reports_outcome_validation(tmp_path) -> None:
+    engine, store, settings = make_signal_engine(tmp_path)
+    add_positive_context(store)
+    result = engine.run(SignalRunRequest(symbols=["GOOGL"], source=SignalSource.CLI))
+    created_at = utc_now() - timedelta(days=30)
+    signal = result.signals[0].model_copy(
+        update={
+            "created_at": created_at,
+            "expires_at": created_at + timedelta(hours=24),
+            "outcome_windows": {},
+        }
+    )
+    store.update_signal(signal, "test_signal_backdated")
+    add_price_history(store, "GOOGL", created_at, {0: 200.0, 1: 210.0, 5: 220.0, 20: 240.0})
+    SignalOutcomeEvaluator(settings, store).evaluate(limit=10)
+
+    readiness = AdviceReadinessService(settings, store).run()
+
+    assert readiness["checks"]["outcome_validation"]["status"] == "ok"
+    assert readiness["checks"]["latest_signal_run"]["metrics"]["signal_count"] == 1
 
 
 def test_reduce_signal_for_overweight_negative_position(tmp_path) -> None:
@@ -302,6 +384,39 @@ def test_signal_api_routes_share_store_layer(tmp_path, monkeypatch) -> None:
     assert response.json()["signals"][0]["side"] == SignalSide.BUY_SIGNAL.value
     assert latest.status_code == 200
     assert latest.json()["signals"][0]["symbol"] == "GOOGL"
+
+
+def test_signal_outcome_and_readiness_api_routes_share_services(tmp_path, monkeypatch) -> None:
+    from invest_agent import api, deps
+
+    _engine, store, settings = make_signal_engine(tmp_path)
+    add_positive_context(store)
+    api.get_settings.cache_clear()
+    deps.get_settings.cache_clear()
+    deps.get_store.cache_clear()
+    deps.get_service.cache_clear()
+    monkeypatch.setattr("invest_agent.api.get_settings", lambda: settings)
+    monkeypatch.setattr("invest_agent.deps.get_settings", lambda: settings)
+    client = TestClient(api.app)
+
+    response = client.post("/api/signals/run", json={"symbols": ["GOOGL"], "source": "api"})
+    signal = store.get_signal(response.json()["signals"][0]["id"])
+    created_at = utc_now() - timedelta(days=30)
+    assert signal is not None
+    store.update_signal(
+        signal.model_copy(update={"created_at": created_at, "expires_at": created_at + timedelta(hours=24), "outcome_windows": {}}),
+        "test_signal_backdated",
+    )
+    add_price_history(store, "GOOGL", created_at, {0: 200.0, 1: 210.0, 5: 220.0, 20: 240.0})
+
+    evaluated = client.post("/api/signals/evaluate-outcomes")
+    outcomes = client.get("/api/signals/outcomes")
+    readiness = client.get("/api/advice/readiness")
+
+    assert evaluated.status_code == 200
+    assert evaluated.json()["evaluated_window_count"] == 3
+    assert outcomes.json()["evaluated_window_count"] == 3
+    assert readiness.json()["checks"]["outcome_validation"]["status"] == "ok"
 
 
 def test_signal_mcp_tools_surface_proactive_signal_layer(tmp_path, monkeypatch) -> None:
