@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import plistlib
 from datetime import timedelta
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from invest_agent.advice_readiness import AdviceReadinessService
 from invest_agent.config import Settings
+from invest_agent.daily_pipeline import DailySignalPipeline
 from invest_agent.evidence_repair import EvidenceRepairService
 from invest_agent.models import (
     FundamentalMetric,
@@ -14,8 +18,11 @@ from invest_agent.models import (
     PaperAdviceRequest,
     PortfolioSnapshot,
     Position,
+    PriceBar,
     Quote,
     QuoteHistoryBatchRefreshRequest,
+    QuoteHistoryImport,
+    QuoteHistorySource,
     SignalRunRequest,
     SignalSource,
     utc_now,
@@ -68,7 +75,7 @@ def test_quote_history_batch_resolves_groups_and_uses_futu_kline(tmp_path, monke
             {"ts": utc_now(), "open": 101, "high": 102, "low": 100, "close": 101, "volume": 2},
         ]
 
-    monkeypatch.setattr("invest_agent.quote_history.fetch_futu_history_kline", fake_history)
+    monkeypatch.setattr("invest_agent.market_data_router.fetch_futu_history_kline", fake_history)
 
     result = QuoteHistoryService(store, settings).refresh_batch(
         QuoteHistoryBatchRefreshRequest(symbols="watchlist,positions,benchmarks", source="futu", days=30)
@@ -78,6 +85,7 @@ def test_quote_history_batch_resolves_groups_and_uses_futu_kline(tmp_path, monke
     assert {"AAPL", "MSFT", "SPY", "QQQ"}.issubset(set(result["symbols"]))
     assert store.list_price_bars(symbol="AAPL")
     assert store.list_audit_events(event_type="quote_history_batch_refreshed")
+    assert store.list_provider_usage(provider="futu")
 
 
 def test_quote_history_batch_throttles_futu_history_requests(tmp_path, monkeypatch) -> None:
@@ -88,7 +96,7 @@ def test_quote_history_batch_throttles_futu_history_requests(tmp_path, monkeypat
     monkeypatch.setattr("invest_agent.quote_history.FUTU_HISTORY_BATCH_PAUSE_SECONDS", 0.01)
     monkeypatch.setattr("invest_agent.quote_history.time.sleep", lambda seconds: sleeps.append(seconds))
     monkeypatch.setattr(
-        "invest_agent.quote_history.fetch_futu_history_kline",
+        "invest_agent.market_data_router.fetch_futu_history_kline",
         lambda _settings, symbol, **_kwargs: (
             f"US.{symbol}",
             [{"ts": utc_now(), "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1}],
@@ -102,6 +110,57 @@ def test_quote_history_batch_throttles_futu_history_requests(tmp_path, monkeypat
     assert result["ok"] is True
     assert result["import_count"] == 3
     assert sleeps == [0.01]
+
+
+def test_quote_history_auto_falls_back_to_stooq_when_futu_unavailable(tmp_path, monkeypatch) -> None:
+    settings, store, _service = _store(tmp_path, watchlist="AAPL")
+    settings = settings.model_copy(update={"futu_read_enabled": False})
+    monkeypatch.setattr(
+        "invest_agent.market_data_router._get_text",
+        lambda url, timeout: "Date,Open,High,Low,Close,Volume\n2026-05-29,100,101,99,100.5,123\n",
+    )
+
+    result = QuoteHistoryService(store, settings).refresh_batch(
+        QuoteHistoryBatchRefreshRequest(symbols="AAPL", source="auto", days=5)
+    )
+
+    assert result["ok"] is True
+    assert result["import_count"] == 1
+    bar = store.list_price_bars(symbol="AAPL")[0]
+    assert bar.source_provider == "stooq"
+    assert "paper-only" in bar.license_note
+
+
+def test_daily_post_close_calls_quote_history_batch(tmp_path, monkeypatch) -> None:
+    settings, store, _service = _store(tmp_path)
+    calls: list[QuoteHistoryBatchRefreshRequest] = []
+
+    monkeypatch.setattr(
+        "invest_agent.daily_pipeline.refresh_futu_readonly",
+        lambda _settings, _store: SimpleNamespace(as_dict=lambda: {"ok": True}),
+    )
+    monkeypatch.setattr("invest_agent.daily_pipeline.MarketNewsIngestor.refresh_news", lambda self: {"ok": True})
+    monkeypatch.setattr("invest_agent.daily_pipeline.MarketContextService.refresh_news", lambda self: {"ok": True})
+    monkeypatch.setattr("invest_agent.daily_pipeline.SecCompanyFactsIngestor.refresh_fundamentals", lambda self: {"ok": True})
+    monkeypatch.setattr(
+        "invest_agent.daily_pipeline.QuoteHistoryService.refresh_batch",
+        lambda self, request, actor=None: calls.append(request) or {"ok": True, "import_count": 0},
+    )
+    monkeypatch.setattr(
+        "invest_agent.daily_pipeline.SignalEngine.run",
+        lambda self, request, actor=None, trigger_source=None: SimpleNamespace(signals=[], metrics={"signal_count": 0}),
+    )
+    monkeypatch.setattr("invest_agent.daily_pipeline.SignalOutcomeEvaluator.evaluate", lambda self, limit=200: {"ok": True})
+    monkeypatch.setattr("invest_agent.daily_pipeline.AdviceReadinessService.run", lambda self: {"score": 80})
+    monkeypatch.setattr("invest_agent.daily_pipeline.DailyBriefService.run", lambda self, request, actor=None: {"brief": "ok"})
+
+    result = DailySignalPipeline(settings, store).post_close()
+
+    assert result["pipeline"] == "daily-post-close"
+    assert calls
+    assert calls[0].source == "auto"
+    assert "benchmarks" in calls[0].symbols
+    assert "recent_signals" in calls[0].symbols
 
 
 def test_paper_advice_items_include_per_symbol_readiness(tmp_path, monkeypatch) -> None:
@@ -137,6 +196,74 @@ def test_runtime_doctor_warns_when_running_commit_differs_from_head(tmp_path, mo
     version = result["checks"]["runtime_version"]
     assert version["status"] == "warn"
     assert version["metrics"]["commit_mismatch"] is True
+
+
+def test_runtime_doctor_warns_when_daily_post_close_never_ran(tmp_path, monkeypatch) -> None:
+    settings, store, _service = _store(tmp_path)
+    settings = settings.model_copy(update={"futu_read_enabled": False})
+    monkeypatch.setattr("invest_agent.runtime_doctor.get_futu_status", lambda _settings: {"connected": False, "message": "disabled"})
+    monkeypatch.setattr(
+        "invest_agent.runtime_doctor.discover_futu_accounts",
+        lambda _settings: type("Discovery", (), {"as_dict": lambda self: {"account_count": 0, "selection_status": "disabled"}})(),
+    )
+
+    result = RuntimeDoctorService(settings, store).run()
+
+    assert result["checks"]["daily_post_close_last_run"]["status"] == "warn"
+    assert result["checks"]["daily_post_close_stale"]["status"] == "warn"
+
+
+def test_runtime_doctor_warns_when_benchmark_price_bars_missing(tmp_path, monkeypatch) -> None:
+    settings, store, _service = _store(tmp_path)
+    settings = settings.model_copy(update={"futu_read_enabled": False})
+    monkeypatch.setattr("invest_agent.runtime_doctor.get_futu_status", lambda _settings: {"connected": False, "message": "disabled"})
+    monkeypatch.setattr(
+        "invest_agent.runtime_doctor.discover_futu_accounts",
+        lambda _settings: type("Discovery", (), {"as_dict": lambda self: {"account_count": 0, "selection_status": "disabled"}})(),
+    )
+
+    result = RuntimeDoctorService(settings, store).run()
+
+    benchmark = result["checks"]["benchmark_price_bars_present"]
+    assert benchmark["status"] == "warn"
+    assert set(benchmark["metrics"]["missing_symbols"]) == {"SPY", "QQQ"}
+
+
+def test_launchd_daily_post_close_plist_runs_daily_post_close() -> None:
+    plist_path = Path("deploy/launchd/com.local.invest-agent-daily-post-close.plist")
+    payload = plistlib.loads(plist_path.read_bytes())
+    command = " ".join(payload["ProgramArguments"])
+
+    assert "daily-post-close" in command
+    assert "autonomy-loop" not in command
+    assert payload["StartCalendarInterval"] == {"Hour": 6, "Minute": 15}
+
+
+def test_advice_readiness_reports_price_bar_source_metadata(tmp_path) -> None:
+    settings, store, _service = _store(tmp_path)
+    item = QuoteHistoryImport(source=QuoteHistorySource.STOOQ_HISTORICAL_CSV, symbol="AAPL", input_hash="x", dataset_hash="y")
+    bar = PriceBar(
+        import_id=item.id,
+        symbol="AAPL",
+        ts=utc_now(),
+        open=100,
+        high=101,
+        low=99,
+        close=100,
+        source=QuoteHistorySource.STOOQ_HISTORICAL_CSV,
+        source_provider="stooq",
+        source_feed="historical_csv",
+        quality_score=0.72,
+        license_note="paper-only fallback",
+        row_hash="aapl-test-bar",
+    )
+    store.create_quote_history_import(item, [bar])
+
+    readiness = AdviceReadinessService(settings, store).run_for_symbol("AAPL")
+
+    price_bar = readiness["checks"]["price_bar_coverage"]
+    assert price_bar["metrics"]["source_provider"] == "stooq"
+    assert price_bar["metrics"]["verified_primary_evidence"] is False
 
 
 def test_evidence_repair_writes_evidence_and_does_not_create_proposals(tmp_path, monkeypatch) -> None:

@@ -71,6 +71,7 @@ class Settings(BaseModel):
     futu_acc_id: int = 0
     futu_acc_index: int = 0
     futu_is_encrypt: bool | None = None
+    futu_history_symbol_7d_limit: int = 500
     telegram_bot_token: str = ""
     telegram_allowed_users: str = ""
     finnhub_api_key: str = ""
@@ -78,6 +79,16 @@ class Settings(BaseModel):
     finnhub_max_retries: int = 3
     finnhub_rate_limit_backoff_seconds: float = 2.0
     alpha_vantage_api_key: str = ""
+    alpaca_api_key: str = ""
+    alpaca_secret_key: str = ""
+    fmp_api_key: str = ""
+    twelvedata_api_key: str = ""
+    market_data_provider_priority: str = "local_cache,futu,alpaca,stooq,fmp,twelvedata,alphavantage,yfinance_dev"
+    market_data_timeout_seconds: float = 8.0
+    market_data_alpha_vantage_daily_limit: int = 25
+    market_data_fmp_daily_limit: int = 250
+    market_data_twelvedata_daily_limit: int = 800
+    market_data_yfinance_dev_enabled: bool = False
 
     @property
     def is_paper(self) -> bool:
@@ -173,6 +184,7 @@ def get_settings() -> Settings:
         futu_acc_id=_int_env("FUTU_ACC_ID", 0),
         futu_acc_index=_int_env("FUTU_ACC_INDEX", 0),
         futu_is_encrypt=_optional_bool_env("FUTU_IS_ENCRYPT"),
+        futu_history_symbol_7d_limit=_int_env("FUTU_HISTORY_SYMBOL_7D_LIMIT", 500),
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
         telegram_allowed_users=os.getenv("TELEGRAM_ALLOWED_USERS", ""),
         finnhub_api_key=os.getenv("FINNHUB_API_KEY", ""),
@@ -180,6 +192,19 @@ def get_settings() -> Settings:
         finnhub_max_retries=_int_env("INVEST_AGENT_FINNHUB_MAX_RETRIES", 3),
         finnhub_rate_limit_backoff_seconds=_float_env("INVEST_AGENT_FINNHUB_RATE_LIMIT_BACKOFF_SECONDS", 2.0),
         alpha_vantage_api_key=os.getenv("ALPHA_VANTAGE_API_KEY", ""),
+        alpaca_api_key=os.getenv("ALPACA_API_KEY", ""),
+        alpaca_secret_key=os.getenv("ALPACA_SECRET_KEY", ""),
+        fmp_api_key=os.getenv("FMP_API_KEY", ""),
+        twelvedata_api_key=os.getenv("TWELVEDATA_API_KEY", ""),
+        market_data_provider_priority=os.getenv(
+            "INVEST_AGENT_MARKET_DATA_PROVIDER_PRIORITY",
+            "local_cache,futu,alpaca,stooq,fmp,twelvedata,alphavantage,yfinance_dev",
+        ),
+        market_data_timeout_seconds=_float_env("INVEST_AGENT_MARKET_DATA_TIMEOUT_SECONDS", 8.0),
+        market_data_alpha_vantage_daily_limit=_int_env("INVEST_AGENT_ALPHA_VANTAGE_DAILY_LIMIT", 25),
+        market_data_fmp_daily_limit=_int_env("INVEST_AGENT_FMP_DAILY_LIMIT", 250),
+        market_data_twelvedata_daily_limit=_int_env("INVEST_AGENT_TWELVEDATA_DAILY_LIMIT", 800),
+        market_data_yfinance_dev_enabled=_bool_env("INVEST_AGENT_YFINANCE_DEV_ENABLED", False),
     )
 
 

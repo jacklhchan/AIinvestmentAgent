@@ -62,7 +62,7 @@ class DailySignalPipeline:
             self._step(
                 "quote_history_batch",
                 lambda: QuoteHistoryService(self.store, self.settings).refresh_batch(
-                    QuoteHistoryBatchRefreshRequest(symbols="watchlist,positions,benchmarks,recent_signals", source="futu"),
+                    QuoteHistoryBatchRefreshRequest(symbols="watchlist,positions,benchmarks,recent_signals", source="auto"),
                     actor=RunCardActor.CLI,
                 ),
             )

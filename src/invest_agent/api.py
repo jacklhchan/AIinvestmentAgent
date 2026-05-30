@@ -2619,6 +2619,12 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       const created = lastRun?.created_count || 0;
       const doctorStatus = doctor?.severity || "unknown";
       const mismatchCount = doctor?.checks?.proposal_status_mismatches?.metrics?.count || 0;
+      const dailyPostClose = doctor?.checks?.daily_post_close_last_run?.metrics || {};
+      const priceBars = doctor?.checks?.latest_price_bar_by_symbol?.metrics || {};
+      const outcomeEval = doctor?.checks?.latest_signal_outcome_evaluation?.metrics?.payload || {};
+      const recentCoverage = doctor?.checks?.recent_signal_symbols_price_bar_coverage?.metrics || {};
+      const missingBars = (recentCoverage.missing_symbols || []).slice(0, 8).join(", ") || "none";
+      const latestBarTs = Object.values(priceBars.latest_by_symbol || {}).map(item => item.ts).sort().pop();
       document.querySelector("#autonomy-strip").innerHTML = `
         <div class="source-cell">
           <div class="label">循環頻率</div>
@@ -2644,6 +2650,16 @@ proposal 需要靠 manual override 才能成立</textarea></div>
           <div class="label">Runtime Doctor</div>
           <div>${pill(doctorStatus === "ok" ? "APPROVED" : doctorStatus === "error" ? "RISK_REJECTED" : "PENDING", doctorStatus)}</div>
           <div class="muted">status mismatch ${escapeHtml(mismatchCount)} · ${status.paper_only ? "paper-only" : "live requested"}</div>
+        </div>
+        <div class="source-cell">
+          <div class="label">Daily Post-close</div>
+          <div>${dailyPostClose.created_at ? pill("APPROVED", "已執行") : pill("PENDING", "未執行")}</div>
+          <div class="muted">${dailyPostClose.created_at ? formatDate(dailyPostClose.created_at) : "等待排程"} · outcome rows ${escapeHtml(outcomeEval.rows_upserted || 0)}</div>
+        </div>
+        <div class="source-cell">
+          <div class="label">Price Bars</div>
+          <div>${pill(recentCoverage.missing_symbols?.length ? "PENDING" : "APPROVED", `${escapeHtml(priceBars.symbol_count || 0)} symbols`)}</div>
+          <div class="muted">latest ${latestBarTs ? formatDate(latestBarTs) : "n/a"} · missing ${escapeHtml(missingBars)}</div>
         </div>
       `;
     }

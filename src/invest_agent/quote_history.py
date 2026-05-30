@@ -9,6 +9,7 @@ from typing import Any
 from .config import Settings, get_settings
 from .futu_adapter import FutuIntegrationError, fetch_futu_history_kline
 from .market_news import external_ticker, resolve_market_context_symbols, resolve_watchlist_symbols
+from .market_data_router import MarketDataProviderError, MarketDataRouter, latest_completed_bar
 from .models import (
     PriceBar,
     QuoteHistoryBatchRefreshRequest,
@@ -18,6 +19,7 @@ from .models import (
     RunCardActor,
     RunCardTriggerSource,
     RunCardType,
+    utc_now,
 )
 from .run_cards import RunCardService, sha256_bytes, sha256_file, stable_hash
 from .store import Store
@@ -47,9 +49,27 @@ class QuoteHistoryService:
                 autype=request.autype,
                 actor=actor,
             )
+        source = (request.source or "auto").strip().lower()
+        if source not in {"auto", "futu"}:
+            return self.refresh_provider_history(
+                request.symbol,
+                source=source,
+                days=request.days,
+                ktype=request.ktype,
+                autype=request.autype,
+                actor=actor,
+            )
         try:
-            return self.refresh_futu_history(request.symbol, days=request.days, ktype=request.ktype, autype=request.autype, actor=actor)
-        except FutuIntegrationError:
+            if source == "futu" or self.settings.futu_read_enabled:
+                return self.refresh_provider_history(
+                    request.symbol,
+                    source="futu",
+                    days=request.days,
+                    ktype=request.ktype,
+                    autype=request.autype,
+                    actor=actor,
+                )
+        except (FutuIntegrationError, MarketDataProviderError, ValueError):
             if request.path:
                 raise
         quote = self.store.get_quote(request.symbol)
@@ -114,6 +134,56 @@ class QuoteHistoryService:
             autype=autype,
             actor=actor,
             broker_symbol=broker_symbol,
+            source_provider="futu",
+            source_feed="request_history_kline",
+            adjusted=autype.lower() != "none",
+            quality_score=0.95,
+            license_note="Futu OpenD read-only historical K-line; paper-only local use.",
+        )
+
+    def refresh_provider_history(
+        self,
+        symbol: str,
+        *,
+        source: str = "auto",
+        days: int = 365,
+        ktype: str = "K_DAY",
+        autype: str = "qfq",
+        actor: RunCardActor | str = RunCardActor.CLI,
+    ) -> QuoteHistoryImport:
+        result = MarketDataRouter(self.settings, self.store).fetch_history(
+            symbol,
+            source=source,
+            days=days,
+            ktype=ktype,
+            autype=autype,
+        )
+        return self._store_rows(
+            external_ticker(symbol),
+            result.rows,
+            source=result.source,
+            input_hash=stable_hash(
+                {
+                    "source": result.source.value,
+                    "symbol": symbol,
+                    "broker_symbol": result.broker_symbol,
+                    "days": days,
+                    "ktype": ktype,
+                    "autype": autype,
+                    "provider": result.provider,
+                    "source_feed": result.source_feed,
+                }
+            ),
+            ktype=ktype,
+            autype=autype,
+            actor=actor,
+            broker_symbol=result.broker_symbol,
+            source_provider=result.provider,
+            source_feed=result.source_feed,
+            adjusted=result.adjusted,
+            retrieved_at=result.retrieved_at,
+            quality_score=result.quality_score,
+            license_note=result.license_note,
         )
 
     def refresh_batch(
@@ -125,10 +195,23 @@ class QuoteHistoryService:
         symbols = self.resolve_batch_symbols(request.symbols)
         imports: list[QuoteHistoryImport] = []
         errors: list[dict[str, str]] = []
+        skips: list[dict[str, str]] = []
         futu_attempts = 0
         for symbol in symbols:
             try:
-                if request.source.lower() == "futu":
+                existing = latest_completed_bar(self.store, symbol)
+                if existing:
+                    skips.append(
+                        {
+                            "symbol": symbol,
+                            "reason": "latest completed trading-day bar already present",
+                            "latest_ts": existing.ts.isoformat(),
+                            "source_provider": existing.source_provider,
+                        }
+                    )
+                    continue
+                source = request.source.lower()
+                if source == "futu":
                     if (
                         futu_attempts
                         and FUTU_HISTORY_BATCH_PAUSE_EVERY > 0
@@ -137,9 +220,11 @@ class QuoteHistoryService:
                     ):
                         time.sleep(FUTU_HISTORY_BATCH_PAUSE_SECONDS)
                     futu_attempts += 1
+                if source in {"auto", "futu", "alpaca", "stooq", "fmp", "twelvedata", "alphavantage", "yfinance_dev"}:
                     imports.append(
-                        self.refresh_futu_history(
+                        self.refresh_provider_history(
                             symbol,
+                            source=source,
                             days=request.days,
                             ktype=request.ktype,
                             autype=request.autype,
@@ -167,8 +252,10 @@ class QuoteHistoryService:
             "symbols": symbols,
             "import_count": len(imports),
             "error_count": len(errors),
+            "skip_count": len(skips),
             "imports": [item.model_dump(mode="json") for item in imports],
             "errors": errors,
+            "skips": skips,
         }
         self.store.audit(
             "quote_history_batch_refreshed",
@@ -179,8 +266,10 @@ class QuoteHistoryService:
                 "symbol_count": len(symbols),
                 "import_count": len(imports),
                 "error_count": len(errors),
+                "skip_count": len(skips),
                 "symbols": symbols[:50],
                 "errors": errors[:12],
+                "skips": skips[:12],
             },
         )
         return result
@@ -278,6 +367,12 @@ class QuoteHistoryService:
         autype: str,
         actor: RunCardActor | str,
         broker_symbol: str | None = None,
+        source_provider: str | None = None,
+        source_feed: str = "",
+        adjusted: bool | None = None,
+        retrieved_at: datetime | None = None,
+        quality_score: float | None = None,
+        license_note: str = "",
     ) -> QuoteHistoryImport:
         symbol = symbol.upper()
         if not rows:
@@ -326,6 +421,12 @@ class QuoteHistoryService:
                 ktype=ktype,
                 autype=autype,
                 source=source,
+                source_provider=source_provider or source.value,
+                source_feed=source_feed,
+                adjusted=bool(adjusted),
+                retrieved_at=retrieved_at or utc_now(),
+                quality_score=quality_score if quality_score is not None else 0.5,
+                license_note=license_note,
                 raw=row.get("raw", {}),
                 row_hash=_row_hash(symbol, row, ktype, autype),
             )

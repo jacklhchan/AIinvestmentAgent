@@ -138,12 +138,13 @@ python -m invest_agent.cli signals-latest
 python -m invest_agent.cli signals-evaluate-outcomes --limit 200
 python -m invest_agent.cli advice-readiness
 python -m invest_agent.cli paper-advice
-python -m invest_agent.cli quote-history-refresh --symbols watchlist,positions,benchmarks --source futu
+python -m invest_agent.cli quote-history-refresh --symbols watchlist,positions,benchmarks,recent_signals --source auto
 python -m invest_agent.cli evidence-repair --latest-blocked
 python -m invest_agent.cli pilot-weekly-report
 python -m invest_agent.cli runtime-version
 python -m invest_agent.cli daily-pre-market
 python -m invest_agent.cli daily-post-close
+python -m invest_agent.cli daily-post-close-launchd --action install
 python -m invest_agent.cli promote-signal --signal-id sig_...
 python -m invest_agent.cli hermes-config-generate --kind daily --path ~/.hermes/invest-agent.daily.yaml
 
@@ -154,7 +155,7 @@ curl http://127.0.0.1:8788/api/signals/outcomes
 curl http://127.0.0.1:8788/api/advice/readiness
 curl -X POST http://127.0.0.1:8788/api/advice/paper -H "Content-Type: application/json" -d '{}'
 curl http://127.0.0.1:8788/api/advice/latest
-curl -X POST http://127.0.0.1:8788/api/quote-history/refresh-batch -H "Content-Type: application/json" -d '{"symbols":"watchlist,positions,benchmarks","source":"futu"}'
+curl -X POST http://127.0.0.1:8788/api/quote-history/refresh-batch -H "Content-Type: application/json" -d '{"symbols":"watchlist,positions,benchmarks,recent_signals","source":"auto"}'
 curl http://127.0.0.1:8788/api/runtime/version
 curl http://127.0.0.1:8788/api/reports/pilot-weekly
 curl -X POST http://127.0.0.1:8788/api/signals/sig_.../promote-to-proposal
@@ -608,8 +609,10 @@ python -m invest_agent.cli doctor
 python -m invest_agent.cli autonomy-loop
 ```
 
-macOS 常駐範例在 `deploy/launchd/com.local.invest-agent-scheduler.plist`。Dashboard 也有 `執行自治循環` 按鈕與 `安全自治狀態` / `主動買賣訊號` 面板。Runtime doctor 會檢查 DB、Futu、autonomy/advisor freshness、draft threshold metrics、latest signal run、runtime version、proposal status mismatch；若日後加入 repair/migration 指令，必須先建立 timestamped SQLite backup 並記錄 backup path。
+macOS 常駐範例在 `deploy/launchd/com.local.invest-agent-scheduler.plist`。每日收盤後資料回補範例在 `deploy/launchd/com.local.invest-agent-daily-post-close.plist`，預設用本機 macOS 時間 06:15 執行 `daily-post-close`，適合新加坡 / 香港時區的美股收盤後。可用 `python -m invest_agent.cli daily-post-close-launchd --action install|status|repair` 安裝、檢查或重載。Dashboard 也有 `執行自治循環` 按鈕與 `安全自治狀態` / `主動買賣訊號` 面板。Runtime doctor 會檢查 DB、Futu、autonomy/advisor freshness、daily post-close freshness、price bar coverage、provider fallback status、outcome evaluation、draft threshold metrics、latest signal run、runtime version、proposal status mismatch；若日後加入 repair/migration 指令，必須先建立 timestamped SQLite backup 並記錄 backup path。
 同一份 doctor 實作也由 `GET /api/runtime/doctor` 提供；CLI 版本直接讀本機設定與 SQLite，不依賴 API server 已啟動。
+
+Price bar ingestion 會先看 local cache，再按 `local_cache -> futu -> alpaca -> stooq -> fmp -> twelvedata -> alphavantage -> yfinance_dev` 嘗試 provider。`auto` 會跳過已存在 latest completed trading-day bar 的 symbol，避免浪費 Futu quota；Futu historical K-line 會記錄 7-day symbol usage，免費 API provider 會記錄 daily quota usage。Fallback EOD bars 只支援 paper-only research、post-close advice 和 outcome validation，不會觸發 live trading；`yfinance_dev` 預設停用，且永遠不能視為 verified primary evidence。
 
 ## Next Phase Research Cockpit
 
@@ -633,7 +636,7 @@ python -m invest_agent.cli create-hypothesis --title "AI capex" --statement "AI 
 python -m invest_agent.cli portfolio-risk
 python -m invest_agent.cli rebalance-review
 python -m invest_agent.cli earnings-preview --symbol AAPL
-python -m invest_agent.cli quote-history-refresh --symbol AAPL --path ./bars.csv
+python -m invest_agent.cli quote-history-refresh --symbols watchlist,positions,benchmarks,recent_signals --source auto
 python -m invest_agent.cli run-shadow-report --strategy-id shadow_... --use-quote-history
 python -m invest_agent.cli import-backtest-run-card --path ./run_card.json
 python -m invest_agent.cli data-import --schema symbol_classification --path ./classifications.csv

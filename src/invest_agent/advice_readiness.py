@@ -56,6 +56,7 @@ class AdviceReadinessService:
         signal = signal or self._latest_signal_for_symbol(symbol)
         checks = {
             "quote_freshness": self._symbol_quote_freshness(symbol, checked_at),
+            "price_bar_coverage": self._symbol_price_bar_coverage(symbol),
             "fundamentals_coverage": self._symbol_fundamentals(symbol),
             "verified_evidence": self._symbol_verified_evidence(symbol, signal),
             "directional_evidence": self._symbol_directional_evidence(symbol, signal),
@@ -283,16 +284,52 @@ class AdviceReadinessService:
         if not quote:
             return _check("error", f"{symbol.upper()} has no quote snapshot.", {}, 0)
         fresh = quote_is_fresh(quote, now)
+        source = str(quote.source or "")
+        fallback_penalty = source and source not in {"futu-opend", "futu"}
+        score = 100 if fresh else 55
+        if fallback_penalty:
+            score = min(score, 75)
         return _check(
-            "ok" if fresh else "warn",
-            f"{symbol.upper()} quote is fresh enough." if fresh else f"{symbol.upper()} quote is stale.",
+            "warn" if fallback_penalty else "ok" if fresh else "warn",
+            f"{symbol.upper()} quote source is fallback; keep BUY/SELL non-actionable for intraday decisions."
+            if fallback_penalty
+            else f"{symbol.upper()} quote is fresh enough."
+            if fresh
+            else f"{symbol.upper()} quote is stale.",
             {
                 "quote_symbol": quote.symbol,
+                "quote_source": source,
                 "updated_at": quote.updated_at.isoformat(),
                 "age_seconds": quote_age_seconds(quote, now),
                 "freshness_limit_seconds": quote_freshness_limit_seconds(now),
             },
-            100 if fresh else 55,
+            score,
+        )
+
+    def _symbol_price_bar_coverage(self, symbol: str) -> dict[str, Any]:
+        bars = []
+        for candidate in _symbol_candidates(symbol):
+            bars.extend(self.store.list_price_bars(symbol=candidate, limit=5, ascending=False))
+        if not bars:
+            return _check("warn", f"{symbol.upper()} has no imported EOD price bars.", {"bar_count": 0}, 45)
+        latest = max(bars, key=lambda bar: bar.ts)
+        status = "warn" if latest.source_provider == "yfinance_dev" else "ok"
+        return _check(
+            status,
+            f"{symbol.upper()} EOD price bars are available."
+            if status == "ok"
+            else f"{symbol.upper()} only has dev-only yfinance bars; do not treat them as verified evidence.",
+            {
+                "bar_count": len(bars),
+                "latest_ts": latest.ts.isoformat(),
+                "source_provider": latest.source_provider,
+                "source_feed": latest.source_feed,
+                "quality_score": latest.quality_score,
+                "license_note": latest.license_note,
+                "supports_outcome_validation": True,
+                "verified_primary_evidence": False,
+            },
+            max(35, latest.quality_score * 100),
         )
 
     def _symbol_fundamentals(self, symbol: str) -> dict[str, Any]:

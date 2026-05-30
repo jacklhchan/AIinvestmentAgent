@@ -9,6 +9,7 @@ from typing import Any
 from .advice_readiness import AdviceReadinessService
 from .config import Settings
 from .futu_adapter import discover_futu_accounts, get_futu_status
+from .market_data_router import latest_completed_trading_day, provider_coverage
 from .store import Store
 from .models import utc_now
 from .quote_freshness import quote_age_seconds, quote_freshness_limit_seconds, quote_is_fresh
@@ -31,6 +32,8 @@ class RuntimeDoctorService:
             "latest_audit_event": self._check_latest_audit_event(checked_at),
             "latest_autonomy_cycle": self._check_latest_autonomy_cycle(checked_at),
             "latest_advisor_run": self._check_latest_advisor_run(checked_at),
+            "daily_post_close_last_run": self._check_daily_post_close_last_run(checked_at),
+            "daily_post_close_stale": self._check_daily_post_close_stale(checked_at),
             "futu_quote_connection": self._check_futu_quote_connection(),
             "futu_account_discovery": self._check_futu_account_discovery(),
             "futu_selected_account_valid": self._check_futu_selected_account_valid(),
@@ -40,6 +43,12 @@ class RuntimeDoctorService:
             "fundamental_freshness": self._check_fundamental_freshness(checked_at),
             "latest_proposal_draft": self._check_latest_proposal_draft(checked_at),
             "latest_signal_run": self._check_latest_signal_run(checked_at),
+            "latest_price_bar_by_symbol": self._check_latest_price_bar_by_symbol(),
+            "benchmark_price_bars_present": self._check_benchmark_price_bars_present(),
+            "recent_signal_symbols_price_bar_coverage": self._check_recent_signal_symbols_price_bar_coverage(),
+            "latest_signal_outcome_evaluation": self._check_latest_signal_outcome_evaluation(checked_at),
+            "market_data_provider_usage": self._check_market_data_provider_usage(),
+            "price_bar_provider_coverage": self._check_price_bar_provider_coverage(),
             "signal_outcomes": self._check_signal_outcomes(),
             "advice_readiness": self._check_advice_readiness(),
             "skipped_reasons": self._check_skipped_reasons(),
@@ -79,6 +88,8 @@ class RuntimeDoctorService:
             "futu_acc_id_configured": bool(self.settings.futu_acc_id),
             "futu_security_firm_configured": bool(self.settings.futu_security_firm),
             "futu_sim_acc_type_configured": bool(self.settings.futu_sim_acc_type),
+            "market_data_provider_priority": self.settings.market_data_provider_priority,
+            "yfinance_dev_enabled": self.settings.market_data_yfinance_dev_enabled,
         }
 
     def _check_runtime_version(self) -> dict[str, Any]:
@@ -108,6 +119,7 @@ class RuntimeDoctorService:
             "investor_committee_votes",
             "paper_advice_runs",
             "paper_advice_items",
+            "provider_usage_ledger",
             "signal_outcome_rows",
             "signal_runs",
             "signals",
@@ -184,6 +196,30 @@ class RuntimeDoctorService:
             status,
             "Advisor scheduler check is stale." if status == "warn" else "Advisor scheduler checked recently.",
             {"created_at": event.get("created_at"), "age_seconds": age, "payload": _payload(event)},
+        )
+
+    def _check_daily_post_close_last_run(self, now: datetime) -> dict[str, Any]:
+        event = _latest_daily_post_close_event(self.store)
+        if not event:
+            return _check("warn", "No daily-post-close pipeline run found.", {})
+        created_at = _parse_dt(event.get("created_at"))
+        return _check(
+            "ok",
+            "Daily post-close pipeline has run.",
+            {"created_at": event.get("created_at"), "age_seconds": _age_seconds(now, created_at), "payload": _payload(event)},
+        )
+
+    def _check_daily_post_close_stale(self, now: datetime) -> dict[str, Any]:
+        event = _latest_daily_post_close_event(self.store)
+        if not event:
+            return _check("warn", "Daily post-close pipeline has never run.", {"stale_after_seconds": 36 * 3600})
+        age = _age_seconds(now, _parse_dt(event.get("created_at")))
+        stale_after = 36 * 3600
+        status = "warn" if age is not None and age > stale_after else "ok"
+        return _check(
+            status,
+            "Daily post-close pipeline is stale." if status == "warn" else "Daily post-close pipeline ran recently.",
+            {"created_at": event.get("created_at"), "age_seconds": age, "stale_after_seconds": stale_after},
         )
 
     def _check_futu_quote_connection(self) -> dict[str, Any]:
@@ -372,6 +408,82 @@ class RuntimeDoctorService:
             summary,
         )
 
+    def _check_latest_price_bar_by_symbol(self) -> dict[str, Any]:
+        coverage = provider_coverage(self.store)
+        latest_by_symbol = coverage["latest_by_symbol"]
+        return _check(
+            "ok" if latest_by_symbol else "warn",
+            "Latest price bars are available by symbol." if latest_by_symbol else "No imported price bars found.",
+            {
+                "symbol_count": len(latest_by_symbol),
+                "latest_by_symbol": dict(sorted(latest_by_symbol.items())[:80]),
+                "latest_completed_trading_day": latest_completed_trading_day().isoformat(),
+            },
+        )
+
+    def _check_benchmark_price_bars_present(self) -> dict[str, Any]:
+        missing = [symbol for symbol in ("SPY", "QQQ") if not self.store.list_price_bars(symbol=symbol, limit=1, ascending=False)]
+        return _check(
+            "warn" if missing else "ok",
+            "Benchmark price bars are missing for SPY/QQQ." if missing else "SPY/QQQ benchmark price bars are present.",
+            {"required_symbols": ["SPY", "QQQ"], "missing_symbols": missing},
+        )
+
+    def _check_recent_signal_symbols_price_bar_coverage(self) -> dict[str, Any]:
+        latest_run = self.store.get_latest_signal_run()
+        symbols = sorted({signal.symbol for signal in latest_run.signals}) if latest_run else []
+        missing = [symbol for symbol in symbols if not self.store.list_price_bars(symbol=symbol, limit=1, ascending=False)]
+        coverage = 1.0 - (len(missing) / len(symbols)) if symbols else 0.0
+        return _check(
+            "ok" if symbols and not missing else "warn",
+            "Recent signal symbols have price bar coverage." if symbols and not missing else "Some recent signal symbols lack price bars.",
+            {"symbol_count": len(symbols), "coverage": round(coverage, 4), "missing_symbols": missing[:40], "symbols": symbols[:80]},
+        )
+
+    def _check_latest_signal_outcome_evaluation(self, now: datetime) -> dict[str, Any]:
+        event = _latest_event(self.store, "signal_outcomes_evaluated")
+        if not event:
+            return _check("warn", "No signal outcome evaluation audit event found.", {})
+        payload = _payload(event)
+        created_at = _parse_dt(event.get("created_at"))
+        return _check(
+            "ok" if int(payload.get("evaluated_window_count") or 0) else "warn",
+            "Latest signal outcome evaluation produced rows."
+            if int(payload.get("evaluated_window_count") or 0)
+            else "Latest signal outcome evaluation did not produce evaluated windows.",
+            {"created_at": event.get("created_at"), "age_seconds": _age_seconds(now, created_at), "payload": payload},
+        )
+
+    def _check_market_data_provider_usage(self) -> dict[str, Any]:
+        usage = [item.model_dump(mode="json") for item in self.store.list_provider_usage(limit=200)]
+        futu_usage = [
+            item
+            for item in usage
+            if item.get("provider") == "futu" and item.get("endpoint") == "request_history_kline" and item.get("quota_window") == "7d"
+        ]
+        return _check(
+            "ok",
+            "Market data provider usage ledger is available.",
+            {
+                "entry_count": len(usage),
+                "futu_history_symbol_7d_limit": self.settings.futu_history_symbol_7d_limit,
+                "futu_history_usage": futu_usage[:40],
+                "entries": usage[:80],
+            },
+        )
+
+    def _check_price_bar_provider_coverage(self) -> dict[str, Any]:
+        coverage = provider_coverage(self.store)
+        level = "warn" if coverage["only_yfinance_dev"] or not coverage["bar_count"] else "ok"
+        message = (
+            "Only yfinance_dev price bars are available; do not treat them as verified evidence."
+            if coverage["only_yfinance_dev"]
+            else "Price bar provider coverage is available."
+            if coverage["bar_count"]
+            else "No price bar provider coverage found."
+        )
+        return _check(level, message, coverage)
+
     def _check_advice_readiness(self) -> dict[str, Any]:
         readiness = AdviceReadinessService(self.settings, self.store).run()
         return _check(
@@ -484,6 +596,13 @@ def _latest_of_events(store: Store, event_types: tuple[str, ...]) -> dict[str, A
     if not events:
         return None
     return max(events, key=lambda event: event.get("created_at") or "")
+
+
+def _latest_daily_post_close_event(store: Store) -> dict[str, Any] | None:
+    for event in store.list_audit_events(limit=100, event_type="daily_pipeline_completed"):
+        if event.get("entity_id") == "post_close" or _payload(event).get("pipeline") == "daily-post-close":
+            return event
+    return None
 
 
 def _payload(event: dict[str, Any] | None) -> dict[str, Any]:

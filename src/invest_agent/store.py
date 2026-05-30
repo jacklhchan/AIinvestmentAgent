@@ -63,6 +63,7 @@ from .models import (
     PortfolioRiskSnapshot,
     PortfolioTarget,
     PriceBar,
+    ProviderUsageLedger,
     Proposal,
     ProposalStatus,
     QuoteHistoryImport,
@@ -129,8 +130,9 @@ class Store:
                 "investor_committee_votes",
                 "paper_advice_runs",
                 "paper_advice_items",
+                "provider_usage_ledger",
             },
-            label="paper-advice-v1",
+            label="data-router-v1",
         )
         with self.connect() as conn:
             conn.executescript(
@@ -396,9 +398,27 @@ class Store:
                     import_id TEXT NOT NULL,
                     symbol TEXT NOT NULL,
                     ts TEXT NOT NULL,
+                    source_provider TEXT,
+                    source_feed TEXT,
+                    adjusted INTEGER,
+                    retrieved_at TEXT,
+                    quality_score REAL,
+                    license_note TEXT,
                     row_hash TEXT NOT NULL UNIQUE,
                     payload TEXT NOT NULL,
                     FOREIGN KEY (import_id) REFERENCES quote_history_imports(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS provider_usage_ledger (
+                    provider TEXT NOT NULL,
+                    endpoint TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    quota_window TEXT NOT NULL,
+                    request_count INTEGER NOT NULL,
+                    reset_at TEXT,
+                    updated_at TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    PRIMARY KEY (provider, endpoint, symbol, quota_window)
                 );
 
                 CREATE TABLE IF NOT EXISTS external_backtest_imports (
@@ -744,12 +764,18 @@ class Store:
             self._ensure_column(conn, "advisor_questions", "original_symbol", "TEXT")
             self._ensure_column(conn, "advisor_questions", "resolved_symbol", "TEXT")
             self._ensure_column(conn, "advisor_questions", "symbol_resolution_status", "TEXT")
+            self._ensure_column(conn, "price_bars", "source_provider", "TEXT")
+            self._ensure_column(conn, "price_bars", "source_feed", "TEXT")
+            self._ensure_column(conn, "price_bars", "adjusted", "INTEGER")
+            self._ensure_column(conn, "price_bars", "retrieved_at", "TEXT")
+            self._ensure_column(conn, "price_bars", "quality_score", "REAL")
+            self._ensure_column(conn, "price_bars", "license_note", "TEXT")
             if schema_backup_path:
                 event = AuditEvent(
                     event_type="sqlite_backup_created",
                     entity_type="database",
                     entity_id=str(self.db_path),
-                    payload={"backup_path": str(schema_backup_path), "label": "paper-advice-v1"},
+                    payload={"backup_path": str(schema_backup_path), "label": "data-router-v1"},
                 )
                 conn.execute(
                     """
@@ -1619,10 +1645,26 @@ class Store:
             for bar in bars:
                 conn.execute(
                     """
-                    INSERT OR IGNORE INTO price_bars(id, import_id, symbol, ts, row_hash, payload)
-                    VALUES(?, ?, ?, ?, ?, ?)
+                    INSERT OR IGNORE INTO price_bars(
+                        id, import_id, symbol, ts, source_provider, source_feed, adjusted, retrieved_at,
+                        quality_score, license_note, row_hash, payload
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (bar.id, bar.import_id, bar.symbol, bar.ts.isoformat(), bar.row_hash, self._dump(bar)),
+                    (
+                        bar.id,
+                        bar.import_id,
+                        bar.symbol,
+                        bar.ts.isoformat(),
+                        bar.source_provider,
+                        bar.source_feed,
+                        1 if bar.adjusted else 0,
+                        bar.retrieved_at.isoformat() if bar.retrieved_at else None,
+                        bar.quality_score,
+                        bar.license_note,
+                        bar.row_hash,
+                        self._dump(bar),
+                    ),
                 )
         self.audit(
             "quote_history_import_created",
@@ -1671,6 +1713,95 @@ class Store:
             where=" AND ".join(clauses),
             args=tuple(args),
             order_by=f"ts {order}",
+            limit=limit,
+        )
+
+    def record_provider_usage(
+        self,
+        *,
+        provider: str,
+        endpoint: str,
+        symbol: str = "*",
+        quota_window: str = "none",
+        success: bool,
+        error: str | None = None,
+        reset_at: datetime | None = None,
+    ) -> ProviderUsageLedger:
+        provider = provider.strip().lower()
+        endpoint = endpoint.strip()
+        symbol = (symbol or "*").strip().upper()
+        quota_window = quota_window.strip().lower()
+        key_args = (provider, endpoint, symbol, quota_window)
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT payload FROM provider_usage_ledger
+                WHERE provider = ? AND endpoint = ? AND symbol = ? AND quota_window = ?
+                """,
+                key_args,
+            ).fetchone()
+            item = ProviderUsageLedger.model_validate_json(row["payload"]) if row else ProviderUsageLedger(
+                provider=provider,
+                endpoint=endpoint,
+                symbol=symbol,
+                quota_window=quota_window,
+                reset_at=reset_at,
+            )
+            item.request_count += 1
+            item.updated_at = utc_now()
+            if reset_at is not None:
+                item.reset_at = reset_at
+            if success:
+                item.last_success = item.updated_at
+                item.last_error = None
+            elif error:
+                item.last_error = error
+            conn.execute(
+                """
+                INSERT INTO provider_usage_ledger(
+                    provider, endpoint, symbol, quota_window, request_count, reset_at, updated_at, payload
+                )
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(provider, endpoint, symbol, quota_window) DO UPDATE SET
+                    request_count=excluded.request_count,
+                    reset_at=excluded.reset_at,
+                    updated_at=excluded.updated_at,
+                    payload=excluded.payload
+                """,
+                (
+                    item.provider,
+                    item.endpoint,
+                    item.symbol,
+                    item.quota_window,
+                    item.request_count,
+                    item.reset_at.isoformat() if item.reset_at else None,
+                    item.updated_at.isoformat(),
+                    self._dump(item),
+                ),
+            )
+        return item
+
+    def list_provider_usage(
+        self,
+        *,
+        provider: str | None = None,
+        symbol: str | None = None,
+        limit: int = 200,
+    ) -> list[ProviderUsageLedger]:
+        clauses: list[str] = []
+        args: list[Any] = []
+        if provider:
+            clauses.append("provider = ?")
+            args.append(provider.strip().lower())
+        if symbol:
+            clauses.append("symbol = ?")
+            args.append(symbol.strip().upper())
+        return self._list_payloads(
+            "provider_usage_ledger",
+            ProviderUsageLedger,
+            where=" AND ".join(clauses),
+            args=tuple(args),
+            order_by="updated_at DESC",
             limit=limit,
         )
 

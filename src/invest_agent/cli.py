@@ -29,8 +29,9 @@ from .hermes_config import write_hermes_config
 from .hypotheses import HypothesisRegistryService
 from .idea_inbox import IdeaInboxService
 from .ir_feeds import IrFeedIngestor
-from .investor_policy import InvestorPolicyService
 from .investor_committee import InvestorFrameworkCommitteeService
+from .investor_policy import InvestorPolicyService
+from .launchd_manager import install_daily_post_close_launchd, repair_daily_post_close_launchd, status_daily_post_close_launchd
 from .market_regime import MarketRegimeService
 from .market_news import MarketNewsIngestor
 from .opportunity_radar import OpportunityRadarService
@@ -289,6 +290,19 @@ def pilot_weekly_report_main(days: int = 7) -> None:
     print(json.dumps(_json(result), indent=2, ensure_ascii=False))
 
 
+def daily_post_close_launchd_main(action: str) -> None:
+    action = (action or "status").strip().lower()
+    if action == "install":
+        result = install_daily_post_close_launchd()
+    elif action == "repair":
+        result = repair_daily_post_close_launchd()
+    elif action == "status":
+        result = status_daily_post_close_launchd()
+    else:
+        raise SystemExit("--action must be install, status, or repair")
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
 def investor_committee_run_main(signal_id: str) -> None:
     result = InvestorFrameworkCommitteeService(get_settings(), get_store()).run_for_signal(signal_id)
     print(json.dumps(_json(result), indent=2, ensure_ascii=False))
@@ -457,9 +471,9 @@ def list_earnings_previews_main(symbol: str | None = None) -> None:
     print(json.dumps(_json(get_store().list_earnings_previews(symbol=symbol)), indent=2, ensure_ascii=False))
 
 
-def quote_history_refresh_main(symbol: str, path: str | None = None, days: int = 365) -> None:
+def quote_history_refresh_main(symbol: str, path: str | None = None, source: str = "auto", days: int = 365) -> None:
     result = QuoteHistoryService(get_store(), get_settings()).refresh(
-        QuoteHistoryRefreshRequest(symbol=symbol, path=path, days=days),
+        QuoteHistoryRefreshRequest(symbol=symbol, path=path, source=source, days=days),
         actor=RunCardActor.CLI,
     )
     print(json.dumps(_json(result), indent=2, ensure_ascii=False))
@@ -884,6 +898,7 @@ def main() -> None:
             "advisor-scheduler-loop",
             "daily-pre-market",
             "daily-post-close",
+            "daily-post-close-launchd",
             "morning-brief",
             "close-brief",
             "weekly-brief",
@@ -923,7 +938,7 @@ def main() -> None:
     parser.add_argument("--thesis-id", default=None)
     parser.add_argument("--run-type", default=None)
     parser.add_argument("--run-card-id", default=None)
-    parser.add_argument("--source", default="futu_csv")
+    parser.add_argument("--source", default="auto")
     parser.add_argument("--period-start", default=None)
     parser.add_argument("--period-end", default=None)
     parser.add_argument("--symbols", default=None)
@@ -972,6 +987,7 @@ def main() -> None:
     parser.add_argument("--refresh", action="store_true")
     parser.add_argument("--use-quote-history", action="store_true")
     parser.add_argument("--latest-blocked", action="store_true")
+    parser.add_argument("--action", default="status")
     parser.add_argument("--prefer-core-etf", action="store_true")
     parser.add_argument("--avoid-chasing-after-big-move", action="store_true")
     parser.add_argument("--allow-options", action="store_true")
@@ -1098,13 +1114,13 @@ def main() -> None:
         list_earnings_reviews_main(args.symbol)
     if args.command == "quote-history-refresh":
         if args.symbols and not args.symbol:
-            quote_history_refresh_batch_main(args.symbols, "futu" if args.source == "futu_csv" else args.source, args.days or 365)
+            quote_history_refresh_batch_main(args.symbols, args.source, args.days or 365)
         else:
             if not args.symbol:
                 parser.error("--symbol or --symbols is required for quote-history-refresh")
-            quote_history_refresh_main(args.symbol, args.path, args.days or 365)
+            quote_history_refresh_main(args.symbol, args.path, args.source, args.days or 365)
     if args.command == "quote-history-refresh-batch":
-        quote_history_refresh_batch_main(args.symbols, "futu" if args.source == "futu_csv" else args.source, args.days or 365)
+        quote_history_refresh_batch_main(args.symbols, args.source, args.days or 365)
     if args.command == "list-price-bars":
         list_price_bars_main(args.symbol, args.limit)
     if args.command == "import-backtest-run-card":
@@ -1152,6 +1168,8 @@ def main() -> None:
         daily_pre_market_main()
     if args.command == "daily-post-close":
         daily_post_close_main()
+    if args.command == "daily-post-close-launchd":
+        daily_post_close_launchd_main(args.action)
     if args.command == "morning-brief":
         daily_brief_main("morning")
     if args.command == "close-brief":

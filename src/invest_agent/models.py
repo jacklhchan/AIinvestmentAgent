@@ -550,6 +550,12 @@ class QuoteHistorySource(StrEnum):
     FUTU_HISTORY_KLINE = "futu_history_kline"
     MANUAL_CSV = "manual_csv"
     FUTURE_IMPORT = "future_import"
+    ALPACA_HISTORICAL_BARS = "alpaca_historical_bars"
+    STOOQ_HISTORICAL_CSV = "stooq_historical_csv"
+    FMP_HISTORICAL_BARS = "fmp_historical_bars"
+    TWELVEDATA_TIME_SERIES = "twelvedata_time_series"
+    ALPHAVANTAGE_DAILY = "alphavantage_daily"
+    YFINANCE_DEV_CHART = "yfinance_dev_chart"
 
 
 class PriceBarConfidence(StrEnum):
@@ -931,6 +937,12 @@ class PriceBar(BaseModel):
     ktype: str = "K_DAY"
     autype: str = "qfq"
     source: QuoteHistorySource = QuoteHistorySource.MANUAL_CSV
+    source_provider: str = "manual_csv"
+    source_feed: str = ""
+    adjusted: bool = False
+    retrieved_at: datetime | None = None
+    quality_score: float = 0.5
+    license_note: str = ""
     raw: dict[str, Any] = Field(default_factory=dict)
     row_hash: str = ""
 
@@ -943,6 +955,7 @@ class PriceBar(BaseModel):
 class QuoteHistoryRefreshRequest(BaseModel):
     symbol: str
     path: str | None = None
+    source: str = "auto"
     days: int = Field(default=365, gt=0, le=5000)
     ktype: str = "K_DAY"
     autype: str = "qfq"
@@ -955,7 +968,7 @@ class QuoteHistoryRefreshRequest(BaseModel):
 
 class QuoteHistoryBatchRefreshRequest(BaseModel):
     symbols: list[str] | str = Field(default_factory=lambda: ["watchlist", "positions", "benchmarks"])
-    source: str = "futu"
+    source: str = "auto"
     days: int = Field(default=365, gt=0, le=5000)
     ktype: str = "K_DAY"
     autype: str = "qfq"
@@ -966,6 +979,22 @@ class QuoteHistoryBatchRefreshRequest(BaseModel):
         if isinstance(value, str):
             return value.strip()
         return [item.strip() for item in value if item and item.strip()]
+
+
+class ProviderUsageLedger(BaseModel):
+    provider: str
+    endpoint: str
+    symbol: str = "*"
+    quota_window: str = "none"
+    request_count: int = 0
+    last_success: datetime | None = None
+    last_error: str | None = None
+    reset_at: datetime | None = None
+    updated_at: datetime = Field(default_factory=utc_now)
+
+    @property
+    def key(self) -> str:
+        return "|".join([self.provider, self.endpoint, self.symbol, self.quota_window])
 
 
 class ExternalBacktestImport(BaseModel):
