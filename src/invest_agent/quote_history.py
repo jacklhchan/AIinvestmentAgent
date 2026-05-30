@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import csv
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from .config import Settings, get_settings
+from .futu_adapter import FutuIntegrationError, fetch_futu_history_kline
+from .market_news import external_ticker, resolve_market_context_symbols, resolve_watchlist_symbols
 from .models import (
     PriceBar,
+    QuoteHistoryBatchRefreshRequest,
     QuoteHistoryImport,
     QuoteHistoryRefreshRequest,
     QuoteHistorySource,
@@ -19,11 +24,14 @@ from .store import Store
 
 
 QUOTE_HISTORY_RULE_VERSION = "quote_history_import_v1"
+FUTU_HISTORY_BATCH_PAUSE_EVERY = 55
+FUTU_HISTORY_BATCH_PAUSE_SECONDS = 31.0
 
 
 class QuoteHistoryService:
-    def __init__(self, store: Store):
+    def __init__(self, store: Store, settings: Settings | None = None):
         self.store = store
+        self.settings = settings or get_settings()
 
     def refresh(
         self,
@@ -39,6 +47,11 @@ class QuoteHistoryService:
                 autype=request.autype,
                 actor=actor,
             )
+        try:
+            return self.refresh_futu_history(request.symbol, days=request.days, ktype=request.ktype, autype=request.autype, actor=actor)
+        except FutuIntegrationError:
+            if request.path:
+                raise
         quote = self.store.get_quote(request.symbol)
         if not quote:
             raise ValueError("quote history refresh without path requires a cached quote")
@@ -66,6 +79,139 @@ class QuoteHistoryService:
             autype=request.autype,
             actor=actor,
         )
+
+    def refresh_futu_history(
+        self,
+        symbol: str,
+        *,
+        days: int = 365,
+        ktype: str = "K_DAY",
+        autype: str = "qfq",
+        actor: RunCardActor | str = RunCardActor.CLI,
+    ) -> QuoteHistoryImport:
+        broker_symbol, rows = fetch_futu_history_kline(
+            self.settings,
+            symbol,
+            days=days,
+            ktype=ktype,
+            autype=autype,
+        )
+        return self._store_rows(
+            external_ticker(symbol),
+            rows,
+            source=QuoteHistorySource.FUTU_HISTORY_KLINE,
+            input_hash=stable_hash(
+                {
+                    "source": "futu_history_kline",
+                    "symbol": symbol,
+                    "broker_symbol": broker_symbol,
+                    "days": days,
+                    "ktype": ktype,
+                    "autype": autype,
+                }
+            ),
+            ktype=ktype,
+            autype=autype,
+            actor=actor,
+            broker_symbol=broker_symbol,
+        )
+
+    def refresh_batch(
+        self,
+        request: QuoteHistoryBatchRefreshRequest,
+        *,
+        actor: RunCardActor | str = RunCardActor.API,
+    ) -> dict[str, Any]:
+        symbols = self.resolve_batch_symbols(request.symbols)
+        imports: list[QuoteHistoryImport] = []
+        errors: list[dict[str, str]] = []
+        futu_attempts = 0
+        for symbol in symbols:
+            try:
+                if request.source.lower() == "futu":
+                    if (
+                        futu_attempts
+                        and FUTU_HISTORY_BATCH_PAUSE_EVERY > 0
+                        and futu_attempts % FUTU_HISTORY_BATCH_PAUSE_EVERY == 0
+                        and FUTU_HISTORY_BATCH_PAUSE_SECONDS > 0
+                    ):
+                        time.sleep(FUTU_HISTORY_BATCH_PAUSE_SECONDS)
+                    futu_attempts += 1
+                    imports.append(
+                        self.refresh_futu_history(
+                            symbol,
+                            days=request.days,
+                            ktype=request.ktype,
+                            autype=request.autype,
+                            actor=actor,
+                        )
+                    )
+                else:
+                    imports.append(
+                        self.refresh(
+                            QuoteHistoryRefreshRequest(
+                                symbol=symbol,
+                                days=request.days,
+                                ktype=request.ktype,
+                                autype=request.autype,
+                            ),
+                            actor=actor,
+                        )
+                    )
+            except Exception as exc:
+                errors.append({"symbol": symbol, "error": str(exc)})
+        result = {
+            "ok": not errors,
+            "source": request.source,
+            "requested_symbols": request.symbols,
+            "symbols": symbols,
+            "import_count": len(imports),
+            "error_count": len(errors),
+            "imports": [item.model_dump(mode="json") for item in imports],
+            "errors": errors,
+        }
+        self.store.audit(
+            "quote_history_batch_refreshed",
+            "quote_history_import",
+            "batch",
+            {
+                "source": request.source,
+                "symbol_count": len(symbols),
+                "import_count": len(imports),
+                "error_count": len(errors),
+                "symbols": symbols[:50],
+                "errors": errors[:12],
+            },
+        )
+        return result
+
+    def resolve_batch_symbols(self, value: list[str] | str) -> list[str]:
+        tokens = _split_symbol_tokens(value)
+        symbols: list[str] = []
+        if not tokens:
+            tokens = ["watchlist", "positions", "benchmarks"]
+        latest_run = self.store.get_latest_signal_run()
+        recent_signal_symbols = [signal.symbol for signal in latest_run.signals] if latest_run else []
+        for token in tokens:
+            normalized = token.lower()
+            if normalized in {"watchlist", "watchlists"}:
+                symbols.extend(resolve_watchlist_symbols(self.settings, self.store, None))
+            elif normalized in {"position", "positions", "holdings"}:
+                symbols.extend(position.symbol for position in self.store.get_portfolio().positions)
+            elif normalized in {"recent", "recent_signals", "signals", "signal_symbols"}:
+                symbols.extend(recent_signal_symbols)
+            elif normalized in {"benchmark", "benchmarks"}:
+                symbols.extend(["SPY", "QQQ", *resolve_market_context_symbols(self.settings, self.store)])
+            elif normalized in {"market_context", "market-context", "etfs"}:
+                symbols.extend(resolve_market_context_symbols(self.settings, self.store))
+            elif normalized == "all":
+                symbols.extend(resolve_watchlist_symbols(self.settings, self.store, None))
+                symbols.extend(position.symbol for position in self.store.get_portfolio().positions)
+                symbols.extend(recent_signal_symbols)
+                symbols.extend(["SPY", "QQQ", *resolve_market_context_symbols(self.settings, self.store)])
+            else:
+                symbols.append(token)
+        return _dedupe_symbols(external_ticker(symbol) for symbol in symbols)
 
     def import_csv(
         self,
@@ -131,6 +277,7 @@ class QuoteHistoryService:
         ktype: str,
         autype: str,
         actor: RunCardActor | str,
+        broker_symbol: str | None = None,
     ) -> QuoteHistoryImport:
         symbol = symbol.upper()
         if not rows:
@@ -154,6 +301,7 @@ class QuoteHistoryService:
         import_item = QuoteHistoryImport(
             source=source,
             symbol=symbol,
+            broker_symbol=broker_symbol,
             start_date=min(row["ts"] for row in rows),
             end_date=max(row["ts"] for row in rows),
             ktype=ktype,
@@ -167,6 +315,7 @@ class QuoteHistoryService:
             PriceBar(
                 import_id=import_item.id,
                 symbol=symbol,
+                broker_symbol=broker_symbol,
                 ts=row["ts"],
                 open=row["open"],
                 high=row["high"],
@@ -225,3 +374,23 @@ def _row_hash(symbol: str, row: dict[str, Any], ktype: str, autype: str) -> str:
         ).encode("utf-8")
     )
 
+
+def _split_symbol_tokens(value: list[str] | str) -> list[str]:
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    result: list[str] = []
+    for item in value:
+        result.extend(part.strip() for part in str(item).split(",") if part.strip())
+    return result
+
+
+def _dedupe_symbols(symbols) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for symbol in symbols:
+        normalized = str(symbol or "").strip().upper()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result

@@ -40,6 +40,7 @@ from .models import (
     utc_now,
 )
 from .proposal_drafts import _fundamental_reference, _is_primary_source, _news_reference, _score_news
+from .promotion_gate import PromotionGateService, directional_threshold
 from .quote_freshness import DEFAULT_QUOTE_FRESH_SECONDS, quote_age_seconds, quote_freshness_limit_seconds, quote_is_fresh
 from .research_goals import evidence_from_news, research_goal_from_draft
 from .run_cards import RunCardService, stable_hash
@@ -234,23 +235,7 @@ class SignalEngine:
         return signal
 
     def _require_promotable_committee(self, signal: Signal):
-        runs = self.store.list_investor_committee_runs(signal_id=signal.id, limit=1)
-        if not runs:
-            raise ValueError("fresh investor committee run required before promotion")
-        committee = runs[0]
-        max_age = timedelta(minutes=max(1, self.settings.paper_advice_committee_freshness_minutes))
-        if utc_now() - committee.created_at > max_age:
-            raise ValueError("fresh investor committee run required before promotion; latest run is stale")
-        if committee.committee_blocked:
-            raise ValueError(f"committee blocked promotion: {', '.join(committee.vetoes) or committee.final_stance}")
-        if committee.final_stance in {"blocked", "research_more", "oppose", "watch"}:
-            raise ValueError(f"committee final stance {committee.final_stance} blocks promotion")
-        threshold = _directional_threshold(self.settings, signal)
-        if committee.committee_adjusted_score < threshold:
-            raise ValueError(
-                f"committee adjusted score {committee.committee_adjusted_score:.1f} below directional threshold {threshold}"
-            )
-        return committee
+        return PromotionGateService(self.settings, self.store).require(signal)
 
     def _build_signal(
         self,
@@ -746,10 +731,7 @@ def _is_promotable_side(side: SignalSide) -> bool:
 
 
 def _directional_threshold(settings: Settings, signal: Signal) -> int:
-    action = signal.gates.get("blocked_action") or signal.side.value
-    if action in {SignalSide.SELL_SIGNAL.value, SignalSide.REDUCE_SIGNAL.value}:
-        return settings.signal_sell_threshold
-    return settings.signal_buy_threshold
+    return directional_threshold(settings, signal)
 
 
 def _strength(score: int) -> SignalStrength:

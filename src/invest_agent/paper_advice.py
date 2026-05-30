@@ -25,6 +25,7 @@ from .models import (
 from .run_cards import RunCardService
 from .services import InvestmentService
 from .signals import SignalEngine
+from .promotion_gate import PromotionGateService, directional_threshold
 from .store import Store
 
 
@@ -65,7 +66,8 @@ class PaperAdviceFlowService:
         )
         latest_run = self.store.get_latest_signal_run() or signal_result.run
         signals = self._select_signals(latest_run.signals)
-        readiness = AdviceReadinessService(self.settings, self.store).run()
+        readiness_service = AdviceReadinessService(self.settings, self.store)
+        readiness = readiness_service.run()
         readiness_score = float(readiness.get("score") or 0.0)
         run_card = RunCardService(self.store).start_run(
             RunCardType.PAPER_ADVICE,
@@ -100,7 +102,8 @@ class PaperAdviceFlowService:
                 items = []
                 for signal in signals:
                     committee = committee_service.run_for_signal(signal.id)
-                    items.append(self._item_from_committee(run.id, signal, committee, readiness_score))
+                    symbol_readiness = readiness_service.run_for_symbol(signal.symbol, signal)
+                    items.append(self._item_from_committee(run.id, signal, committee, readiness_score, symbol_readiness))
             if not items and readiness_score >= READINESS_THRESHOLD:
                 items = [
                     PaperAdviceItem(
@@ -150,8 +153,11 @@ class PaperAdviceFlowService:
             if check.get("status") != "ok"
         ]
         selected = signals or [None]
-        return [
-            PaperAdviceItem(
+        items = []
+        readiness_by_symbol = readiness.get("by_symbol") or {}
+        for signal in selected:
+            symbol_readiness = (readiness_by_symbol.get(signal.symbol) if signal else {}) or {}
+            items.append(PaperAdviceItem(
                 run_id=run_id,
                 signal_id=signal.id if signal else None,
                 symbol=signal.symbol if signal else None,
@@ -165,11 +171,11 @@ class PaperAdviceFlowService:
                 vetoes=["advice_readiness_below_75"],
                 missing_evidence=failed[:8],
                 gates=signal.gates if signal else {},
+                symbol_readiness=symbol_readiness,
                 suggested_user_action="Supporting data is insufficient; refresh data and rerun paper advice before treating BUY/SELL as actionable.",
                 promotable=False,
-            )
-            for signal in selected
-        ]
+            ))
+        return items
 
     def _item_from_committee(
         self,
@@ -177,6 +183,7 @@ class PaperAdviceFlowService:
         signal: Signal,
         committee: InvestorCommitteeRun,
         readiness_score: float,
+        symbol_readiness: dict[str, Any] | None = None,
     ) -> PaperAdviceItem:
         status = _final_status(signal, committee, self.settings)
         return PaperAdviceItem(
@@ -194,8 +201,9 @@ class PaperAdviceFlowService:
             vetoes=committee.vetoes,
             missing_evidence=committee.missing_evidence,
             gates=signal.gates,
+            symbol_readiness=symbol_readiness or {},
             suggested_user_action=_suggested_user_action(status, committee),
-            promotable=_promotion_gate_passes(signal, committee, self.settings),
+            promotable=PromotionGateService(self.settings, self.store).evaluate(signal, committee)["ok"],
         )
 
 
@@ -238,27 +246,8 @@ def _final_status(signal: Signal, committee: InvestorCommitteeRun, settings: Set
     return PaperAdviceStatus.ACTIONABLE_PAPER
 
 
-def _promotion_gate_passes(signal: Signal, committee: InvestorCommitteeRun, settings: Settings) -> bool:
-    if signal.status != SignalStatus.ACTIVE:
-        return False
-    if signal.side not in {SignalSide.BUY_SIGNAL, SignalSide.ADD_SIGNAL, SignalSide.SELL_SIGNAL, SignalSide.REDUCE_SIGNAL}:
-        return False
-    if signal.suggested_qty <= 0 or not signal.suggested_limit_price:
-        return False
-    if signal.gates.get("proposal_allowed") is False or signal.gates.get("blocking_reasons"):
-        return False
-    if committee.committee_blocked:
-        return False
-    if committee.final_stance in {"blocked", "research_more", "oppose", "watch"}:
-        return False
-    return committee.committee_adjusted_score >= _directional_threshold(settings, signal)
-
-
 def _directional_threshold(settings: Settings, signal: Signal) -> int:
-    action = signal.gates.get("blocked_action") or signal.side.value
-    if action in {SignalSide.SELL_SIGNAL.value, SignalSide.REDUCE_SIGNAL.value}:
-        return settings.signal_sell_threshold
-    return settings.signal_buy_threshold
+    return directional_threshold(settings, signal)
 
 
 def _suggested_user_action(status: PaperAdviceStatus, committee: InvestorCommitteeRun) -> str:

@@ -11,6 +11,7 @@ from invest_agent.futu_adapter import (
     _positions_from_records,
     _quotes_from_records,
     discover_futu_accounts,
+    fetch_futu_history_kline,
     refresh_futu_account_snapshot,
     refresh_futu_readonly,
 )
@@ -149,6 +150,68 @@ def test_account_discovery_requires_explicit_selection_when_ambiguous(tmp_path, 
     assert "set FUTU_ACC_ID explicitly" in discovery.message
 
 
+def test_futu_history_kline_maps_daily_bars(tmp_path, monkeypatch) -> None:
+    settings = Settings(db_path=tmp_path / "test.db", futu_read_enabled=True)
+    monkeypatch.setattr(
+        "invest_agent.futu_adapter._load_futu",
+        lambda: _dummy_futu(
+            accounts=[_account(17875763)],
+            history_rows=[
+                {
+                    "code": "US.AAPL",
+                    "time_key": "2026-05-28",
+                    "open": 190.0,
+                    "high": 195.0,
+                    "low": 189.0,
+                    "close": 194.0,
+                    "volume": 12345,
+                }
+            ],
+        ),
+    )
+
+    broker_symbol, rows = fetch_futu_history_kline(settings, "AAPL", days=10)
+
+    assert broker_symbol == "US.AAPL"
+    assert rows[0]["close"] == 194.0
+    assert rows[0]["ts"].isoformat().startswith("2026-05-28")
+
+
+def test_futu_history_kline_maps_numeric_symbols_to_hk(tmp_path, monkeypatch) -> None:
+    settings = Settings(db_path=tmp_path / "test.db", futu_read_enabled=True)
+    seen_codes: list[str] = []
+
+    class DummyFutu:
+        RET_OK = 0
+
+        class KLType:
+            K_DAY = "K_DAY"
+
+        class AuType:
+            QFQ = "qfq"
+
+        class OpenQuoteContext:
+            def __init__(self, **_kwargs):
+                pass
+
+            def request_history_kline(self, code, **_kwargs):
+                seen_codes.append(code)
+                return DummyFutu.RET_OK, [
+                    {"code": code, "time_key": "2026-05-28", "open": 10.0, "high": 11.0, "low": 9.0, "close": 10.5}
+                ], None
+
+            def close(self):
+                pass
+
+    monkeypatch.setattr("invest_agent.futu_adapter._load_futu", lambda: DummyFutu)
+
+    broker_symbol, rows = fetch_futu_history_kline(settings, "00005", days=10)
+
+    assert broker_symbol == "HK.00005"
+    assert seen_codes == ["HK.00005"]
+    assert rows[0]["close"] == 10.5
+
+
 def _account(acc_id: int) -> dict:
     return {
         "acc_id": acc_id,
@@ -159,12 +222,21 @@ def _account(acc_id: int) -> dict:
     }
 
 
-def _dummy_futu(*, accounts: list[dict], quote_prices: dict[str, float] | None = None):
+def _dummy_futu(*, accounts: list[dict], quote_prices: dict[str, float] | None = None, history_rows: list[dict] | None = None):
     quote_prices = quote_prices or {}
+    history_rows = history_rows or []
 
     class DummyFutu:
         RET_OK = 0
         RET_ERROR = -1
+
+        class KLType:
+            K_DAY = "K_DAY"
+
+        class AuType:
+            QFQ = "qfq"
+            HFQ = "hfq"
+            NONE = "none"
 
         class TrdMarket:
             US = "US"
@@ -186,6 +258,12 @@ def _dummy_futu(*, accounts: list[dict], quote_prices: dict[str, float] | None =
                     {"code": symbol, "last_price": quote_prices.get(symbol, 100.0), "prev_close_price": 99.0}
                     for symbol in symbols
                 ]
+
+            def request_history_kline(self, code, **_kwargs):
+                rows = history_rows or [
+                    {"code": code, "time_key": "2026-05-28", "open": 99.0, "high": 101.0, "low": 98.0, "close": 100.0}
+                ]
+                return DummyFutu.RET_OK, rows, None
 
             def close(self):
                 pass

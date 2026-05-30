@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from .config import Settings
@@ -208,6 +209,56 @@ def refresh_futu_quotes_only(settings: Settings, store: Store, symbols: Iterable
             },
         )
         return FutuQuoteRefreshResult(quotes=quotes, symbols=futu_symbols, quote_count=len(quotes))
+    finally:
+        if quote_ctx is not None:
+            quote_ctx.close()
+
+
+def fetch_futu_history_kline(
+    settings: Settings,
+    symbol: str,
+    *,
+    days: int = 365,
+    ktype: str = "K_DAY",
+    autype: str = "qfq",
+) -> tuple[str, list[dict[str, Any]]]:
+    if not settings.futu_read_enabled:
+        raise FutuReadDisabled("FUTU_READ_ENABLED is false; refusing to connect to OpenD.")
+
+    ft = _load_futu()
+    quote_ctx = None
+    broker_symbol = _futu_symbol(symbol)
+    end = utc_now().date()
+    start = end - timedelta(days=max(1, days))
+    try:
+        quote_ctx = ft.OpenQuoteContext(
+            host=settings.futu_host,
+            port=settings.futu_monitor_port,
+            is_encrypt=settings.futu_is_encrypt,
+        )
+        page_req_key = None
+        records: list[dict[str, Any]] = []
+        while True:
+            result = quote_ctx.request_history_kline(
+                broker_symbol,
+                start=start.isoformat(),
+                end=end.isoformat(),
+                ktype=_enum_value(getattr(ft, "KLType"), ktype, getattr(ft.KLType, "K_DAY")),
+                autype=_autype_value(ft, autype),
+                max_count=1000,
+                page_req_key=page_req_key,
+            )
+            if len(result) == 3:
+                ret, data, page_req_key = result
+            else:
+                ret, data = result
+                page_req_key = None
+            if ret != ft.RET_OK:
+                raise FutuIntegrationError(f"request_history_kline failed for {broker_symbol}: {data}")
+            records.extend(_records(data))
+            if not page_req_key:
+                break
+        return broker_symbol, _kline_rows_from_records(records)
     finally:
         if quote_ctx is not None:
             quote_ctx.close()
@@ -522,7 +573,11 @@ def _quotes_for_symbols(ft: Any, quote_ctx: Any, symbols: list[str]) -> list[Quo
 
 def _futu_symbol(symbol: str) -> str:
     symbol = symbol.strip().upper()
-    return symbol if "." in symbol else f"US.{symbol}"
+    if "." in symbol:
+        return symbol
+    if symbol.isdigit():
+        return f"HK.{symbol.zfill(5)}"
+    return f"US.{symbol}"
 
 
 def _dedupe_symbols(symbols: list[str]) -> list[str]:
@@ -564,6 +619,58 @@ def _quotes_from_records(records: list[dict[str, Any]]) -> list[Quote]:
             )
         )
     return quotes
+
+
+def _kline_rows_from_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in records:
+        ts = _parse_kline_ts(str(row.get("time_key") or row.get("time") or row.get("datetime") or row.get("date") or ""))
+        if ts is None:
+            continue
+        close = _float(row, "close", "last_close")
+        rows.append(
+            {
+                "ts": ts,
+                "open": _float(row, "open", default=close),
+                "high": _float(row, "high", default=close),
+                "low": _float(row, "low", default=close),
+                "close": close,
+                "volume": _float(row, "volume"),
+                "turnover": _optional_float(row, "turnover"),
+                "raw": dict(row),
+            }
+        )
+    return rows
+
+
+def _parse_kline_ts(value: str) -> datetime | None:
+    value = value.strip()
+    if not value:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            parsed = datetime.strptime(value, fmt)
+            return parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _autype_value(ft: Any, value: str) -> Any:
+    autype_cls = getattr(ft, "AuType")
+    mapping = {
+        "QFQ": "QFQ",
+        "HFQ": "HFQ",
+        "NONE": "NONE",
+        "NO": "NONE",
+        "": "QFQ",
+    }
+    normalized = mapping.get(str(value or "").strip().upper(), str(value or "").strip().upper())
+    return getattr(autype_cls, normalized, getattr(autype_cls, "QFQ"))
 
 
 def _quote_change_pct(row: dict[str, Any]) -> float | None:

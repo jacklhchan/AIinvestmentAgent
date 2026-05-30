@@ -8,12 +8,12 @@ from .config import Settings
 from .daily_briefs import DailyBriefService
 from .futu_adapter import refresh_futu_readonly
 from .market_context import MarketContextService
-from .market_news import MarketNewsIngestor, resolve_watchlist_symbols
+from .market_news import MarketNewsIngestor
 from .models import (
     CommitteeReviewRunRequest,
     DailyBriefRunRequest,
     DailyBriefType,
-    QuoteHistoryRefreshRequest,
+    QuoteHistoryBatchRefreshRequest,
     RunCardActor,
     RunCardTriggerSource,
     SignalRunRequest,
@@ -58,11 +58,15 @@ class DailySignalPipeline:
         steps.append(self._step("market_news", lambda: MarketNewsIngestor(self.settings, self.store).refresh_news()))
         steps.append(self._step("market_context", lambda: MarketContextService(self.settings, self.store).refresh_news()))
         steps.append(self._step("fundamentals", lambda: SecCompanyFactsIngestor(self.settings, self.store).refresh_fundamentals()))
-        for symbol in resolve_watchlist_symbols(self.settings, self.store, None)[:20]:
-            steps.append(self._step(f"quote_history:{symbol}", lambda symbol=symbol: QuoteHistoryService(self.store).refresh(
-                request=QuoteHistoryRefreshRequest(symbol=symbol),
-                actor=RunCardActor.CLI,
-            )))
+        steps.append(
+            self._step(
+                "quote_history_batch",
+                lambda: QuoteHistoryService(self.store, self.settings).refresh_batch(
+                    QuoteHistoryBatchRefreshRequest(symbols="watchlist,positions,benchmarks,recent_signals", source="futu"),
+                    actor=RunCardActor.CLI,
+                ),
+            )
+        )
         signal_result = SignalEngine(self.settings, self.store).run(
             SignalRunRequest(source=SignalSource.CLI),
             actor=RunCardActor.CLI,

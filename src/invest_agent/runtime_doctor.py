@@ -12,6 +12,7 @@ from .futu_adapter import discover_futu_accounts, get_futu_status
 from .store import Store
 from .models import utc_now
 from .quote_freshness import quote_age_seconds, quote_freshness_limit_seconds, quote_is_fresh
+from .runtime_version import RuntimeVersionService
 from .signal_outcomes import SignalOutcomeEvaluator
 
 
@@ -26,6 +27,7 @@ class RuntimeDoctorService:
         checked_at = utc_now()
         checks = {
             "database": self._check_database(),
+            "runtime_version": self._check_runtime_version(),
             "latest_audit_event": self._check_latest_audit_event(checked_at),
             "latest_autonomy_cycle": self._check_latest_autonomy_cycle(checked_at),
             "latest_advisor_run": self._check_latest_advisor_run(checked_at),
@@ -78,6 +80,16 @@ class RuntimeDoctorService:
             "futu_security_firm_configured": bool(self.settings.futu_security_firm),
             "futu_sim_acc_type_configured": bool(self.settings.futu_sim_acc_type),
         }
+
+    def _check_runtime_version(self) -> dict[str, Any]:
+        version = RuntimeVersionService(self.store).run()
+        return _check(
+            "warn" if version.get("commit_mismatch") else "ok",
+            "Running process git commit differs from current HEAD; restart the API/scheduler."
+            if version.get("commit_mismatch")
+            else "Running process matches current git HEAD.",
+            version,
+        )
 
     def _check_database(self) -> dict[str, Any]:
         required_tables = {

@@ -21,6 +21,7 @@ from .deps import get_service, get_store
 from .dividend_lens import DividendLensService
 from .earnings_preview import EarningsPreviewService
 from .earnings_review import EarningsReviewService
+from .evidence_repair import EvidenceRepairService
 from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event_file
 from .futu_adapter import FutuIntegrationError, discover_futu_accounts, get_futu_status, refresh_futu_readonly
 from .investor_committee import InvestorFrameworkCommitteeService
@@ -34,9 +35,11 @@ from .market_regime import MarketRegimeService
 from .options_lens import OptionsLensService
 from .opportunity_radar import OpportunityRadarService
 from .paper_advice import PaperAdviceFlowService
+from .pilot_report import PilotReportService
 from .portfolio_studio import PortfolioStudioService
 from .quote_history import QuoteHistoryService
 from .runtime_doctor import RuntimeDoctorService
+from .runtime_version import RuntimeVersionService
 from .sector_lens import SectorLensService
 from .signal_outcomes import SignalOutcomeEvaluator
 from .signals import SignalEngine
@@ -80,6 +83,7 @@ from .models import (
     PeerGroupCreate,
     ProposalCreate,
     ProposalStatus,
+    QuoteHistoryBatchRefreshRequest,
     QuoteHistoryRefreshRequest,
     ResearchEvidenceCreate,
     ResearchGoalCreate,
@@ -165,6 +169,11 @@ class AutonomyRunRequest(BaseModel):
 
 class InvestorCommitteeRunForSignalRequest(BaseModel):
     signal_id: str
+
+
+class EvidenceRepairRequest(BaseModel):
+    signal_id: str | None = None
+    latest_blocked: bool = False
 
 
 app = FastAPI(
@@ -566,9 +575,14 @@ def quote_history_symbol(symbol: str, limit: int = 500):
 @app.post("/api/quote-history/refresh")
 def refresh_quote_history(request: QuoteHistoryRefreshRequest):
     try:
-        return QuoteHistoryService(get_store()).refresh(request, actor=RunCardActor.API)
+        return QuoteHistoryService(get_store(), get_settings()).refresh(request, actor=RunCardActor.API)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/quote-history/refresh-batch")
+def refresh_quote_history_batch(request: QuoteHistoryBatchRefreshRequest):
+    return QuoteHistoryService(get_store(), get_settings()).refresh_batch(request, actor=RunCardActor.API)
 
 
 @app.get("/api/backtest-imports")
@@ -1106,6 +1120,24 @@ def latest_paper_advice():
     return {"run": PaperAdviceFlowService(get_settings(), get_store(), get_service()).latest()}
 
 
+@app.post("/api/evidence/repair")
+def repair_evidence(request: EvidenceRepairRequest):
+    try:
+        service = EvidenceRepairService(get_settings(), get_store(), get_service())
+        if request.latest_blocked:
+            return service.repair_latest_blocked()
+        if request.signal_id:
+            return service.repair_signal(request.signal_id)
+        raise HTTPException(status_code=400, detail="signal_id or latest_blocked is required")
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/reports/pilot-weekly")
+def pilot_weekly_report(days: int = 7):
+    return PilotReportService(get_store()).weekly_summary(days=days)
+
+
 @app.post("/api/signals/{signal_id}/promote-to-proposal")
 def promote_signal(signal_id: str, request: SignalPromoteRequest | None = None):
     try:
@@ -1221,6 +1253,11 @@ def audit(limit: int = 100):
 @app.get("/api/runtime/doctor")
 def runtime_doctor():
     return RuntimeDoctorService(get_settings(), get_store()).run()
+
+
+@app.get("/api/runtime/version")
+def runtime_version():
+    return RuntimeVersionService(get_store()).run()
 
 
 @app.get("/api/futu/status")
@@ -2963,11 +3000,16 @@ proposal 需要靠 manual override 才能成立</textarea></div>
           ? `<button class="primary" data-promote-signal="${escapeHtml(item.signal_id)}">升級提案</button>`
           : `<span class="muted">不可升級</span>`;
         const vetoes = (item.vetoes || []).concat(item.missing_evidence || []).slice(0, 4).join("; ") || "沒有 veto";
+        const symbolReadiness = item.symbol_readiness || {};
+        const failedSymbolChecks = (symbolReadiness.failed_checks || []).slice(0, 3).map(check => `${check.check}: ${check.message}`).join("; ");
+        const symbolReadinessText = symbolReadiness.score === undefined
+          ? ""
+          : `<br><span class="muted">symbol readiness ${Number(symbolReadiness.score || 0).toFixed(1)} · ${escapeHtml(failedSymbolChecks || "symbol checks ok")}</span>`;
         return `<tr>
           <td>${pill(item.final_status, item.final_status)}<br><span class="muted">${escapeHtml(item.side || "portfolio")}</span></td>
           <td><strong>${escapeHtml(item.symbol || "組合")}</strong><br><span class="muted">base ${escapeHtml(item.base_score ?? "n/a")} · adjusted ${item.adjusted_score === null || item.adjusted_score === undefined ? "n/a" : Number(item.adjusted_score).toFixed(1)}</span></td>
           <td>${pill(item.committee_stance || "not_run", item.committee_stance || "not_run")}<br><span class="muted">readiness ${item.readiness_score === null || item.readiness_score === undefined ? "n/a" : Number(item.readiness_score).toFixed(1)} · committee ${escapeHtml(item.committee_run_id || "n/a")}</span></td>
-          <td><span class="muted">${escapeHtml(vetoes)}</span><br><span class="muted">${escapeHtml(item.suggested_user_action || "")}</span><br><div class="actions">${promote}</div></td>
+          <td><span class="muted">${escapeHtml(vetoes)}</span>${symbolReadinessText}<br><span class="muted">${escapeHtml(item.suggested_user_action || "")}</span><br><div class="actions">${promote}</div></td>
         </tr>`;
       }).join("") || `<tr><td colspan="4" class="muted">今次沒有 BUY/SELL/ADD/REDUCE paper advice。</td></tr>`;
     }

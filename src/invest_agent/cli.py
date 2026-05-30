@@ -22,6 +22,7 @@ from .daily_pipeline import DailySignalPipeline
 from .dividend_lens import DividendLensService
 from .earnings_preview import EarningsPreviewService
 from .earnings_review import EarningsReviewService
+from .evidence_repair import EvidenceRepairService
 from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event_file
 from .futu_adapter import discover_futu_accounts, refresh_futu_readonly
 from .hermes_config import write_hermes_config
@@ -34,6 +35,7 @@ from .market_regime import MarketRegimeService
 from .market_news import MarketNewsIngestor
 from .opportunity_radar import OpportunityRadarService
 from .paper_advice import PaperAdviceFlowService
+from .pilot_report import PilotReportService
 from .models import (
     AdvisorFullBriefType,
     AdvisorProfileConfirmationRequest,
@@ -63,6 +65,7 @@ from .models import (
     OpportunityRadarRequest,
     PeerGroupCreate,
     ProposalCreate,
+    QuoteHistoryBatchRefreshRequest,
     QuoteHistoryRefreshRequest,
     RunCardActor,
     RunCardTriggerSource,
@@ -85,6 +88,7 @@ from .portfolio_studio import PortfolioStudioService
 from .quote_history import QuoteHistoryService
 from .run_cards import RunCardService
 from .runtime_doctor import RuntimeDoctorService
+from .runtime_version import RuntimeVersionService
 from .schema_checks import run_schema_check
 from .sec_companyfacts import SecCompanyFactsIngestor
 from .sec_edgar import SecEdgarIngestor
@@ -253,6 +257,11 @@ def advice_readiness_main() -> None:
     print(json.dumps(_json(result), indent=2, ensure_ascii=False))
 
 
+def runtime_version_main() -> None:
+    result = RuntimeVersionService(get_store()).run()
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
 def paper_advice_main(symbols: str | None = None) -> None:
     from .models import PaperAdviceRequest
 
@@ -261,6 +270,22 @@ def paper_advice_main(symbols: str | None = None) -> None:
         actor=RunCardActor.CLI,
         trigger_source=RunCardTriggerSource.MANUAL,
     )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def evidence_repair_main(signal_id: str | None, latest_blocked: bool) -> None:
+    service = EvidenceRepairService(get_settings(), get_store(), get_service())
+    if latest_blocked:
+        result = service.repair_latest_blocked()
+    elif signal_id:
+        result = service.repair_signal(signal_id)
+    else:
+        raise SystemExit("--signal-id or --latest-blocked is required for evidence-repair")
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def pilot_weekly_report_main(days: int = 7) -> None:
+    result = PilotReportService(get_store()).weekly_summary(days=days)
     print(json.dumps(_json(result), indent=2, ensure_ascii=False))
 
 
@@ -433,8 +458,16 @@ def list_earnings_previews_main(symbol: str | None = None) -> None:
 
 
 def quote_history_refresh_main(symbol: str, path: str | None = None, days: int = 365) -> None:
-    result = QuoteHistoryService(get_store()).refresh(
+    result = QuoteHistoryService(get_store(), get_settings()).refresh(
         QuoteHistoryRefreshRequest(symbol=symbol, path=path, days=days),
+        actor=RunCardActor.CLI,
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def quote_history_refresh_batch_main(symbols: str | None, source: str, days: int = 365) -> None:
+    result = QuoteHistoryService(get_store(), get_settings()).refresh_batch(
+        QuoteHistoryBatchRefreshRequest(symbols=symbols or "watchlist,positions,benchmarks", source=source, days=days),
         actor=RunCardActor.CLI,
     )
     print(json.dumps(_json(result), indent=2, ensure_ascii=False))
@@ -798,12 +831,15 @@ def main() -> None:
             "autonomy-loop",
             "autonomy-status",
             "doctor",
+            "runtime-version",
             "hermes-config-generate",
             "signals-run",
             "signals-latest",
             "signals-evaluate-outcomes",
             "advice-readiness",
             "paper-advice",
+            "evidence-repair",
+            "pilot-weekly-report",
             "investor-committee-run",
             "investor-committee-latest",
             "promote-signal",
@@ -829,6 +865,7 @@ def main() -> None:
             "earnings-review",
             "list-earnings-reviews",
             "quote-history-refresh",
+            "quote-history-refresh-batch",
             "list-price-bars",
             "import-backtest-run-card",
             "list-backtest-imports",
@@ -934,6 +971,7 @@ def main() -> None:
     parser.add_argument("--source-id", default=None)
     parser.add_argument("--refresh", action="store_true")
     parser.add_argument("--use-quote-history", action="store_true")
+    parser.add_argument("--latest-blocked", action="store_true")
     parser.add_argument("--prefer-core-etf", action="store_true")
     parser.add_argument("--avoid-chasing-after-big-move", action="store_true")
     parser.add_argument("--allow-options", action="store_true")
@@ -970,6 +1008,8 @@ def main() -> None:
         autonomy_status_main()
     if args.command == "doctor":
         doctor_main()
+    if args.command == "runtime-version":
+        runtime_version_main()
     if args.command == "hermes-config-generate":
         hermes_config_generate_main(args.kind, args.path)
     if args.command == "signals-run":
@@ -982,6 +1022,10 @@ def main() -> None:
         advice_readiness_main()
     if args.command == "paper-advice":
         paper_advice_main(args.symbols)
+    if args.command == "evidence-repair":
+        evidence_repair_main(args.signal_id, args.latest_blocked)
+    if args.command == "pilot-weekly-report":
+        pilot_weekly_report_main(args.days or 7)
     if args.command == "investor-committee-run":
         if not args.signal_id:
             parser.error("--signal-id is required for investor-committee-run")
@@ -1053,9 +1097,14 @@ def main() -> None:
     if args.command == "list-earnings-reviews":
         list_earnings_reviews_main(args.symbol)
     if args.command == "quote-history-refresh":
-        if not args.symbol:
-            parser.error("--symbol is required for quote-history-refresh")
-        quote_history_refresh_main(args.symbol, args.path, args.days or 365)
+        if args.symbols and not args.symbol:
+            quote_history_refresh_batch_main(args.symbols, "futu" if args.source == "futu_csv" else args.source, args.days or 365)
+        else:
+            if not args.symbol:
+                parser.error("--symbol or --symbols is required for quote-history-refresh")
+            quote_history_refresh_main(args.symbol, args.path, args.days or 365)
+    if args.command == "quote-history-refresh-batch":
+        quote_history_refresh_batch_main(args.symbols, "futu" if args.source == "futu_csv" else args.source, args.days or 365)
     if args.command == "list-price-bars":
         list_price_bars_main(args.symbol, args.limit)
     if args.command == "import-backtest-run-card":

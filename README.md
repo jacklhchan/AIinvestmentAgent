@@ -138,6 +138,10 @@ python -m invest_agent.cli signals-latest
 python -m invest_agent.cli signals-evaluate-outcomes --limit 200
 python -m invest_agent.cli advice-readiness
 python -m invest_agent.cli paper-advice
+python -m invest_agent.cli quote-history-refresh --symbols watchlist,positions,benchmarks --source futu
+python -m invest_agent.cli evidence-repair --latest-blocked
+python -m invest_agent.cli pilot-weekly-report
+python -m invest_agent.cli runtime-version
 python -m invest_agent.cli daily-pre-market
 python -m invest_agent.cli daily-post-close
 python -m invest_agent.cli promote-signal --signal-id sig_...
@@ -150,6 +154,9 @@ curl http://127.0.0.1:8788/api/signals/outcomes
 curl http://127.0.0.1:8788/api/advice/readiness
 curl -X POST http://127.0.0.1:8788/api/advice/paper -H "Content-Type: application/json" -d '{}'
 curl http://127.0.0.1:8788/api/advice/latest
+curl -X POST http://127.0.0.1:8788/api/quote-history/refresh-batch -H "Content-Type: application/json" -d '{"symbols":"watchlist,positions,benchmarks","source":"futu"}'
+curl http://127.0.0.1:8788/api/runtime/version
+curl http://127.0.0.1:8788/api/reports/pilot-weekly
 curl -X POST http://127.0.0.1:8788/api/signals/sig_.../promote-to-proposal
 ```
 
@@ -168,7 +175,9 @@ Hermes / MCP:
 
 Outcome evaluator 會用已匯入的 `price_bars` 更新每個 signal 的 1d / 5d / 20d trading-day `outcome_windows`：entry bar 是 signal time 之後第一根交易 bar，target 是 entry 後第 N 根交易 bar，calendar due date 只作顯示。結果同時寫入 normalized `signal_outcome_rows`，包含 raw / directional return、raw / directional excess return、方向命中、bullish drawdown/favorable excursion、bearish adverse upside/favorable downside。Dashboard calibration 會按 side、score bucket、readiness bucket、blocking reason 顯示 sample size、hit rate、平均 directional return / excess return、最差 adverse excursion。
 
-Advice readiness 會把 quote freshness、account snapshot、fundamentals coverage、verified evidence、news freshness、latest signal run、committee review 與 outcome validation 合成 0-100 分，Dashboard 和 Runtime Doctor 都會顯示這個分數；沒有 price bars 或 outcome 尚未評估時會明確顯示為資料覆蓋不足，而不是看起來像 app 壞掉。
+Advice readiness 會把 quote freshness、account snapshot、fundamentals coverage、verified evidence、news freshness、latest signal run、committee review 與 outcome validation 合成 global 0-100 分，並對每個 paper advice item 產生 per-symbol readiness。Dashboard 會同時顯示 global readiness 和 symbol readiness，所以即使全局分數約 80，也能看出 MSFT / AVGO 這類單一標的為何仍被 evidence、committee、quote history 或 outcome coverage 擋下。
+
+Quote history batch refresh 會用 Futu OpenD historical K-line 匯入 watchlist、current positions、recent signal symbols、SPY / QQQ 與 market-context ETFs。CSV fallback 仍保留在單一 symbol import：`quote-history-refresh --symbol AAPL --path ./bars.csv`。Evidence repair 只做 controlled read-only hydration、寫 evidence ledger、重跑 paper advice；不建立 proposal、不 approve、不下單。Weekly pilot report 會摘要 signal / paper advice 數量、promotable count、blocked reasons、outcome rows、by-side hit rate、平均 directional excess return 和 committee veto effectiveness。
 
 ## Accounting + IPS Foundation
 
@@ -599,7 +608,7 @@ python -m invest_agent.cli doctor
 python -m invest_agent.cli autonomy-loop
 ```
 
-macOS 常駐範例在 `deploy/launchd/com.local.invest-agent-scheduler.plist`。Dashboard 也有 `執行自治循環` 按鈕與 `安全自治狀態` / `主動買賣訊號` 面板。Runtime doctor 會檢查 DB、Futu、autonomy/advisor freshness、draft threshold metrics、latest signal run、proposal status mismatch；若日後加入 repair/migration 指令，必須先建立 timestamped SQLite backup 並記錄 backup path。
+macOS 常駐範例在 `deploy/launchd/com.local.invest-agent-scheduler.plist`。Dashboard 也有 `執行自治循環` 按鈕與 `安全自治狀態` / `主動買賣訊號` 面板。Runtime doctor 會檢查 DB、Futu、autonomy/advisor freshness、draft threshold metrics、latest signal run、runtime version、proposal status mismatch；若日後加入 repair/migration 指令，必須先建立 timestamped SQLite backup 並記錄 backup path。
 同一份 doctor 實作也由 `GET /api/runtime/doctor` 提供；CLI 版本直接讀本機設定與 SQLite，不依賴 API server 已啟動。
 
 ## Next Phase Research Cockpit

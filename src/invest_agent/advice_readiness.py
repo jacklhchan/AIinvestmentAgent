@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .config import Settings
@@ -37,6 +37,7 @@ class AdviceReadinessService:
             "latest_committee_review": self._check_latest_committee_review(checked_at),
             "outcome_validation": self._check_outcome_validation(),
         }
+        by_symbol = {symbol: self.run_for_symbol(symbol) for symbol in universe}
         severity = _overall_severity(checks)
         score = round(sum(float(check.get("score", 0.0)) for check in checks.values()) / max(1, len(checks)), 1)
         return {
@@ -46,7 +47,36 @@ class AdviceReadinessService:
             "readiness_version": READINESS_RULE_VERSION,
             "checked_at": checked_at.isoformat(),
             "checks": checks,
+            "by_symbol": by_symbol,
             "summary": _summary(checks, score),
+        }
+
+    def run_for_symbol(self, symbol: str, signal=None) -> dict[str, Any]:
+        checked_at = utc_now()
+        signal = signal or self._latest_signal_for_symbol(symbol)
+        checks = {
+            "quote_freshness": self._symbol_quote_freshness(symbol, checked_at),
+            "fundamentals_coverage": self._symbol_fundamentals(symbol),
+            "verified_evidence": self._symbol_verified_evidence(symbol, signal),
+            "directional_evidence": self._symbol_directional_evidence(symbol, signal),
+            "news_freshness": self._symbol_news_freshness(symbol, checked_at),
+            "committee_freshness": self._symbol_committee_freshness(symbol, signal, checked_at),
+            "outcome_coverage": self._symbol_outcome_coverage(symbol, signal),
+        }
+        score = round(sum(float(check.get("score", 0.0)) for check in checks.values()) / max(1, len(checks)), 1)
+        severity = _overall_severity(checks)
+        return {
+            "symbol": symbol.upper(),
+            "ok": severity != "error" and score >= 75,
+            "severity": severity,
+            "score": score,
+            "checked_at": checked_at.isoformat(),
+            "checks": checks,
+            "failed_checks": [
+                {"check": name, "status": check["status"], "message": check["message"]}
+                for name, check in checks.items()
+                if check["status"] != "ok"
+            ],
         }
 
     def _check_quote_freshness(self, now: datetime) -> dict[str, Any]:
@@ -240,6 +270,134 @@ class AdviceReadinessService:
             summary,
             40,
         )
+
+    def _latest_signal_for_symbol(self, symbol: str):
+        candidates = set(_symbol_candidates(symbol))
+        for signal in self.store.list_signals(limit=200):
+            if any(candidate in candidates for candidate in _symbol_candidates(signal.symbol)):
+                return signal
+        return None
+
+    def _symbol_quote_freshness(self, symbol: str, now: datetime) -> dict[str, Any]:
+        quote = self._find_quote(symbol)
+        if not quote:
+            return _check("error", f"{symbol.upper()} has no quote snapshot.", {}, 0)
+        fresh = quote_is_fresh(quote, now)
+        return _check(
+            "ok" if fresh else "warn",
+            f"{symbol.upper()} quote is fresh enough." if fresh else f"{symbol.upper()} quote is stale.",
+            {
+                "quote_symbol": quote.symbol,
+                "updated_at": quote.updated_at.isoformat(),
+                "age_seconds": quote_age_seconds(quote, now),
+                "freshness_limit_seconds": quote_freshness_limit_seconds(now),
+            },
+            100 if fresh else 55,
+        )
+
+    def _symbol_fundamentals(self, symbol: str) -> dict[str, Any]:
+        snapshot = self._find_fundamentals(symbol)
+        if not snapshot:
+            return _check("warn", f"{symbol.upper()} has no fundamentals snapshot.", {}, 40)
+        return _check(
+            "ok",
+            f"{symbol.upper()} fundamentals snapshot is available.",
+            {"snapshot_symbol": snapshot.symbol, "updated_at": snapshot.updated_at.isoformat(), "metric_count": len(snapshot.metrics)},
+            100,
+        )
+
+    def _symbol_verified_evidence(self, symbol: str, signal) -> dict[str, Any]:
+        if signal:
+            gate = (signal.gates or {}).get("research_gate") or {}
+            verified_count = int(gate.get("verified_count") or 0)
+            if verified_count:
+                return _check("ok", f"{symbol.upper()} signal has verified research-gate evidence.", {"verified_count": verified_count}, 100)
+        if self._find_fundamentals(symbol):
+            return _check("ok", f"{symbol.upper()} has SEC/companyfacts evidence available.", {"source": "fundamentals"}, 90)
+        return _check("warn", f"{symbol.upper()} lacks verified primary-source or fundamentals evidence.", {}, 35)
+
+    def _symbol_directional_evidence(self, symbol: str, signal) -> dict[str, Any]:
+        if signal and (signal.gates or {}).get("directional_evidence"):
+            return _check("ok", f"{symbol.upper()} signal has directional evidence.", {"from_signal_gate": True}, 100)
+        recent_news = self._recent_news(symbol)
+        if recent_news:
+            return _check("ok", f"{symbol.upper()} has recent market/news evidence.", {"news_count": len(recent_news)}, 80)
+        return _check("warn", f"{symbol.upper()} lacks recent directional market evidence.", {"news_count": 0}, 35)
+
+    def _symbol_news_freshness(self, symbol: str, now: datetime) -> dict[str, Any]:
+        news = self._recent_news(symbol, days=7)
+        latest = max((_aware(item.published_at) for item in news), default=None)
+        if not latest:
+            return _check("warn", f"{symbol.upper()} has no recent news items.", {"news_count": 0}, 45)
+        age = _age_seconds(now, latest)
+        fresh = age is not None and age <= 2 * 24 * 3600
+        return _check(
+            "ok" if fresh else "warn",
+            f"{symbol.upper()} news is recent enough." if fresh else f"{symbol.upper()} news/catalyst context is stale.",
+            {"news_count": len(news), "latest_published_at": latest.isoformat(), "age_seconds": age},
+            100 if fresh else 65,
+        )
+
+    def _symbol_committee_freshness(self, symbol: str, signal, now: datetime) -> dict[str, Any]:
+        if not signal:
+            return _check("warn", f"{symbol.upper()} has no signal-specific committee run.", {}, 45)
+        runs = self.store.list_investor_committee_runs(signal_id=signal.id, limit=1)
+        if not runs:
+            return _check("warn", f"{symbol.upper()} has no fresh investor committee run for the latest signal.", {"signal_id": signal.id}, 45)
+        run = runs[0]
+        age = _age_seconds(now, _aware(run.created_at))
+        stale_after = self.settings.paper_advice_committee_freshness_minutes * 60
+        fresh = age is not None and age <= stale_after
+        return _check(
+            "ok" if fresh else "warn",
+            f"{symbol.upper()} committee run is fresh." if fresh else f"{symbol.upper()} committee run is stale.",
+            {"signal_id": signal.id, "committee_run_id": run.id, "age_seconds": age, "stale_after_seconds": stale_after},
+            100 if fresh else 55,
+        )
+
+    def _symbol_outcome_coverage(self, symbol: str, signal) -> dict[str, Any]:
+        if signal:
+            rows = self.store.list_signal_outcome_rows(signal_id=signal.id, limit=20)
+            if rows:
+                return _check("ok", f"{symbol.upper()} latest signal has evaluated outcome rows.", {"signal_id": signal.id, "row_count": len(rows)}, 100)
+            return _check("warn", f"{symbol.upper()} latest signal has no evaluated outcome rows yet.", {"signal_id": signal.id}, 45)
+        candidates = set(_symbol_candidates(symbol))
+        count = 0
+        for row in self.store.list_signal_outcome_rows(limit=500):
+            signal_for_row = self.store.get_signal(row.signal_id)
+            if signal_for_row and any(candidate in candidates for candidate in _symbol_candidates(signal_for_row.symbol)):
+                count += 1
+        return _check(
+            "ok" if count else "warn",
+            f"{symbol.upper()} has historical outcome coverage." if count else f"{symbol.upper()} has no outcome coverage yet.",
+            {"row_count": count},
+            90 if count else 45,
+        )
+
+    def _find_quote(self, symbol: str):
+        for candidate in _symbol_candidates(symbol):
+            quote = self.store.get_quote(candidate)
+            if quote:
+                return quote
+        candidates = set(_symbol_candidates(symbol))
+        return next((quote for quote in self.store.list_quotes() if any(item in candidates for item in _symbol_candidates(quote.symbol))), None)
+
+    def _find_fundamentals(self, symbol: str):
+        for candidate in _symbol_candidates(symbol):
+            snapshot = self.store.get_fundamentals(candidate)
+            if snapshot:
+                return snapshot
+        candidates = set(_symbol_candidates(symbol))
+        return next((item for item in self.store.list_fundamentals() if any(candidate in candidates for candidate in _symbol_candidates(item.symbol))), None)
+
+    def _recent_news(self, symbol: str, *, days: int | None = None):
+        cutoff = utc_now() - timedelta(days=days or self.settings.news_lookback_days)
+        candidates = set(_symbol_candidates(symbol))
+        items = []
+        for candidate in candidates:
+            items.extend(self.store.list_news(symbol=candidate, limit=80))
+        unique = {item.id: item for item in items}
+        return [item for item in unique.values() if _aware(item.published_at) >= cutoff]
 
 
 def _check(status: str, message: str, metrics: dict[str, Any], score: float) -> dict[str, Any]:

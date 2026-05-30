@@ -953,6 +953,21 @@ class QuoteHistoryRefreshRequest(BaseModel):
         return value.strip().upper()
 
 
+class QuoteHistoryBatchRefreshRequest(BaseModel):
+    symbols: list[str] | str = Field(default_factory=lambda: ["watchlist", "positions", "benchmarks"])
+    source: str = "futu"
+    days: int = Field(default=365, gt=0, le=5000)
+    ktype: str = "K_DAY"
+    autype: str = "qfq"
+
+    @field_validator("symbols")
+    @classmethod
+    def normalize_quote_batch_symbols(cls, value: list[str] | str) -> list[str] | str:
+        if isinstance(value, str):
+            return value.strip()
+        return [item.strip() for item in value if item and item.strip()]
+
+
 class ExternalBacktestImport(BaseModel):
     id: str = Field(default_factory=lambda: new_id("btimp"))
     source: ExternalBacktestSource = ExternalBacktestSource.MANUAL
@@ -2573,6 +2588,7 @@ class PaperAdviceItem(BaseModel):
     vetoes: list[str] = Field(default_factory=list)
     missing_evidence: list[str] = Field(default_factory=list)
     gates: dict[str, Any] = Field(default_factory=dict)
+    symbol_readiness: dict[str, Any] = Field(default_factory=dict)
     suggested_user_action: str = ""
     promotable: bool = False
     created_at: datetime = Field(default_factory=utc_now)
