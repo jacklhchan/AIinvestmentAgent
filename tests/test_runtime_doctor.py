@@ -5,6 +5,7 @@ from invest_agent.demo_data import seed_demo_data
 from invest_agent.models import ProposalCreate, ProposalStatus, Side
 from invest_agent.runtime_doctor import RuntimeDoctorService
 from invest_agent.services import InvestmentService
+from invest_agent.signals import SignalEngine
 from invest_agent.store import Store
 
 
@@ -43,7 +44,46 @@ def test_runtime_doctor_reports_core_checks_without_api(tmp_path, monkeypatch) -
     assert result["checks"]["futu_connection"]["status"] == "ok"
     assert result["checks"]["draft_min_score"]["metrics"]["skipped_below_min_score"] == 1
     assert result["checks"]["draft_min_score"]["metrics"]["max_score_seen"] == 2
+    assert "latest_signal_run" in result["checks"]
     assert result["checks"]["skipped_reasons"]["metrics"]["top_reasons"]
+
+
+def test_runtime_doctor_reports_latest_signal_run(tmp_path, monkeypatch) -> None:
+    from invest_agent.models import NewsItem, Quote, SignalRunRequest, SignalSource, utc_now
+
+    settings = Settings(
+        db_path=tmp_path / "test.db",
+        watchlist_symbols="GOOGL",
+        market_context_symbols="SPY,QQQ,VIXY,TLT,GLD,USO",
+        signal_buy_threshold=70,
+        signal_watch_threshold=45,
+    )
+    store = Store(settings.db_path)
+    seed_demo_data(store, force=True)
+    for symbol, move in {"SPY": 1.0, "QQQ": 1.2, "VIXY": -2.0, "TLT": 0.1, "GLD": -0.2, "USO": -0.3}.items():
+        store.upsert_quote(Quote(symbol=symbol, last_price=100, previous_close=99, change_pct=move))
+    store.upsert_quote(Quote(symbol="GOOGL", last_price=200, previous_close=198, change_pct=1.0))
+    store.upsert_news(
+        NewsItem(
+            symbol="GOOGL",
+            title="Alphabet shares rise after AI demand update",
+            source="gdelt",
+            published_at=utc_now(),
+            summary="Demand remains stable.",
+        )
+    )
+    SignalEngine(settings, store).run(SignalRunRequest(symbols=["GOOGL"], source=SignalSource.CLI))
+    monkeypatch.setattr(
+        "invest_agent.runtime_doctor.get_futu_status",
+        lambda _settings: {"read_enabled": False, "connected": False, "available": True, "message": "disabled"},
+    )
+
+    result = RuntimeDoctorService(settings, store).run()
+
+    latest_signal = result["checks"]["latest_signal_run"]
+    assert latest_signal["status"] == "ok"
+    assert latest_signal["metrics"]["signal_count"] == 1
+    assert latest_signal["metrics"]["max_score"] > 0
 
 
 def test_runtime_doctor_reports_proposal_status_mismatches(tmp_path, monkeypatch) -> None:

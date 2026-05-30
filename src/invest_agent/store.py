@@ -79,6 +79,10 @@ from .models import (
     ShadowRule,
     ShadowStrategy,
     ShadowStrategyStatus,
+    Signal,
+    SignalRun,
+    SignalSide,
+    SignalStatus,
     SymbolClassification,
     TaxLotStatus,
     Thesis,
@@ -109,6 +113,10 @@ class Store:
         return conn
 
     def init(self) -> None:
+        schema_backup_path = self._backup_before_schema_change_if_needed(
+            missing_any_of={"signal_runs", "signals"},
+            label="signals-schema-v1",
+        )
         with self.connect() as conn:
             conn.executescript(
                 """
@@ -616,16 +624,76 @@ class Store:
                     payload TEXT NOT NULL,
                     FOREIGN KEY (run_id) REFERENCES opportunity_radar_runs(id)
                 );
+
+                CREATE TABLE IF NOT EXISTS signal_runs (
+                    id TEXT PRIMARY KEY,
+                    source TEXT NOT NULL,
+                    horizon TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS signals (
+                    id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    score INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    FOREIGN KEY (run_id) REFERENCES signal_runs(id)
+                );
                 """
             )
             self._ensure_column(conn, "shadow_rules", "created_at", "TEXT")
             self._ensure_column(conn, "advisor_questions", "original_symbol", "TEXT")
             self._ensure_column(conn, "advisor_questions", "resolved_symbol", "TEXT")
             self._ensure_column(conn, "advisor_questions", "symbol_resolution_status", "TEXT")
+            if schema_backup_path:
+                event = AuditEvent(
+                    event_type="sqlite_backup_created",
+                    entity_type="database",
+                    entity_id=str(self.db_path),
+                    payload={"backup_path": str(schema_backup_path), "label": "signals-schema-v1"},
+                )
+                conn.execute(
+                    """
+                    INSERT INTO audit_events(event_type, entity_type, entity_id, created_at, payload)
+                    VALUES(?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event.event_type,
+                        event.entity_type,
+                        event.entity_id,
+                        event.created_at.isoformat(),
+                        json.dumps(event.payload, default=str),
+                    ),
+                )
 
     @staticmethod
     def _dump(model: Any) -> str:
         return model.model_dump_json()
+
+    def _backup_before_schema_change_if_needed(self, *, missing_any_of: set[str], label: str) -> Path | None:
+        if not self.db_path.exists() or self.db_path.stat().st_size == 0:
+            return None
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+                if not (missing_any_of - tables):
+                    return None
+                timestamp = utc_now().astimezone(timezone.utc).strftime("%Y%m%d_%H%M%S")
+                safe_label = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in label).strip("-") or "schema"
+                backup_dir = self.db_path.parent / "backups"
+                backup_dir.mkdir(parents=True, exist_ok=True)
+                backup_path = backup_dir / f"{self.db_path.stem}-{timestamp}-{safe_label}{self.db_path.suffix or '.db'}"
+                with sqlite3.connect(backup_path) as target:
+                    conn.backup(target)
+                return backup_path
+        except sqlite3.DatabaseError as exc:
+            raise RuntimeError(f"failed to create SQLite backup before schema change: {exc}") from exc
 
     @staticmethod
     def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -1856,6 +1924,127 @@ class Store:
             where=" AND ".join(clauses),
             args=tuple(args),
             order_by="rank ASC, created_at DESC",
+            limit=limit,
+        )
+
+    def create_signal_run(self, item: SignalRun) -> SignalRun:
+        stored_run = item.model_copy(update={"signals": []})
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO signal_runs(id, source, horizon, created_at, payload)
+                VALUES(?, ?, ?, ?, ?)
+                """,
+                (
+                    stored_run.id,
+                    stored_run.source.value,
+                    stored_run.horizon.value,
+                    stored_run.created_at.isoformat(),
+                    self._dump(stored_run),
+                ),
+            )
+            for signal in item.signals:
+                conn.execute(
+                    """
+                    INSERT INTO signals(id, run_id, symbol, side, status, score, created_at, expires_at, payload)
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        signal.id,
+                        signal.run_id,
+                        signal.symbol,
+                        signal.side.value,
+                        signal.status.value,
+                        signal.score,
+                        signal.created_at.isoformat(),
+                        signal.expires_at.isoformat(),
+                        self._dump(signal),
+                    ),
+                )
+        self.audit(
+            "signal_run_created",
+            "signal_run",
+            item.id,
+            {
+                "source": item.source.value,
+                "horizon": item.horizon.value,
+                "signal_count": len(item.signals),
+                "run_card_id": item.run_card_id,
+            },
+        )
+        return self.get_signal_run(item.id) or item
+
+    def get_signal_run(self, run_id: str) -> SignalRun | None:
+        run = self._get_payload("signal_runs", SignalRun, "id", run_id)
+        if not run:
+            return None
+        return run.model_copy(update={"signals": self.list_signals(run_id=run.id, limit=200)})
+
+    def list_signal_runs(self, *, limit: int = 20) -> list[SignalRun]:
+        runs = self._list_payloads("signal_runs", SignalRun, order_by="created_at DESC", limit=limit)
+        return [run.model_copy(update={"signals": self.list_signals(run_id=run.id, limit=200)}) for run in runs]
+
+    def get_latest_signal_run(self) -> SignalRun | None:
+        runs = self.list_signal_runs(limit=1)
+        return runs[0] if runs else None
+
+    def get_signal(self, signal_id: str) -> Signal | None:
+        return self._get_payload("signals", Signal, "id", signal_id)
+
+    def update_signal(self, item: Signal, event_type: str = "signal_updated") -> Signal:
+        self._update_payload(
+            "signals",
+            "id",
+            item.id,
+            ["run_id", "symbol", "side", "status", "score", "created_at", "expires_at"],
+            [
+                item.run_id,
+                item.symbol,
+                item.side.value,
+                item.status.value,
+                item.score,
+                item.created_at.isoformat(),
+                item.expires_at.isoformat(),
+            ],
+            item,
+        )
+        self.audit(
+            event_type,
+            "signal",
+            item.id,
+            {"symbol": item.symbol, "side": item.side.value, "status": item.status.value, "proposal_id": item.proposal_id},
+        )
+        return item
+
+    def list_signals(
+        self,
+        *,
+        run_id: str | None = None,
+        status: SignalStatus | None = None,
+        side: SignalSide | None = None,
+        symbol: str | None = None,
+        limit: int = 50,
+    ) -> list[Signal]:
+        clauses: list[str] = []
+        args: list[Any] = []
+        if run_id:
+            clauses.append("run_id = ?")
+            args.append(run_id)
+        if status:
+            clauses.append("status = ?")
+            args.append(status.value)
+        if side:
+            clauses.append("side = ?")
+            args.append(side.value)
+        if symbol:
+            clauses.append("symbol = ?")
+            args.append(symbol.upper())
+        return self._list_payloads(
+            "signals",
+            Signal,
+            where=" AND ".join(clauses),
+            args=tuple(args),
+            order_by="created_at DESC",
             limit=limit,
         )
 

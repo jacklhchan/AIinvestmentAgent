@@ -8,8 +8,9 @@
 - AI Advisor Brief：首頁一鍵自動整理 portfolio、proposal、research goals、theses、catalysts、earnings reviews、behavior / shadow reports，直接輸出 research-only 建議
 - Market Context Lens：獨立追蹤 index、sector、theme、volatility、rates、gold、oil 與 cash-like ETF，只作市場背景與風險提醒，不直接產生 proposal
 - Opportunity Radar：回答「今晚市場有無值得留意的新機會？」這類 broad question，輸出 evidence-ranked WATCH / RESEARCH / BLOCKED / AVOID cards，不直接建立 proposal
+- Proactive Paper Signal Copilot：用 deterministic feature scoring 主動產生 `BUY_SIGNAL` / `SELL_SIGNAL` / `ADD_SIGNAL` / `REDUCE_SIGNAL` / `WATCH` / `BLOCKED`，只可升級成 paper proposal，不能批准或下實盤單
 - Canonical Accounting + IPS foundation：由交易日誌同步成 accounting transactions、FIFO tax lots、accounting snapshot，並把確認後的 Advisor Profile 固化成 Investor Policy Statement
-- SQLite 狀態儲存：proposal、approval、paper executions、portfolio、quotes、news、fundamentals、research goals、evidence rows、theses、thesis updates、catalysts、catalyst reviews、earnings reviews、research run cards、trade journal、behavior reports、shadow account、audit events
+- SQLite 狀態儲存：signals、signal runs、proposal、approval、paper executions、portfolio、quotes、news、fundamentals、research goals、evidence rows、theses、thesis updates、catalysts、catalyst reviews、earnings reviews、research run cards、trade journal、behavior reports、shadow account、audit events
 - 風控/審批狀態機：TTL、重複單、notional、confidence、price drift revalidation
 - Hermes daily MCP surface：日常 Telegram 只暴露 high-level Advisor/Profile/Committee tools；full study / committee 會先做受控 evidence hydration，再把 frozen data pack 交給 committee
 - Futu OpenD read-only refresh：讀取資金、持倉與持倉 quote snapshot，不 unlock trade
@@ -25,7 +26,7 @@
 - Shadow Account / Counterfactual Report：從 behavior report 抽取 deterministic draft rules，人工確認後檢查 early/late exits、thesis mismatch、ignored catalysts；research-only，不產生 proposal
 - Event replay：把 portfolio、quotes、news/evidence、fundamental snapshots 匯出成 JSONL，再重播用於信號驗證
 - Hermes proposal drafting：根據 watchlist 新聞產生結構化 draft，可選擇送入既有風控與審批狀態機
-- Safe autonomy loop：定時刷新 Futu/新聞/SEC/基本面並建立 paper-only proposal，所有交易仍需人工批准
+- Safe autonomy loop：定時刷新 Futu/新聞/SEC/基本面、產生 paper signals，並在 gate / cooldown 允許時建立 paper-only proposal，所有交易仍需人工批准
 - 繁體中文本機 dashboard：可看持倉、新聞、pending proposal、資料來源、刷新時間、audit trail，並在瀏覽器批准/拒絕
 - launchd 與 Hermes config 範例
 
@@ -106,6 +107,41 @@ Advisor Profile update 必須先由 Hermes 建立 pending suggestion，再由你
 安全邊界不變：Advisor output 只會寫 advisor question / pulse / brief / recommendation / run card，不會建立 `PENDING` proposal、不會 approve、不會 unlock Futu，也不會送 live order。若你仍想買賣，仍要走 `InvestmentService`、evidence gate、thesis/catalyst invariants、policy engine 與人工確認。
 
 Opportunity Radar 是 Advisor Mode 的內部 service。它使用 market regime、sector/theme ETF、symbol-specific quote/news/fundamentals/thesis/catalyst、portfolio fit、risk gate、behavior/shadow evidence 六層資料做 deterministic scoring。輸出可以是 `watch`、`research`、`blocked`、`avoid` 或 `action_candidate`；`action_candidate` 仍只代表「可考慮建立研究 / proposal candidate」，不是買入指令。任何包含單股的 radar card 如果完全缺少 source-backed thesis / SEC / IR / fundamentals evidence，最多只能保留為 watch/research/block，不可升級為 `action_candidate`。
+
+## Proactive Paper Signal Copilot
+
+Signal Engine 是 Advisor / Opportunity Radar 之外的主動訊號層。它會每次 safe autonomy cycle 或手動執行時，針對 watchlist 產生 deterministic paper-trading signals：
+
+- `BUY_SIGNAL` / `ADD_SIGNAL`：分數達到 `INVEST_AGENT_SIGNAL_BUY_THRESHOLD`，且 gate 沒有封鎖時，可由人類升級成 paper proposal。
+- `SELL_SIGNAL` / `REDUCE_SIGNAL`：負向分數、thesis invalidation、持倉過重或 stop/risk rule 觸發時產生；仍需人類升級與批准。
+- `WATCH` / `HOLD`：有資訊但分數不足，或已有持倉但沒有明確調整理由。
+- `BLOCKED`：signal 本身存在，但 quote、verified evidence、research gate、catalyst、market regime 或 duplicate cooldown 阻止升級成 proposal。
+- `AVOID`：負向訊號明確但本機沒有對應持倉，不建立賣出 proposal。
+
+Signal score 不是 LLM 決策，而是 deterministic feature breakdown：market regime、sector/theme strength、price momentum、news/catalyst score、fundamentals、thesis alignment、portfolio fit、risk penalty、behavior penalty。每個 signal 會保存 signal-time price、suggested qty/notional、evidence、counter-evidence、gate result、feature breakdown 和 outcome windows，方便之後 replay/backtest。
+
+```bash
+INVEST_AGENT_SIGNAL_BUY_THRESHOLD=70
+INVEST_AGENT_SIGNAL_SELL_THRESHOLD=65
+INVEST_AGENT_SIGNAL_WATCH_THRESHOLD=45
+INVEST_AGENT_SIGNAL_MAX_PER_RUN=8
+INVEST_AGENT_SIGNAL_EXPIRY_HOURS=24
+INVEST_AGENT_SIGNAL_DUPLICATE_COOLDOWN_MINUTES=240
+```
+
+CLI / REST：
+
+```bash
+python -m invest_agent.cli signals-run
+python -m invest_agent.cli signals-latest
+python -m invest_agent.cli promote-signal --signal-id sig_...
+
+curl -X POST http://127.0.0.1:8788/api/signals/run -H "Content-Type: application/json" -d '{}'
+curl http://127.0.0.1:8788/api/signals/latest
+curl -X POST http://127.0.0.1:8788/api/signals/sig_.../promote-to-proposal
+```
+
+安全邊界不變：signal 可以主動、明確、有方向，但不是 approval，不會 unlock Futu，也不會送 live order。升級後的 proposal 仍要走 `InvestmentService`、research evidence gate、thesis/catalyst invariants、policy engine 與人工批准。
 
 ## Accounting + IPS Foundation
 
@@ -209,6 +245,10 @@ INVEST_AGENT_WATCHLIST=AAPL,MSFT,NVDA,GOOGL
 INVEST_AGENT_DRAFT_NOTIONAL_USD=1000
 INVEST_AGENT_DRAFT_MAX_CANDIDATES=3
 INVEST_AGENT_DRAFT_MIN_SCORE=7
+INVEST_AGENT_SIGNAL_BUY_THRESHOLD=70
+INVEST_AGENT_SIGNAL_SELL_THRESHOLD=65
+INVEST_AGENT_SIGNAL_WATCH_THRESHOLD=45
+INVEST_AGENT_SIGNAL_MAX_PER_RUN=8
 INVEST_AGENT_NEWS_LOOKBACK_DAYS=3
 INVEST_AGENT_NEWS_MAX_PER_SYMBOL=5
 INVEST_AGENT_NEWS_MAX_SYMBOLS=6
@@ -497,7 +537,7 @@ python -m invest_agent.cli event-replay --path artifacts/replay/latest-events.js
 
 ## Safe Autonomy Loop
 
-自治層會跑一個安全循環：刷新只讀資料、更新新聞與 primary sources、解析 SEC companyfacts、草擬交易提案，並在 evidence gate 與 cooldown 都允許時建立 `PENDING` proposal。它不會批准 proposal、不會 unlock Futu、不會送 live order。
+自治層會跑一個安全循環：刷新只讀資料、更新新聞與 primary sources、解析 SEC companyfacts、產生主動 paper signals、草擬交易提案，並在 evidence gate 與 cooldown 都允許時建立 `PENDING` proposal。它不會批准 proposal、不會 unlock Futu、不會送 live order。
 同一時間只允許一個 safe autonomy cycle 執行；launchd、Dashboard、CLI、MCP 若重疊觸發，後到的請求會回傳 structured skipped result，不會重複刷新或建立 proposal。
 
 ```bash
@@ -521,7 +561,7 @@ python -m invest_agent.cli doctor
 python -m invest_agent.cli autonomy-loop
 ```
 
-macOS 常駐範例在 `deploy/launchd/com.local.invest-agent-scheduler.plist`。Dashboard 也有 `執行自治循環` 按鈕與 `安全自治狀態` 面板。Runtime doctor 會檢查 DB、Futu、autonomy/advisor freshness、draft threshold metrics、proposal status mismatch；若日後加入 repair/migration 指令，必須先建立 timestamped SQLite backup 並記錄 backup path。
+macOS 常駐範例在 `deploy/launchd/com.local.invest-agent-scheduler.plist`。Dashboard 也有 `執行自治循環` 按鈕與 `安全自治狀態` / `主動買賣訊號` 面板。Runtime doctor 會檢查 DB、Futu、autonomy/advisor freshness、draft threshold metrics、latest signal run、proposal status mismatch；若日後加入 repair/migration 指令，必須先建立 timestamped SQLite backup 並記錄 backup path。
 同一份 doctor 實作也由 `GET /api/runtime/doctor` 提供；CLI 版本直接讀本機設定與 SQLite，不依賴 API server 已啟動。
 
 ## Next Phase Research Cockpit

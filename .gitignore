@@ -8,5 +8,6 @@ __pycache__/
 *.egg-info/
 data/*.db
 data/*.db-*
+data/backups/
 logs/
 artifacts/

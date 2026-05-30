@@ -35,6 +35,7 @@ from .portfolio_studio import PortfolioStudioService
 from .quote_history import QuoteHistoryService
 from .runtime_doctor import RuntimeDoctorService
 from .sector_lens import SectorLensService
+from .signals import SignalEngine
 from .skill_validator import SkillValidatorService
 from .models import (
     AdvisorBriefRequest,
@@ -87,6 +88,10 @@ from .models import (
     ShadowStrategyConfirmRequest,
     ShadowStrategyExtractRequest,
     ShadowStrategyStatus,
+    SignalPromoteRequest,
+    SignalRejectRequest,
+    SignalRunRequest,
+    SignalStatus,
     ThesisCreate,
     ThesisStatus,
     ThesisUpdateCreate,
@@ -1035,6 +1040,49 @@ def run_autonomy_cycle(request: AutonomyRunRequest | None = None):
     )
 
 
+@app.post("/api/signals/run")
+def run_signals(request: SignalRunRequest | None = None):
+    request = request or SignalRunRequest()
+    return SignalEngine(get_settings(), get_store(), get_service()).run(
+        request.model_copy(update={"source": request.source}),
+        actor=RunCardActor.API,
+        trigger_source=RunCardTriggerSource.MANUAL,
+    )
+
+
+@app.get("/api/signals/latest")
+def latest_signals(limit: int = 20):
+    store = get_store()
+    run = store.get_latest_signal_run()
+    return {"run": run, "signals": store.list_signals(limit=limit)}
+
+
+@app.get("/api/signals/runs")
+def signal_runs(limit: int = 20):
+    return get_store().list_signal_runs(limit=limit)
+
+
+@app.get("/api/signals")
+def signals(status: SignalStatus | None = None, symbol: str | None = None, limit: int = 50):
+    return get_store().list_signals(status=status, symbol=symbol, limit=limit)
+
+
+@app.post("/api/signals/{signal_id}/promote-to-proposal")
+def promote_signal(signal_id: str, request: SignalPromoteRequest | None = None):
+    try:
+        return SignalEngine(get_settings(), get_store(), get_service()).promote_to_proposal(signal_id, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/signals/{signal_id}/reject")
+def reject_signal(signal_id: str, request: SignalRejectRequest | None = None):
+    try:
+        return SignalEngine(get_settings(), get_store(), get_service()).reject_signal(signal_id, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @app.post("/api/events/export")
 def export_events(request: EventReplayRequest | None = None):
     request = request or EventReplayRequest()
@@ -1424,6 +1472,9 @@ DASHBOARD_HTML = """
     .PENDING { color: var(--amber); border-color: #dfc68a; background: #fff7df; }
     .APPROVED, .EXECUTED { color: var(--mint); border-color: #9ad6c5; background: #eaf8f3; }
     .REJECTED, .RISK_REJECTED, .EXPIRED { color: var(--coral); border-color: #e6aaa5; background: #fff0ee; }
+    .BUY_SIGNAL, .ADD_SIGNAL { color: var(--mint); border-color: #9ad6c5; background: #eaf8f3; }
+    .SELL_SIGNAL, .REDUCE_SIGNAL, .AVOID { color: var(--coral); border-color: #e6aaa5; background: #fff0ee; }
+    .WATCH, .HOLD, .BLOCKED { color: var(--amber); border-color: #dfc68a; background: #fff7df; }
     .ACTIVE { color: var(--blue); border-color: #9ab3df; background: #eef4ff; }
     .COMPLETED { color: var(--mint); border-color: #9ad6c5; background: #eaf8f3; }
     .INSUFFICIENT { color: var(--amber); border-color: #dfc68a; background: #fff7df; }
@@ -1552,6 +1603,7 @@ DASHBOARD_HTML = """
         <button class="secondary" id="primary-refresh" type="button">刷新 SEC/IR</button>
         <button class="secondary" id="fundamentals-refresh" type="button">刷新 SEC Fundamentals</button>
         <button class="secondary" id="autonomy-run" type="button">執行自治循環</button>
+        <button class="secondary" id="signals-run" type="button">產生 Paper Signals</button>
         <button class="secondary" id="draft-proposals" type="button">草擬並送風控</button>
         <button class="secondary" id="futu-refresh" type="button">刷新富途 OpenD</button>
         <div class="mode" id="mode">載入中</div>
@@ -1688,6 +1740,18 @@ DASHBOARD_HTML = """
     <section class="panel">
       <h2>安全自治狀態</h2>
       <div class="source-strip" id="autonomy-strip"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-title-row">
+        <h2>主動買賣訊號</h2>
+        <div class="advisor-actions">
+          <button class="primary" id="signals-panel-run" type="button">重新產生</button>
+        </div>
+      </div>
+      <table>
+        <thead><tr><th>訊號</th><th>標的 / 分數</th><th>Feature Breakdown</th><th>Gate / 操作</th></tr></thead>
+        <tbody id="signals"></tbody>
+      </table>
     </section>
     <section class="panel">
       <h2>研究目標與證據帳本</h2>
@@ -1920,6 +1984,16 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       EXECUTED: "已執行"
     };
     const sideLabels = { BUY: "買入", SELL: "賣出" };
+    const signalSideLabels = {
+      BUY_SIGNAL: "買入訊號",
+      SELL_SIGNAL: "賣出訊號",
+      ADD_SIGNAL: "加倉訊號",
+      REDUCE_SIGNAL: "減倉訊號",
+      HOLD: "持有",
+      WATCH: "觀察",
+      BLOCKED: "Gate 封鎖",
+      AVOID: "避開"
+    };
     const goalStatusLabels = {
       ACTIVE: "進行中",
       COMPLETED: "證據足夠",
@@ -1998,6 +2072,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       shadow_report: "影子帳戶報告",
       safe_autonomy_cycle: "自治循環",
       proposal_draft: "提案草稿",
+      signal_run: "主動訊號",
       market_regime: "市場狀態",
       opportunity_radar: "機會雷達",
       future_backtest_import: "Backtest 匯入",
@@ -2143,6 +2218,10 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       shadow_report_created: "影子報告已建立",
       autonomy_cycle_started: "自治循環已開始",
       autonomy_cycle_completed: "自治循環已完成",
+      signal_run_created: "主動訊號已建立",
+      signals_generated: "主動訊號已產生",
+      signal_promoted_to_proposal: "訊號已升級成提案",
+      signal_rejected: "訊號已拒絕",
       ir_feeds_refreshed: "公司 IR 已刷新",
       event_replay_exported: "事件重播已匯出",
       events_replayed: "事件已重播",
@@ -2684,6 +2763,28 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       }).join("") || `<tr><td colspan="2" class="muted">尚未建立反事實報告；確認 shadow strategy 後再執行。</td></tr>`;
     }
 
+    function renderSignals(payload) {
+      const signals = payload?.signals || [];
+      document.querySelector("#signals").innerHTML = signals.slice(0, 12).map(signal => {
+        const features = signal.feature_breakdown || {};
+        const featureText = ["market_regime", "sector_theme_strength", "price_momentum", "news_catalyst", "fundamentals", "thesis_alignment", "portfolio_fit", "risk_penalty", "behavior_penalty"]
+          .map(key => `${key.replaceAll("_", " ")} ${Number(features[key] || 0).toFixed(0)}`)
+          .join(" · ");
+        const blockers = signal.gates?.blocking_reasons || [];
+        const gateText = blockers.length ? blockers.slice(0, 3).map(escapeHtml).join("; ") : "可送 proposal gate";
+        const promote = ["BUY_SIGNAL", "SELL_SIGNAL", "ADD_SIGNAL", "REDUCE_SIGNAL"].includes(signal.side) && signal.status === "active"
+          ? `<button class="primary" data-promote-signal="${escapeHtml(signal.id)}">升級提案</button>`
+          : "";
+        const reject = signal.status === "active" ? `<button class="danger" data-reject-signal="${escapeHtml(signal.id)}">拒絕</button>` : "";
+        return `<tr>
+          <td>${pill(signal.side, signalSideLabels[signal.side] || signal.side)}<br><span class="muted">${escapeHtml(signal.status)} · ${escapeHtml(signal.horizon)}</span></td>
+          <td><strong>${escapeHtml(signal.symbol)} · ${escapeHtml(signal.score)}/100</strong><br><span class="muted">${smallMoney(signal.signal_price || 0)} · 信心 ${Math.round((signal.confidence || 0) * 100)}% · qty ${escapeHtml(signal.suggested_qty || 0)}</span></td>
+          <td><span class="muted">${escapeHtml(featureText)}</span><br><span class="muted">raw ${escapeHtml(features.raw_score ?? 0)} · proposed ${escapeHtml(features.proposed_side || signal.side)}</span></td>
+          <td><span class="muted">${gateText}</span><br><div class="actions">${promote}${reject}</div></td>
+        </tr>`;
+      }).join("") || `<tr><td colspan="4" class="muted">尚未建立主動 paper signals。</td></tr>`;
+    }
+
     function renderProposals(proposals) {
       document.querySelector("#proposals").innerHTML = proposals.map(p => {
         const risk = p.risk_check.passed ? "通過" : (p.risk_check.reasons || []).map(escapeHtml).join("; ");
@@ -2721,7 +2822,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
     }
 
     async function loadAll() {
-      const [advisorBrief, advisorFullBrief, advisorRecommendations, opportunityRadarRuns, committeeReviews, marketContext, marketRegime, health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, runtimeDoctor, researchGoals, theses, catalysts, earningsReviews, runCards, behaviorReports, tradeImports, tradeRoundtrips, shadowStrategies, shadowReports, shadowEvents] = await Promise.all([
+      const [advisorBrief, advisorFullBrief, advisorRecommendations, opportunityRadarRuns, committeeReviews, marketContext, marketRegime, health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, runtimeDoctor, signalLatest, researchGoals, theses, catalysts, earningsReviews, runCards, behaviorReports, tradeImports, tradeRoundtrips, shadowStrategies, shadowReports, shadowEvents] = await Promise.all([
         api("/api/advisor/brief"),
         api("/api/advisor/briefs/latest"),
         api("/api/advisor/recommendations?limit=12"),
@@ -2739,6 +2840,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         api("/api/fundamentals"),
         api("/api/autonomy/status"),
         api("/api/runtime/doctor"),
+        api("/api/signals/latest?limit=12"),
         api("/api/research-goals?limit=8"),
         api("/api/theses?limit=8"),
         api("/api/catalysts/upcoming?days=14&limit=8"),
@@ -2768,6 +2870,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       renderMarketContext(marketContext);
       renderSourceStrip(health, portfolio, quotes, futuStatus);
       renderAutonomy(autonomy, runtimeDoctor);
+      renderSignals(signalLatest);
       renderResearchGoals(researchGoals);
       renderTheses(theses);
       renderCatalysts(catalysts);
@@ -2787,6 +2890,8 @@ proposal 需要靠 manual override 才能成立</textarea></div>
     document.addEventListener("click", async event => {
       const approveId = event.target.dataset.approve;
       const rejectId = event.target.dataset.reject;
+      const promoteSignalId = event.target.dataset.promoteSignal;
+      const rejectSignalId = event.target.dataset.rejectSignal;
       const confirmShadowId = event.target.dataset.confirmShadow;
       try {
         if (approveId) {
@@ -2797,6 +2902,22 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         if (rejectId) {
           await api(`/api/proposals/${rejectId}/reject`, { method: "POST", body: JSON.stringify({ reason: "在中文 Dashboard 拒絕" }) });
           setToast(`已拒絕 ${rejectId}`);
+          await loadAll();
+        }
+        if (promoteSignalId) {
+          const result = await api(`/api/signals/${promoteSignalId}/promote-to-proposal`, {
+            method: "POST",
+            body: JSON.stringify({ approved_by: "dashboard" })
+          });
+          setToast(`訊號已升級：proposal ${result.proposal.id} / ${result.proposal.status}`);
+          await loadAll();
+        }
+        if (rejectSignalId) {
+          await api(`/api/signals/${rejectSignalId}/reject`, {
+            method: "POST",
+            body: JSON.stringify({ reason: "在中文 Dashboard 拒絕" })
+          });
+          setToast(`已拒絕訊號 ${rejectSignalId}`);
           await loadAll();
         }
         if (confirmShadowId) {
@@ -3013,6 +3134,24 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         event.target.disabled = false;
       }
     });
+    async function runSignalsFromButton(event) {
+      event.target.disabled = true;
+      setToast("正在產生 deterministic paper signals...");
+      try {
+        const result = await api("/api/signals/run", {
+          method: "POST",
+          body: JSON.stringify({ source: "dashboard" })
+        });
+        setToast(`已產生 ${result.signals.length} 個 paper signals，最高分 ${result.metrics.max_score || 0}`);
+        await loadAll();
+      } catch (error) {
+        setToast(error.message);
+      } finally {
+        event.target.disabled = false;
+      }
+    }
+    document.querySelector("#signals-run").addEventListener("click", runSignalsFromButton);
+    document.querySelector("#signals-panel-run").addEventListener("click", runSignalsFromButton);
     document.querySelector("#draft-proposals").addEventListener("click", async event => {
       event.target.disabled = true;
       setToast("正在根據新聞草擬提案並送入風控...");

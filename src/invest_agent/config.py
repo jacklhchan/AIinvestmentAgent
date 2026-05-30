@@ -28,6 +28,12 @@ class Settings(BaseModel):
     draft_notional_usd: float = 1000.0
     draft_max_candidates: int = 3
     draft_min_score: int = 7
+    signal_buy_threshold: int = 70
+    signal_sell_threshold: int = 65
+    signal_watch_threshold: int = 45
+    signal_max_per_run: int = 8
+    signal_expiry_hours: int = 24
+    signal_duplicate_cooldown_minutes: int = 240
     news_lookback_days: int = 3
     news_max_per_symbol: int = 5
     news_max_symbols: int = 12
@@ -121,6 +127,12 @@ def get_settings() -> Settings:
         draft_notional_usd=_float_env("INVEST_AGENT_DRAFT_NOTIONAL_USD", 1000.0),
         draft_max_candidates=_int_env("INVEST_AGENT_DRAFT_MAX_CANDIDATES", 3),
         draft_min_score=_int_env("INVEST_AGENT_DRAFT_MIN_SCORE", 7),
+        signal_buy_threshold=_int_env("INVEST_AGENT_SIGNAL_BUY_THRESHOLD", 70),
+        signal_sell_threshold=_int_env("INVEST_AGENT_SIGNAL_SELL_THRESHOLD", 65),
+        signal_watch_threshold=_int_env("INVEST_AGENT_SIGNAL_WATCH_THRESHOLD", 45),
+        signal_max_per_run=_int_env("INVEST_AGENT_SIGNAL_MAX_PER_RUN", 8),
+        signal_expiry_hours=_int_env("INVEST_AGENT_SIGNAL_EXPIRY_HOURS", 24),
+        signal_duplicate_cooldown_minutes=_int_env("INVEST_AGENT_SIGNAL_DUPLICATE_COOLDOWN_MINUTES", 240),
         news_lookback_days=_int_env("INVEST_AGENT_NEWS_LOOKBACK_DAYS", 3),
         news_max_per_symbol=_int_env("INVEST_AGENT_NEWS_MAX_PER_SYMBOL", 5),
         news_max_symbols=_int_env("INVEST_AGENT_NEWS_MAX_SYMBOLS", 12),

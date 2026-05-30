@@ -226,6 +226,7 @@ class RunCardType(StrEnum):
     SHADOW_REPORT = "shadow_report"
     SAFE_AUTONOMY_CYCLE = "safe_autonomy_cycle"
     PROPOSAL_DRAFT = "proposal_draft"
+    SIGNAL_RUN = "signal_run"
     ADVISOR_QUESTION = "advisor_question"
     ADVISOR_PULSE = "advisor_pulse"
     ADVISOR_BRIEF = "advisor_brief"
@@ -382,6 +383,46 @@ class OpportunityRecommendationType(StrEnum):
     BLOCKED = "blocked"
     AVOID = "avoid"
     ACTION_CANDIDATE = "action_candidate"
+
+
+class SignalSide(StrEnum):
+    BUY_SIGNAL = "BUY_SIGNAL"
+    SELL_SIGNAL = "SELL_SIGNAL"
+    ADD_SIGNAL = "ADD_SIGNAL"
+    REDUCE_SIGNAL = "REDUCE_SIGNAL"
+    HOLD = "HOLD"
+    WATCH = "WATCH"
+    BLOCKED = "BLOCKED"
+    AVOID = "AVOID"
+
+
+class SignalHorizon(StrEnum):
+    INTRADAY = "intraday"
+    SWING = "swing"
+    POSITION = "position"
+    LONG_TERM = "long_term"
+
+
+class SignalStrength(StrEnum):
+    WEAK = "weak"
+    MEDIUM = "medium"
+    STRONG = "strong"
+
+
+class SignalStatus(StrEnum):
+    ACTIVE = "active"
+    EXPIRED = "expired"
+    PROMOTED = "promoted"
+    REJECTED = "rejected"
+    INVALIDATED = "invalidated"
+
+
+class SignalSource(StrEnum):
+    AUTONOMY = "autonomy"
+    DASHBOARD = "dashboard"
+    CLI = "cli"
+    API = "api"
+    MANUAL_RUN = "manual_run"
 
 
 class OpportunityCategory(StrEnum):
@@ -2338,6 +2379,87 @@ class FundamentalsRefreshResult(BaseModel):
     stored_count: int = 0
     errors: list[str] = Field(default_factory=list)
     snapshots: list[FundamentalSnapshot] = Field(default_factory=list)
+
+
+class Signal(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("sig"))
+    run_id: str
+    symbol: str
+    side: SignalSide = SignalSide.WATCH
+    horizon: SignalHorizon = SignalHorizon.SWING
+    score: int = Field(default=0, ge=0, le=100)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    strength: SignalStrength = SignalStrength.WEAK
+    source: SignalSource = SignalSource.MANUAL_RUN
+    status: SignalStatus = SignalStatus.ACTIVE
+    feature_breakdown: dict[str, Any] = Field(default_factory=dict)
+    evidence: list[str] = Field(default_factory=list)
+    counter_evidence: list[str] = Field(default_factory=list)
+    gates: dict[str, Any] = Field(default_factory=dict)
+    proposal_id: str | None = None
+    research_goal_id: str | None = None
+    thesis_id: str | None = None
+    signal_price: float | None = None
+    suggested_qty: int = 0
+    suggested_limit_price: float | None = None
+    suggested_notional_usd: float = 0.0
+    outcome_windows: dict[str, Any] = Field(default_factory=dict)
+    expires_at: datetime
+    created_at: datetime = Field(default_factory=utc_now)
+    rejected_at: datetime | None = None
+    rejection_reason: str | None = None
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_signal_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+
+class SignalRun(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("sigrun"))
+    source: SignalSource = SignalSource.MANUAL_RUN
+    horizon: SignalHorizon = SignalHorizon.SWING
+    universe: list[str] = Field(default_factory=list)
+    summary: str = ""
+    skipped: list[str] = Field(default_factory=list)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    run_card_id: str | None = None
+    signals: list[Signal] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("universe")
+    @classmethod
+    def normalize_signal_universe(cls, value: list[str]) -> list[str]:
+        return [item.strip().upper() for item in value if item and item.strip()]
+
+
+class SignalRunRequest(BaseModel):
+    symbols: list[str] | None = None
+    horizon: SignalHorizon = SignalHorizon.SWING
+    max_signals: int | None = Field(default=None, ge=1, le=50)
+    source: SignalSource = SignalSource.MANUAL_RUN
+
+    @field_validator("symbols")
+    @classmethod
+    def normalize_signal_request_symbols(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return [item.strip().upper() for item in value if item and item.strip()]
+
+
+class SignalRunResult(BaseModel):
+    run: SignalRun
+    signals: list[Signal] = Field(default_factory=list)
+    skipped: list[str] = Field(default_factory=list)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+
+
+class SignalRejectRequest(BaseModel):
+    reason: str = "Rejected by user"
+
+
+class SignalPromoteRequest(BaseModel):
+    approved_by: str = "local-user"
 
 
 class ProposalDraft(BaseModel):

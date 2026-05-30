@@ -78,6 +78,8 @@ EXPECTED_SCHEMA: dict[str, set[str]] = {
     "shadow_reports": {"id", "strategy_id", "behavior_report_id", "created_at", "payload"},
     "shadow_rules": {"id", "strategy_id", "rule_type", "created_at", "payload"},
     "shadow_strategies": {"id", "source_behavior_report_id", "status", "created_at", "updated_at", "payload"},
+    "signal_runs": {"id", "source", "horizon", "created_at", "payload"},
+    "signals": {"id", "run_id", "symbol", "side", "status", "score", "created_at", "expires_at", "payload"},
     "symbol_classifications": {"symbol", "asset_class", "payload"},
     "theses": {"id", "symbol", "side", "status", "updated_at", "payload"},
     "thesis_pillars": {"id", "thesis_id", "status", "payload"},
@@ -88,7 +90,7 @@ EXPECTED_SCHEMA: dict[str, set[str]] = {
     "trade_roundtrips": {"id", "import_id", "symbol", "opened_at", "closed_at", "payload"},
 }
 
-PRESERVED_TABLES = ("proposals", "executions", "research_goals", "research_run_cards")
+PRESERVED_TABLES = ("proposals", "executions", "research_goals", "research_run_cards", "signal_runs", "signals")
 
 
 def run_schema_check(store: Store) -> dict[str, Any]:

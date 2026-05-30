@@ -67,6 +67,10 @@ from .models import (
     ShadowStrategyConfirmRequest,
     ShadowStrategyExtractRequest,
     Side,
+    SignalPromoteRequest,
+    SignalRejectRequest,
+    SignalRunRequest,
+    SignalSource,
     TradeJournalImportRequest,
     TradeJournalSource,
 )
@@ -81,6 +85,7 @@ from .sec_companyfacts import SecCompanyFactsIngestor
 from .sec_edgar import SecEdgarIngestor
 from .sector_lens import SectorLensService
 from .shadow_account import ShadowAccountService
+from .signals import SignalEngine
 from .skill_validator import SkillValidatorService
 from .trade_journal import TradeJournalService
 
@@ -184,6 +189,42 @@ def autonomy_status_main() -> None:
 
 def doctor_main() -> None:
     print(json.dumps(RuntimeDoctorService(get_settings(), get_store()).run(), indent=2, ensure_ascii=False))
+
+
+def signals_run_main(symbols: str | None = None) -> None:
+    result = SignalEngine(get_settings(), get_store(), get_service()).run(
+        SignalRunRequest(symbols=_parse_symbols(symbols), source=SignalSource.CLI),
+        actor=RunCardActor.CLI,
+        trigger_source=RunCardTriggerSource.MANUAL,
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def signals_latest_main(limit: int = 20) -> None:
+    store = get_store()
+    print(
+        json.dumps(
+            _json({"run": store.get_latest_signal_run(), "signals": store.list_signals(limit=limit)}),
+            indent=2,
+            ensure_ascii=False,
+        )
+    )
+
+
+def promote_signal_main(signal_id: str) -> None:
+    result = SignalEngine(get_settings(), get_store(), get_service()).promote_to_proposal(
+        signal_id,
+        SignalPromoteRequest(approved_by="cli"),
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def reject_signal_main(signal_id: str, reason: str | None = None) -> None:
+    result = SignalEngine(get_settings(), get_store(), get_service()).reject_signal(
+        signal_id,
+        SignalRejectRequest(reason=reason or "Rejected from CLI"),
+    )
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
 
 
 def list_theses_main() -> None:
@@ -693,6 +734,10 @@ def main() -> None:
             "autonomy-loop",
             "autonomy-status",
             "doctor",
+            "signals-run",
+            "signals-latest",
+            "promote-signal",
+            "reject-signal",
             "market-regime",
             "list-theses",
             "list-catalysts",
@@ -775,6 +820,7 @@ def main() -> None:
     parser.add_argument("--symbols", default=None)
     parser.add_argument("--report-id", default=None)
     parser.add_argument("--strategy-id", default=None)
+    parser.add_argument("--signal-id", default=None)
     parser.add_argument("--behavior-report-id", default=None)
     parser.add_argument("--name", default=None)
     parser.add_argument("--confirmed-by", default=None)
@@ -850,6 +896,20 @@ def main() -> None:
         autonomy_status_main()
     if args.command == "doctor":
         doctor_main()
+    if args.command == "signals-run":
+        signals_run_main(args.symbols)
+    if args.command == "signals-latest":
+        signals_latest_main(args.limit)
+    if args.command == "promote-signal":
+        signal_id = args.signal_id or args.question
+        if not signal_id:
+            parser.error("--signal-id is required for promote-signal")
+        promote_signal_main(signal_id)
+    if args.command == "reject-signal":
+        signal_id = args.signal_id or args.question
+        if not signal_id:
+            parser.error("--signal-id is required for reject-signal")
+        reject_signal_main(signal_id, args.note)
     if args.command == "market-regime":
         market_regime_main(args.refresh)
     if args.command == "list-theses":

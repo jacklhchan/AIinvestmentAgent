@@ -29,6 +29,7 @@ class RuntimeDoctorService:
             "quote_freshness": self._check_quote_freshness(checked_at),
             "fundamental_freshness": self._check_fundamental_freshness(checked_at),
             "latest_proposal_draft": self._check_latest_proposal_draft(checked_at),
+            "latest_signal_run": self._check_latest_signal_run(checked_at),
             "skipped_reasons": self._check_skipped_reasons(),
             "draft_min_score": self._check_draft_min_score(),
             "proposal_status_mismatches": self._check_proposal_status_mismatches(),
@@ -50,6 +51,11 @@ class RuntimeDoctorService:
             "paper_only": self.settings.is_paper,
             "draft_min_score": self.settings.draft_min_score,
             "draft_max_candidates": self.settings.draft_max_candidates,
+            "signal_buy_threshold": self.settings.signal_buy_threshold,
+            "signal_sell_threshold": self.settings.signal_sell_threshold,
+            "signal_watch_threshold": self.settings.signal_watch_threshold,
+            "signal_max_per_run": self.settings.signal_max_per_run,
+            "signal_expiry_hours": self.settings.signal_expiry_hours,
             "autonomy_cycle_seconds": self.settings.autonomy_cycle_seconds,
             "autonomy_create_proposals": self.settings.autonomy_create_proposals,
             "autonomy_proposal_cooldown_minutes": self.settings.autonomy_proposal_cooldown_minutes,
@@ -70,6 +76,8 @@ class RuntimeDoctorService:
             "quotes",
             "research_evidence",
             "research_goals",
+            "signal_runs",
+            "signals",
         }
         try:
             with self.store.connect() as conn:
@@ -222,9 +230,34 @@ class RuntimeDoctorService:
             },
         )
 
+    def _check_latest_signal_run(self, now: datetime) -> dict[str, Any]:
+        run = self.store.get_latest_signal_run()
+        if not run:
+            return _check("warn", "No paper signal run found.", {})
+        age = _age_seconds(now, _aware(run.created_at))
+        stale_after = max(1800, self.settings.autonomy_cycle_seconds * 2)
+        level = "warn" if age is not None and age > stale_after else "ok"
+        return _check(
+            level,
+            "Latest paper signal run is stale." if level == "warn" else "Latest paper signal run is recent.",
+            {
+                "signal_run_id": run.id,
+                "created_at": run.created_at.isoformat(),
+                "age_seconds": age,
+                "stale_after_seconds": stale_after,
+                "signal_count": len(run.signals),
+                "max_score": run.metrics.get("max_score", 0),
+                "buy_count": run.metrics.get("buy_count", 0),
+                "sell_reduce_count": run.metrics.get("sell_reduce_count", 0),
+                "blocked_count": run.metrics.get("blocked_count", 0),
+                "watch_count": run.metrics.get("watch_count", 0),
+                "summary": run.summary,
+            },
+        )
+
     def _check_skipped_reasons(self) -> dict[str, Any]:
         reasons: Counter[str] = Counter()
-        for event_type in ("autonomy_cycle_completed", "autonomy_cycle_skipped", "proposal_drafts_generated"):
+        for event_type in ("autonomy_cycle_completed", "autonomy_cycle_skipped", "proposal_drafts_generated", "signals_generated"):
             for event in self.store.list_audit_events(limit=10, event_type=event_type):
                 payload = _payload(event)
                 for item in payload.get("skipped", []) or []:

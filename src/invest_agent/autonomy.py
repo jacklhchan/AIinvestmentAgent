@@ -19,12 +19,13 @@ from .futu_adapter import FutuIntegrationError, refresh_futu_readonly
 from .ir_feeds import IrFeedIngestor
 from .market_context import MarketContextService
 from .market_news import MarketNewsIngestor, external_ticker
-from .models import AutomationRunResult, AutomationStepResult, Proposal, ProposalDraft, utc_now
+from .models import AutomationRunResult, AutomationStepResult, Proposal, ProposalDraft, SignalRunRequest, SignalSource, utc_now
 from .primary_sources import refresh_primary_sources
 from .proposal_drafts import ProposalDraftEngine
 from .sec_companyfacts import SecCompanyFactsIngestor
 from .sec_edgar import SecEdgarIngestor
 from .services import InvestmentService
+from .signals import SignalEngine
 from .store import Store
 
 
@@ -93,6 +94,7 @@ class SafeAutonomyRunner:
             result.steps.append(_skipped_step("sec_companyfacts", "not due in this cycle"))
 
         result.steps.append(self._run_step("catalyst_calendar", self._review_catalysts))
+        result.steps.append(self._run_step("paper_signals", self._run_signals))
         draft_step, created, skipped = self._draft_and_optionally_create(create_proposals)
         result.steps.append(draft_step)
         result.created_proposals = created
@@ -318,11 +320,28 @@ class SafeAutonomyRunner:
             "post_event_goal_ids": created_goal_ids,
         }
 
+    def _run_signals(self) -> dict[str, Any]:
+        result = SignalEngine(self.settings, self.store, self.service).run(
+            SignalRunRequest(source=SignalSource.AUTONOMY),
+            actor="scheduler",
+            trigger_source="scheduled",
+        )
+        return {
+            "signal_run_id": result.run.id,
+            "signal_count": len(result.signals),
+            "skipped_count": len(result.skipped),
+            "max_score": result.metrics.get("max_score", 0),
+            "blocked_count": result.metrics.get("blocked_count", 0),
+            "buy_count": result.metrics.get("buy_count", 0),
+            "sell_reduce_count": result.metrics.get("sell_reduce_count", 0),
+        }
+
 
 def autonomy_status(settings: Settings, store: Store) -> dict[str, Any]:
     last_run = store.list_audit_events(limit=1, event_type="autonomy_cycle_completed")
     last_skipped = store.list_audit_events(limit=1, event_type="autonomy_cycle_skipped")
     last_draft = store.list_audit_events(limit=1, event_type="proposal_drafts_generated")
+    last_signal = store.get_latest_signal_run()
     last_draft_payload = _decode_audit_payload(last_draft[0]) if last_draft else None
     return {
         "mode": "paper" if settings.is_paper else "live-requested",
@@ -346,6 +365,15 @@ def autonomy_status(settings: Settings, store: Store) -> dict[str, Any]:
             "max_score_seen": (last_draft_payload or {}).get("max_score_seen", 0),
             "draft_count": (last_draft_payload or {}).get("draft_count", 0),
             "created_count": (last_draft_payload or {}).get("created_count", 0),
+        },
+        "latest_signal_metrics": {
+            "signal_run_id": last_signal.id if last_signal else None,
+            "created_at": last_signal.created_at.isoformat() if last_signal else None,
+            "signal_count": len(last_signal.signals) if last_signal else 0,
+            "max_score": (last_signal.metrics or {}).get("max_score", 0) if last_signal else 0,
+            "blocked_count": (last_signal.metrics or {}).get("blocked_count", 0) if last_signal else 0,
+            "buy_count": (last_signal.metrics or {}).get("buy_count", 0) if last_signal else 0,
+            "sell_reduce_count": (last_signal.metrics or {}).get("sell_reduce_count", 0) if last_signal else 0,
         },
     }
 
