@@ -40,6 +40,7 @@ from .models import (
     utc_now,
 )
 from .proposal_drafts import _fundamental_reference, _is_primary_source, _news_reference, _score_news
+from .quote_freshness import DEFAULT_QUOTE_FRESH_SECONDS, quote_age_seconds, quote_freshness_limit_seconds, quote_is_fresh
 from .research_goals import evidence_from_news, research_goal_from_draft
 from .run_cards import RunCardService, stable_hash
 from .services import InvestmentService
@@ -47,7 +48,7 @@ from .store import Store
 
 
 SIGNAL_RULE_VERSION = "signal_engine_v1"
-FRESH_QUOTE_SECONDS = 24 * 3600
+FRESH_QUOTE_SECONDS = DEFAULT_QUOTE_FRESH_SECONDS
 SECTOR_PROXIES = {
     "technology": ["XLK", "QQQ"],
     "semiconductor": ["SMH", "SOXX", "QQQ"],
@@ -171,9 +172,12 @@ class SignalEngine:
         proposal_side = _proposal_side(signal)
         if proposal_side is None:
             blocked_action = signal.gates.get("blocked_action")
+            blockers = "; ".join(signal.gates.get("blocking_reasons", [])[:3])
             reason = f"signal is {signal.side.value}"
             if blocked_action:
                 reason += f" for {blocked_action}"
+            if blockers:
+                reason += f": {blockers}"
             raise ValueError(f"{reason}; it cannot be promoted until gates pass")
         if signal.suggested_qty <= 0 or not signal.suggested_limit_price:
             raise ValueError("signal has no promotable quantity or limit price")
@@ -267,6 +271,14 @@ class SignalEngine:
         score = int(abs(raw_score))
         confidence = round(_clamp(0.35 + score / 100 * 0.52 - (0.08 if side == SignalSide.BLOCKED else 0.0), 0.0, 0.9), 2)
         qty, limit_price = self._suggested_order(side if side != SignalSide.BLOCKED else proposed_side, quote, position)
+        if proposed_side in {SignalSide.BUY_SIGNAL, SignalSide.ADD_SIGNAL} and quote and qty <= 0:
+            gates.setdefault("blocking_reasons", []).append("price exceeds paper notional budget")
+            gates["proposal_allowed"] = False
+            if side in {SignalSide.BUY_SIGNAL, SignalSide.ADD_SIGNAL}:
+                side = SignalSide.BLOCKED
+                gates["blocked_action"] = proposed_side.value
+            counter_evidence.append("price exceeds paper notional budget")
+            confidence = round(_clamp(0.35 + score / 100 * 0.52 - (0.08 if side == SignalSide.BLOCKED else 0.0), 0.0, 0.9), 2)
         return Signal(
             run_id=run.id,
             symbol=symbol,
@@ -331,6 +343,8 @@ class SignalEngine:
         now,
     ) -> dict[str, Any]:
         quote_age = _quote_age_seconds(quote, now)
+        quote_fresh = quote_is_fresh(quote, now, base_seconds=FRESH_QUOTE_SECONDS)
+        freshness_limit = quote_freshness_limit_seconds(now, base_seconds=FRESH_QUOTE_SECONDS)
         catalyst_reasons, catalyst_warnings = CatalystCalendarService(self.store).proposal_catalyst_findings(
             symbol,
             has_manual_override=False,
@@ -342,7 +356,7 @@ class SignalEngine:
         if _is_promotable_side(proposed_side):
             if not quote:
                 blocking_reasons.append("no local quote found")
-            elif quote_age is not None and quote_age > FRESH_QUOTE_SECONDS:
+            elif not quote_fresh:
                 blocking_reasons.append("quote snapshot is stale")
             if not verified_evidence:
                 blocking_reasons.append("no verified primary-source or fundamentals evidence attached")
@@ -354,8 +368,9 @@ class SignalEngine:
             if duplicate:
                 blocking_reasons.append("duplicate active signal cooldown")
         return {
-            "quote_fresh": bool(quote and (quote_age is None or quote_age <= FRESH_QUOTE_SECONDS)),
+            "quote_fresh": quote_fresh,
             "quote_age_seconds": quote_age,
+            "quote_freshness_limit_seconds": freshness_limit,
             "verified_evidence": verified_evidence,
             "directional_evidence": directional_evidence,
             "market_regime": regime.proposal_bias.value,
@@ -483,7 +498,7 @@ class SignalEngine:
             return 0, None
         if side in {SignalSide.BUY_SIGNAL, SignalSide.ADD_SIGNAL}:
             budget = min(self.settings.draft_notional_usd, self.settings.max_trade_notional_usd)
-            return int(max(1, budget // price)), round(price, 2)
+            return int(budget // price), round(price, 2)
         if side == SignalSide.REDUCE_SIGNAL and position and position.qty > 0:
             return int(max(1, min(position.qty, round(position.qty * 0.2)))), round(price, 2)
         if side == SignalSide.SELL_SIGNAL and position and position.qty > 0:
@@ -652,7 +667,7 @@ def _risk_penalty(symbol: str, quote: Quote | None, regime: MarketRegimeSnapshot
     penalty = 0.0
     if not quote:
         penalty -= 30
-    elif (age := _quote_age_seconds(quote, now)) is not None and age > FRESH_QUOTE_SECONDS:
+    elif not quote_is_fresh(quote, now, base_seconds=FRESH_QUOTE_SECONDS):
         penalty -= 12
     catalyst_reasons, catalyst_warnings = catalysts.proposal_catalyst_findings(symbol, has_manual_override=False)
     penalty -= min(30, len(catalyst_reasons) * 18 + len(catalyst_warnings) * 6)
@@ -753,9 +768,7 @@ def _thesis_invalidated(thesis) -> bool:
 
 
 def _quote_age_seconds(quote: Quote | None, now) -> float | None:
-    if not quote:
-        return None
-    return max(0.0, (now - quote.updated_at).total_seconds())
+    return quote_age_seconds(quote, now)
 
 
 def _outcome_windows(created_at) -> dict[str, Any]:

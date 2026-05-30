@@ -9,6 +9,44 @@ from invest_agent.signals import SignalEngine
 from invest_agent.store import Store
 
 
+class _Discovery:
+    def __init__(self, payload: dict):
+        self.payload = payload
+
+    def as_dict(self) -> dict:
+        return self.payload
+
+
+def _mock_discovery(status: str = "ok") -> _Discovery:
+    return _Discovery(
+        {
+            "source": "futu-opend",
+            "account_count": 1,
+            "accounts": [
+                {
+                    "acc_id": 17875763,
+                    "trd_env": "REAL",
+                    "trdmarket_auth": ["US"],
+                    "sim_acc_type": "",
+                    "security_firm": "FUTUINC",
+                }
+            ],
+            "selected_account": {
+                "acc_id": 17875763,
+                "trd_env": "REAL",
+                "trdmarket_auth": ["US"],
+                "sim_acc_type": "",
+                "security_firm": "FUTUINC",
+            }
+            if status == "ok"
+            else None,
+            "candidate_acc_ids": [17875763],
+            "selection_status": status,
+            "message": "mock discovery",
+        }
+    )
+
+
 def test_runtime_doctor_reports_core_checks_without_api(tmp_path, monkeypatch) -> None:
     settings = Settings(db_path=tmp_path / "test.db", futu_read_enabled=True, draft_min_score=9)
     store = Store(settings.db_path)
@@ -36,12 +74,17 @@ def test_runtime_doctor_reports_core_checks_without_api(tmp_path, monkeypatch) -
             "message": "mock connected",
         },
     )
+    monkeypatch.setattr("invest_agent.runtime_doctor.discover_futu_accounts", lambda _settings: _mock_discovery())
+    store.audit("futu_quotes_refreshed", "provider", "futu-opend", {"quote_count": 1})
+    store.audit("futu_account_snapshot_refreshed", "provider", "futu-opend", {"position_count": 1})
 
     result = RuntimeDoctorService(settings, store).run()
 
     assert result["settings"]["draft_min_score"] == 9
     assert result["checks"]["database"]["status"] == "ok"
-    assert result["checks"]["futu_connection"]["status"] == "ok"
+    assert result["checks"]["futu_quote_connection"]["status"] == "ok"
+    assert result["checks"]["futu_account_discovery"]["status"] == "ok"
+    assert result["checks"]["futu_selected_account_valid"]["status"] == "ok"
     assert result["checks"]["draft_min_score"]["metrics"]["skipped_below_min_score"] == 1
     assert result["checks"]["draft_min_score"]["metrics"]["max_score_seen"] == 2
     assert "latest_signal_run" in result["checks"]
@@ -77,6 +120,7 @@ def test_runtime_doctor_reports_latest_signal_run(tmp_path, monkeypatch) -> None
         "invest_agent.runtime_doctor.get_futu_status",
         lambda _settings: {"read_enabled": False, "connected": False, "available": True, "message": "disabled"},
     )
+    monkeypatch.setattr("invest_agent.runtime_doctor.discover_futu_accounts", lambda _settings: _mock_discovery())
 
     result = RuntimeDoctorService(settings, store).run()
 
@@ -108,6 +152,7 @@ def test_runtime_doctor_reports_proposal_status_mismatches(tmp_path, monkeypatch
         "invest_agent.runtime_doctor.get_futu_status",
         lambda _settings: {"read_enabled": True, "connected": True, "available": True, "message": "mock connected"},
     )
+    monkeypatch.setattr("invest_agent.runtime_doctor.discover_futu_accounts", lambda _settings: _mock_discovery())
 
     result = RuntimeDoctorService(settings, store).run()
 
@@ -116,3 +161,20 @@ def test_runtime_doctor_reports_proposal_status_mismatches(tmp_path, monkeypatch
     assert mismatch["metrics"]["count"] == 1
     assert mismatch["metrics"]["examples"][0]["table_status"] == ProposalStatus.REJECTED.value
     assert store.get_proposal(proposal.id).status == ProposalStatus.REJECTED
+
+
+def test_runtime_doctor_reports_invalid_futu_account_selection(tmp_path, monkeypatch) -> None:
+    settings = Settings(db_path=tmp_path / "test.db", futu_read_enabled=True, futu_acc_id=999999)
+    store = Store(settings.db_path)
+    seed_demo_data(store, force=True)
+    monkeypatch.setattr(
+        "invest_agent.runtime_doctor.get_futu_status",
+        lambda _settings: {"read_enabled": True, "connected": True, "available": True, "message": "mock connected"},
+    )
+    monkeypatch.setattr("invest_agent.runtime_doctor.discover_futu_accounts", lambda _settings: _mock_discovery(status="error"))
+
+    result = RuntimeDoctorService(settings, store).run()
+
+    selected = result["checks"]["futu_selected_account_valid"]
+    assert selected["status"] == "error"
+    assert selected["metrics"]["candidate_acc_ids"] == [17875763]

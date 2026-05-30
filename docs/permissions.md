@@ -75,6 +75,7 @@ Permission classes:
 | `list_dividend_reviews` | `read_only` | `execution_forbidden` |
 | `list_earnings_previews` | `read_only` | `execution_forbidden` |
 | `list_earnings_reviews` | `read_only` | `execution_forbidden` |
+| `list_futu_accounts` | `read_only` | `execution_forbidden` |
 | `list_hypotheses` | `read_only` | `execution_forbidden` |
 | `list_idea_candidates` | `read_only` | `execution_forbidden` |
 | `list_options_snapshots` | `read_only` | `execution_forbidden` |

@@ -21,7 +21,7 @@ from .dividend_lens import DividendLensService
 from .earnings_preview import EarningsPreviewService
 from .earnings_review import EarningsReviewService
 from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event_file
-from .futu_adapter import refresh_futu_readonly
+from .futu_adapter import discover_futu_accounts, refresh_futu_readonly
 from .hypotheses import HypothesisRegistryService
 from .idea_inbox import IdeaInboxService
 from .ir_feeds import IrFeedIngestor
@@ -121,15 +121,23 @@ def futu_refresh_main() -> None:
         json.dumps(
             {
                 "source": result.source,
+                "quote_status": result.quote_status,
+                "account_status": result.account_status,
+                "quote_error": result.quote_error,
+                "account_error": result.account_error,
                 "position_count": result.position_count,
                 "quote_count": result.quote_count,
-                "portfolio_source": result.portfolio.source,
-                "updated_at": result.portfolio.updated_at.isoformat(),
+                "portfolio_source": result.portfolio.source if result.portfolio else None,
+                "updated_at": result.portfolio.updated_at.isoformat() if result.portfolio else None,
             },
             indent=2,
             ensure_ascii=False,
         )
     )
+
+
+def futu_accounts_main() -> None:
+    print(json.dumps(discover_futu_accounts(get_settings()).as_dict(), indent=2, ensure_ascii=False))
 
 
 def news_refresh_main() -> None:
@@ -723,6 +731,7 @@ def main() -> None:
             "seed",
             "smoke",
             "futu-refresh",
+            "futu-accounts",
             "news-refresh",
             "draft-proposals",
             "draft-and-create",
@@ -874,6 +883,8 @@ def main() -> None:
         smoke_main()
     if args.command == "futu-refresh":
         futu_refresh_main()
+    if args.command == "futu-accounts":
+        futu_accounts_main()
     if args.command == "news-refresh":
         news_refresh_main()
     if args.command == "draft-proposals":

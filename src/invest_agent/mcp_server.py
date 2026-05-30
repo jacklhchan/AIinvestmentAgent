@@ -17,7 +17,7 @@ from .config import get_settings
 from .earnings_preview import EarningsPreviewService
 from .earnings_review import EarningsReviewService
 from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event_file as replay_events_from_file
-from .futu_adapter import get_futu_status, refresh_futu_readonly
+from .futu_adapter import discover_futu_accounts, get_futu_status, refresh_futu_readonly
 from .hypotheses import HypothesisRegistryService
 from .idea_inbox import IdeaInboxService
 from .ir_feeds import IrFeedIngestor
@@ -1118,6 +1118,12 @@ def draft_trade_proposals_from_watchlist(
 def get_futu_connection_status() -> dict:
     """Check whether local Futu OpenD read-only integration is enabled and reachable."""
     return get_futu_status(get_settings())
+
+
+@mcp.tool()
+def list_futu_accounts() -> dict:
+    """List available local Futu OpenD accounts for diagnostics; never unlocks trading."""
+    return discover_futu_accounts(get_settings()).as_dict()
 
 
 @mcp.tool()

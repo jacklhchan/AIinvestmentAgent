@@ -7,15 +7,18 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .config import Settings
-from .futu_adapter import get_futu_status
+from .futu_adapter import discover_futu_accounts, get_futu_status
 from .store import Store
 from .models import utc_now
+from .quote_freshness import quote_age_seconds, quote_freshness_limit_seconds, quote_is_fresh
 
 
 class RuntimeDoctorService:
     def __init__(self, settings: Settings, store: Store):
         self.settings = settings
         self.store = store
+        self._futu_status_cache: dict[str, Any] | None = None
+        self._futu_accounts_cache: dict[str, Any] | None = None
 
     def run(self) -> dict[str, Any]:
         checked_at = utc_now()
@@ -24,8 +27,11 @@ class RuntimeDoctorService:
             "latest_audit_event": self._check_latest_audit_event(checked_at),
             "latest_autonomy_cycle": self._check_latest_autonomy_cycle(checked_at),
             "latest_advisor_run": self._check_latest_advisor_run(checked_at),
-            "futu_connection": self._check_futu_connection(),
-            "latest_futu_refresh": self._check_latest_futu_refresh(checked_at),
+            "futu_quote_connection": self._check_futu_quote_connection(),
+            "futu_account_discovery": self._check_futu_account_discovery(),
+            "futu_selected_account_valid": self._check_futu_selected_account_valid(),
+            "futu_account_snapshot": self._check_futu_account_snapshot(checked_at),
+            "futu_quote_refresh": self._check_futu_quote_refresh(checked_at),
             "quote_freshness": self._check_quote_freshness(checked_at),
             "fundamental_freshness": self._check_fundamental_freshness(checked_at),
             "latest_proposal_draft": self._check_latest_proposal_draft(checked_at),
@@ -62,6 +68,11 @@ class RuntimeDoctorService:
             "futu_read_enabled": self.settings.futu_read_enabled,
             "futu_host": self.settings.futu_host,
             "futu_monitor_port": self.settings.futu_monitor_port,
+            "futu_trd_env": self.settings.futu_trd_env,
+            "futu_trd_market": self.settings.futu_trd_market,
+            "futu_acc_id_configured": bool(self.settings.futu_acc_id),
+            "futu_security_firm_configured": bool(self.settings.futu_security_firm),
+            "futu_sim_acc_type_configured": bool(self.settings.futu_sim_acc_type),
         }
 
     def _check_database(self) -> dict[str, Any]:
@@ -153,31 +164,94 @@ class RuntimeDoctorService:
             {"created_at": event.get("created_at"), "age_seconds": age, "payload": _payload(event)},
         )
 
-    def _check_futu_connection(self) -> dict[str, Any]:
-        status = get_futu_status(self.settings)
+    def _check_futu_quote_connection(self) -> dict[str, Any]:
+        status = self._futu_status()
         if not self.settings.futu_read_enabled:
             level = "warn"
-            message = "Futu read-only integration is disabled by config."
+            message = "Futu read-only quote integration is disabled by config."
         elif not status.get("connected"):
             level = "error"
-            message = "Futu read-only integration is enabled but not connected."
+            message = "Futu read-only quote integration is enabled but not connected."
         else:
             level = "ok"
-            message = "Futu read-only integration is connected."
+            message = "Futu read-only quote integration is connected."
         return _check(level, message, status)
 
-    def _check_latest_futu_refresh(self, now: datetime) -> dict[str, Any]:
-        event = _latest_event(self.store, "futu_readonly_refreshed")
+    def _check_futu_account_discovery(self) -> dict[str, Any]:
+        discovery = self._futu_accounts()
+        if not self.settings.futu_read_enabled:
+            return _check("warn", "Futu account discovery is disabled by config.", discovery)
+        if discovery.get("error"):
+            return _check("error", f"Futu account discovery failed: {discovery['error']}", discovery)
+        count = int(discovery.get("account_count") or 0)
+        level = "ok" if count else "warn"
+        return _check(
+            level,
+            f"Discovered {count} Futu account(s)." if count else "No Futu accounts discovered.",
+            discovery,
+        )
+
+    def _check_futu_selected_account_valid(self) -> dict[str, Any]:
+        discovery = self._futu_accounts()
+        if not self.settings.futu_read_enabled:
+            return _check("warn", "Futu account selection is disabled by config.", discovery)
+        if discovery.get("error"):
+            return _check("error", f"Futu account selection could not be checked: {discovery['error']}", discovery)
+        status = str(discovery.get("selection_status") or "warn")
+        level = "ok" if status == "ok" else "error" if status == "error" else "warn"
+        return _check(
+            level,
+            discovery.get("message") or "Futu account selection diagnostics are available.",
+            {
+                "selection_status": status,
+                "selected_account": discovery.get("selected_account"),
+                "candidate_acc_ids": discovery.get("candidate_acc_ids", []),
+                "configured_acc_id": self.settings.futu_acc_id if self.settings.futu_acc_id else None,
+                "trd_env": self.settings.futu_trd_env,
+                "trd_market": self.settings.futu_trd_market,
+            },
+        )
+
+    def _check_futu_account_snapshot(self, now: datetime) -> dict[str, Any]:
+        event = _latest_of_events(self.store, ("futu_account_snapshot_refreshed", "futu_account_snapshot_failed"))
         if not event:
-            return _check("warn", "No Futu read-only refresh audit event found.", {})
+            return _check("warn", "No Futu account snapshot audit event found.", {})
+        payload = _payload(event)
         created_at = _parse_dt(event.get("created_at"))
         age = _age_seconds(now, created_at)
         stale_after = max(1800, self.settings.autonomy_cycle_seconds * 2)
+        if event.get("event_type") == "futu_account_snapshot_failed":
+            return _check(
+                "error",
+                "Latest Futu account snapshot failed.",
+                {"created_at": event.get("created_at"), "age_seconds": age, "payload": payload},
+            )
         status = "warn" if age is not None and age > stale_after else "ok"
         return _check(
             status,
-            "Latest Futu refresh is stale." if status == "warn" else "Latest Futu refresh is recent.",
-            {"created_at": event.get("created_at"), "age_seconds": age, "stale_after_seconds": stale_after, "payload": _payload(event)},
+            "Latest Futu account snapshot is stale." if status == "warn" else "Latest Futu account snapshot is recent.",
+            {"created_at": event.get("created_at"), "age_seconds": age, "stale_after_seconds": stale_after, "payload": payload},
+        )
+
+    def _check_futu_quote_refresh(self, now: datetime) -> dict[str, Any]:
+        event = _latest_of_events(self.store, ("futu_quotes_refreshed", "futu_quote_refresh_failed"))
+        if not event:
+            return _check("warn", "No Futu quote refresh audit event found.", {})
+        payload = _payload(event)
+        created_at = _parse_dt(event.get("created_at"))
+        age = _age_seconds(now, created_at)
+        stale_after = max(1800, self.settings.autonomy_cycle_seconds * 2)
+        if event.get("event_type") == "futu_quote_refresh_failed":
+            return _check(
+                "error",
+                "Latest Futu quote refresh failed.",
+                {"created_at": event.get("created_at"), "age_seconds": age, "payload": payload},
+            )
+        status = "warn" if age is not None and age > stale_after else "ok"
+        return _check(
+            status,
+            "Latest Futu quote refresh is stale." if status == "warn" else "Latest Futu quote refresh is recent.",
+            {"created_at": event.get("created_at"), "age_seconds": age, "stale_after_seconds": stale_after, "payload": payload},
         )
 
     def _check_quote_freshness(self, now: datetime) -> dict[str, Any]:
@@ -186,11 +260,21 @@ class RuntimeDoctorService:
         if not latest:
             return _check("warn", "No quote snapshots found.", {"quote_count": 0})
         age = _age_seconds(now, latest)
-        level = "error" if age is not None and age > 72 * 3600 else "warn" if age is not None and age > 24 * 3600 else "ok"
+        freshness_limit = quote_freshness_limit_seconds(now)
+        stale_quotes = [quote.symbol for quote in quotes if not quote_is_fresh(quote, now)]
+        level = "error" if len(stale_quotes) == len(quotes) and age is not None and age > freshness_limit * 2 else "warn" if stale_quotes else "ok"
         return _check(
             level,
             "Quote snapshots are stale." if level != "ok" else "Quote snapshots are fresh enough.",
-            {"quote_count": len(quotes), "latest_updated_at": latest.isoformat(), "age_seconds": age},
+            {
+                "quote_count": len(quotes),
+                "latest_updated_at": latest.isoformat(),
+                "age_seconds": age,
+                "freshness_limit_seconds": freshness_limit,
+                "market_session_aware": True,
+                "stale_symbols": stale_quotes[:20],
+                "latest_age_seconds": quote_age_seconds(next((quote for quote in quotes if _aware(quote.updated_at) == latest), None), now),
+            },
         )
 
     def _check_fundamental_freshness(self, now: datetime) -> dict[str, Any]:
@@ -294,6 +378,30 @@ class RuntimeDoctorService:
             mismatches,
         )
 
+    def _futu_status(self) -> dict[str, Any]:
+        if self._futu_status_cache is None:
+            try:
+                self._futu_status_cache = get_futu_status(self.settings)
+            except Exception as exc:  # pragma: no cover - defensive local integration guard
+                self._futu_status_cache = {"connected": False, "available": False, "error": str(exc), "message": str(exc)}
+        return self._futu_status_cache
+
+    def _futu_accounts(self) -> dict[str, Any]:
+        if self._futu_accounts_cache is None:
+            try:
+                self._futu_accounts_cache = discover_futu_accounts(self.settings).as_dict()
+            except Exception as exc:  # pragma: no cover - defensive local integration guard
+                self._futu_accounts_cache = {
+                    "account_count": 0,
+                    "accounts": [],
+                    "selected_account": None,
+                    "candidate_acc_ids": [],
+                    "selection_status": "error",
+                    "error": str(exc),
+                    "message": str(exc),
+                }
+        return self._futu_accounts_cache
+
 
 def _check(status: str, message: str, metrics: dict[str, Any]) -> dict[str, Any]:
     return {"status": status, "message": message, "metrics": metrics}
@@ -321,6 +429,15 @@ def _summary(checks: dict[str, dict[str, Any]]) -> dict[str, Any]:
 def _latest_event(store: Store, event_type: str | None = None) -> dict[str, Any] | None:
     events = store.list_audit_events(limit=1, event_type=event_type)
     return events[0] if events else None
+
+
+def _latest_of_events(store: Store, event_types: tuple[str, ...]) -> dict[str, Any] | None:
+    events: list[dict[str, Any]] = []
+    for event_type in event_types:
+        events.extend(store.list_audit_events(limit=1, event_type=event_type))
+    if not events:
+        return None
+    return max(events, key=lambda event: event.get("created_at") or "")
 
 
 def _payload(event: dict[str, Any] | None) -> dict[str, Any]:

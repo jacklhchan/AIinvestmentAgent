@@ -21,7 +21,7 @@ from .dividend_lens import DividendLensService
 from .earnings_preview import EarningsPreviewService
 from .earnings_review import EarningsReviewService
 from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event_file
-from .futu_adapter import FutuIntegrationError, get_futu_status, refresh_futu_readonly
+from .futu_adapter import FutuIntegrationError, discover_futu_accounts, get_futu_status, refresh_futu_readonly
 from .hypotheses import HypothesisRegistryService
 from .idea_inbox import IdeaInboxService
 from .ir_feeds import IrFeedIngestor
@@ -1168,6 +1168,14 @@ def futu_status():
     return get_futu_status(get_settings())
 
 
+@app.get("/api/futu/accounts")
+def futu_accounts():
+    try:
+        return discover_futu_accounts(get_settings()).as_dict()
+    except FutuIntegrationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @app.post("/api/futu/refresh")
 def futu_refresh(refresh_cache: bool = False):
     try:
@@ -2197,6 +2205,10 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       demo_seeded: "Demo 資料建立",
       portfolio_upserted: "投資組合已更新",
       futu_readonly_refreshed: "富途只讀刷新",
+      futu_quotes_refreshed: "富途行情刷新",
+      futu_quote_refresh_failed: "富途行情失敗",
+      futu_account_snapshot_refreshed: "富途帳戶快照",
+      futu_account_snapshot_failed: "富途帳戶失敗",
       proposal_created: "提案已建立",
       proposal_updated: "提案已更新",
       proposal_approved: "提案已批准",
@@ -2443,7 +2455,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       };
     }
 
-    function renderSourceStrip(health, portfolio, quotes, futuStatus) {
+    function renderSourceStrip(health, portfolio, quotes, futuStatus, futuAccounts) {
       const quoteSources = quotes.reduce((acc, quote) => {
         const source = quote.source || "local";
         acc[source] = (acc[source] || 0) + 1;
@@ -2452,6 +2464,9 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       const quoteBadges = Object.entries(quoteSources)
         .map(([source, count]) => `${sourceBadge(source)} <span class="muted">${count} 筆</span>`)
         .join(" ");
+      const accountText = futuAccounts?.selected_account?.acc_id
+        ? `acc ${escapeHtml(futuAccounts.selected_account.acc_id)} · ${escapeHtml(futuAccounts.selection_status || "ok")}`
+        : `${escapeHtml(futuAccounts?.account_count ?? 0)} accounts · ${escapeHtml(futuAccounts?.selection_status || "unchecked")}`;
       document.querySelector("#source-strip").innerHTML = `
         <div class="source-cell">
           <div class="label">投資組合來源</div>
@@ -2467,6 +2482,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
           <div class="label">富途 OpenD</div>
           <div>${futuStatus.connected ? pill("APPROVED", "已連線") : pill("EXPIRED", "未連線")}</div>
           <div class="muted">${escapeHtml(health.futu_host)}:${escapeHtml(health.futu_monitor_port)} · ${escapeHtml(futuStatus.message || "未檢查")}</div>
+          <div class="muted">${accountText}</div>
         </div>
         <div class="source-cell">
           <div class="label">執行模式</div>
@@ -2822,7 +2838,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
     }
 
     async function loadAll() {
-      const [advisorBrief, advisorFullBrief, advisorRecommendations, opportunityRadarRuns, committeeReviews, marketContext, marketRegime, health, portfolio, quotes, proposals, news, auditEvents, futuStatus, fundamentals, autonomy, runtimeDoctor, signalLatest, researchGoals, theses, catalysts, earningsReviews, runCards, behaviorReports, tradeImports, tradeRoundtrips, shadowStrategies, shadowReports, shadowEvents] = await Promise.all([
+      const [advisorBrief, advisorFullBrief, advisorRecommendations, opportunityRadarRuns, committeeReviews, marketContext, marketRegime, health, portfolio, quotes, proposals, news, auditEvents, futuStatus, futuAccounts, fundamentals, autonomy, runtimeDoctor, signalLatest, researchGoals, theses, catalysts, earningsReviews, runCards, behaviorReports, tradeImports, tradeRoundtrips, shadowStrategies, shadowReports, shadowEvents] = await Promise.all([
         api("/api/advisor/brief"),
         api("/api/advisor/briefs/latest"),
         api("/api/advisor/recommendations?limit=12"),
@@ -2837,6 +2853,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         api("/api/news?limit=24"),
         api("/api/audit?limit=6"),
         apiOptional("/api/futu/status", error => ({ connected: false, message: error.message })),
+        apiOptional("/api/futu/accounts", error => ({ account_count: 0, selection_status: "error", message: error.message })),
         api("/api/fundamentals"),
         api("/api/autonomy/status"),
         api("/api/runtime/doctor"),
@@ -2868,7 +2885,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       renderCommitteeReviews(committeeReviews);
       renderMarketRegime(marketRegime);
       renderMarketContext(marketContext);
-      renderSourceStrip(health, portfolio, quotes, futuStatus);
+      renderSourceStrip(health, portfolio, quotes, futuStatus, futuAccounts);
       renderAutonomy(autonomy, runtimeDoctor);
       renderSignals(signalLatest);
       renderResearchGoals(researchGoals);
@@ -3035,7 +3052,8 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       setToast("正在刷新富途 OpenD 只讀快照...");
       try {
         const result = await api("/api/futu/refresh", { method: "POST" });
-        setToast(`富途已刷新：${result.position_count} 個持倉，${result.quote_count} 筆行情`);
+        const accountNote = result.account_status === "ok" ? `${result.position_count} 個持倉` : `帳戶快照失敗：${result.account_error || "需檢查 FUTU_ACC_ID"}`;
+        setToast(`富途已刷新：${result.quote_count} 筆行情；${accountNote}`);
         await loadAll();
       } catch (error) {
         setToast(error.message);

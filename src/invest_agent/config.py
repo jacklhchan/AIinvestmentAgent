@@ -63,6 +63,9 @@ class Settings(BaseModel):
     futu_trade_password: str = ""
     futu_read_enabled: bool = False
     futu_trd_market: str = "US"
+    futu_trd_env: str = "REAL"
+    futu_security_firm: str = ""
+    futu_sim_acc_type: str = ""
     futu_currency: str = "USD"
     futu_acc_id: int = 0
     futu_acc_index: int = 0
@@ -161,6 +164,9 @@ def get_settings() -> Settings:
         futu_trade_password=os.getenv("FUTU_TRADE_PASSWORD", ""),
         futu_read_enabled=_bool_env("FUTU_READ_ENABLED", False),
         futu_trd_market=os.getenv("FUTU_TRD_MARKET", "US").strip().upper(),
+        futu_trd_env=os.getenv("FUTU_TRD_ENV", "REAL").strip().upper(),
+        futu_security_firm=os.getenv("FUTU_SECURITY_FIRM", "").strip(),
+        futu_sim_acc_type=os.getenv("FUTU_SIM_ACC_TYPE", "").strip().upper(),
         futu_currency=os.getenv("FUTU_CURRENCY", "USD").strip().upper(),
         futu_acc_id=_int_env("FUTU_ACC_ID", 0),
         futu_acc_index=_int_env("FUTU_ACC_INDEX", 0),

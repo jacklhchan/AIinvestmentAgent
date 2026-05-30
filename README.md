@@ -224,17 +224,28 @@ FUTU_READ_ENABLED=true
 FUTU_HOST=127.0.0.1
 FUTU_MONITOR_PORT=11111
 FUTU_TRD_MARKET=US
+FUTU_TRD_ENV=REAL
 FUTU_CURRENCY=USD
+FUTU_ACC_ID=0
 ```
+
+先列出 OpenD 可用帳戶，確認 `acc_id`：
+
+```bash
+source .venv/bin/activate
+python -m invest_agent.cli futu-accounts
+curl http://127.0.0.1:8788/api/futu/accounts
+```
+
+`FUTU_ACC_ID=0` 只會在剛好一個帳戶符合 `FUTU_TRD_MARKET` / `FUTU_TRD_ENV` / optional `FUTU_SECURITY_FIRM` / optional `FUTU_SIM_ACC_TYPE` 時 auto-select。若有多個候選帳戶，doctor 會列出 candidate `acc_id`，你要在 `.env` 明確設定 `FUTU_ACC_ID`。
 
 刷新本機資料：
 
 ```bash
-source .venv/bin/activate
 python -m invest_agent.cli futu-refresh
 ```
 
-或者開 dashboard 後按 `Refresh Futu`。這只會呼叫 `accinfo_query`、`position_list_query`、`get_market_snapshot`，不會呼叫 `unlock_trade` 或任何下單 API。
+或者開 dashboard 後按 `Refresh Futu`。系統會先刷新 watchlist / market-context quotes，再嘗試 account snapshot；如果 `FUTU_ACC_ID` 錯誤，quote refresh 仍可成功，signal engine 仍會用最新 quote 產生 BUY/WATCH，SELL/REDUCE 則可能因 position unavailable 被 gate 擋住。這只會呼叫 `get_acc_list`、`accinfo_query`、`position_list_query`、`get_market_snapshot`，不會呼叫 `unlock_trade` 或任何下單 API。
 
 ## Market News + Proposal Drafting
 

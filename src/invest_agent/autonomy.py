@@ -204,6 +204,11 @@ class SafeAutonomyRunner:
         except FutuIntegrationError as exc:
             return {"status": "error", "message": str(exc)}
         return {
+            "status": "warn" if result.account_status == "error" and result.quote_status == "ok" else result.quote_status,
+            "message": result.account_error if result.account_status == "error" else "",
+            "quote_status": result.quote_status,
+            "account_status": result.account_status,
+            "account_error": result.account_error,
             "position_count": result.position_count,
             "quote_count": result.quote_count,
             "source": result.source,

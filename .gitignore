@@ -10,5 +10,10 @@ data/*.db
 data/*.db-*
 data/backups/
 deploy/futu-opend-docker/
+**/FutuOpenD.xml
+**/FutuOpenD*.xml
+**/futu-opend*.ini
+**/futu-opend*.conf
+**/futu-opend*.log
 logs/
 artifacts/

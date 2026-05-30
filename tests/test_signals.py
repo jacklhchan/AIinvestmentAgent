@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from invest_agent.catalysts import CatalystCalendarService
 from invest_agent.config import Settings
@@ -23,6 +23,7 @@ from invest_agent.models import (
 from invest_agent.services import InvestmentService
 from invest_agent.signals import SignalEngine
 from invest_agent.store import Store
+from invest_agent.quote_freshness import quote_is_fresh
 from fastapi.testclient import TestClient
 
 
@@ -217,6 +218,37 @@ def test_strong_unverified_signal_is_blocked_not_promotable(tmp_path) -> None:
     assert signal.side == SignalSide.BLOCKED
     assert signal.gates["blocked_action"] == SignalSide.BUY_SIGNAL.value
     assert any("verified" in reason for reason in signal.gates["blocking_reasons"])
+
+
+def test_high_price_buy_signal_blocks_when_notional_budget_is_too_small(tmp_path) -> None:
+    engine, store, _settings = make_signal_engine(tmp_path)
+    add_positive_context(store, symbol="GOOGL", verified=True)
+    store.upsert_quote(Quote(symbol="GOOGL", last_price=2_000.0, previous_close=1_900.0, change_pct=5.0, source="test"))
+
+    result = engine.run(SignalRunRequest(symbols=["GOOGL"], source=SignalSource.CLI))
+
+    signal = result.signals[0]
+    assert signal.suggested_qty == 0
+    assert signal.side == SignalSide.BLOCKED
+    assert "price exceeds paper notional budget" in signal.gates["blocking_reasons"]
+    try:
+        engine.promote_to_proposal(signal.id)
+    except ValueError as exc:
+        assert "price exceeds paper notional budget" in str(exc)
+    else:
+        raise AssertionError("expected promotion to be blocked")
+
+
+def test_weekend_latest_completed_session_quote_is_not_stale() -> None:
+    now = datetime(2026, 5, 31, 12, 0, tzinfo=timezone.utc)
+    friday_quote = Quote(
+        symbol="US.SPY",
+        last_price=500.0,
+        updated_at=datetime(2026, 5, 29, 19, 30, tzinfo=timezone.utc),
+        source="test",
+    )
+
+    assert quote_is_fresh(friday_quote, now)
 
 
 def test_high_impact_catalyst_blocks_directional_signal(tmp_path) -> None:

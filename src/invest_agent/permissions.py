@@ -52,6 +52,7 @@ READ_ONLY_TOOLS = frozenset(
         "list_dividend_reviews",
         "list_earnings_previews",
         "list_earnings_reviews",
+        "list_futu_accounts",
         "list_hypotheses",
         "list_idea_candidates",
         "list_options_snapshots",
