@@ -22,6 +22,7 @@ from .futu_adapter import discover_futu_accounts, get_futu_status, refresh_futu_
 from .hypotheses import HypothesisRegistryService
 from .idea_inbox import IdeaInboxService
 from .ir_feeds import IrFeedIngestor
+from .investor_committee import InvestorFrameworkCommitteeService
 from .market_context import MarketContextService
 from .market_regime import MarketRegimeService
 from .market_news import MarketNewsIngestor, external_ticker, resolve_watchlist_symbols
@@ -189,6 +190,18 @@ def ask_advisor(question: str, symbol: str | None = None, style: str = "concise"
             actor=RunCardActor.MCP,
         )
     )
+
+
+@mcp.tool()
+def run_investor_framework_committee(signal_id: str) -> dict:
+    """Run the investor framework committee on one signal. Framework personas are advisory only and cannot approve or execute."""
+    return _json(InvestorFrameworkCommitteeService(get_settings(), get_store()).run_for_signal(signal_id))
+
+
+@mcp.tool()
+def get_latest_investor_committee() -> dict:
+    """Return the latest investor framework committee run, if any."""
+    return _json({"run": InvestorFrameworkCommitteeService(get_settings(), get_store()).latest()})
 
 
 @mcp.tool()

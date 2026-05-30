@@ -27,6 +27,7 @@ Permission classes:
 | `create_trade_proposal` | `proposal_write` | `execution_forbidden` |
 | `draft_trade_proposals_from_watchlist` | `proposal_write` | `execution_forbidden` |
 | `evaluate_signal_outcomes` | `research_write` | `execution_forbidden` |
+| `run_investor_framework_committee` | `research_write` | `execution_forbidden` |
 | `export_event_replay_file` | `research_write` | `execution_forbidden` |
 | `get_advice_readiness` | `read_only` | `execution_forbidden` |
 | `get_advisor_brief` | `research_write` | `execution_forbidden` |
@@ -62,6 +63,7 @@ Permission classes:
 | `get_safe_autonomy_status` | `read_only` | `execution_forbidden` |
 | `get_sector_snapshot` | `read_only` | `execution_forbidden` |
 | `get_signal_outcome_summary` | `read_only` | `execution_forbidden` |
+| `get_latest_investor_committee` | `read_only` | `execution_forbidden` |
 | `get_shadow_report` | `read_only` | `execution_forbidden` |
 | `get_shadow_strategy` | `read_only` | `execution_forbidden` |
 | `get_thesis_snapshot` | `read_only` | `execution_forbidden` |

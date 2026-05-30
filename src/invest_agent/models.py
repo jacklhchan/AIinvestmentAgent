@@ -227,6 +227,7 @@ class RunCardType(StrEnum):
     SAFE_AUTONOMY_CYCLE = "safe_autonomy_cycle"
     PROPOSAL_DRAFT = "proposal_draft"
     SIGNAL_RUN = "signal_run"
+    INVESTOR_COMMITTEE = "investor_committee"
     ADVISOR_QUESTION = "advisor_question"
     ADVISOR_PULSE = "advisor_pulse"
     ADVISOR_BRIEF = "advisor_brief"
@@ -423,6 +424,15 @@ class SignalSource(StrEnum):
     CLI = "cli"
     API = "api"
     MANUAL_RUN = "manual_run"
+
+
+class InvestorCommitteeStance(StrEnum):
+    SUPPORT = "support"
+    SUPPORT_WITH_CAUTION = "support_with_caution"
+    NEUTRAL = "neutral"
+    OPPOSE = "oppose"
+    RESEARCH_MORE = "research_more"
+    VETO = "veto"
 
 
 class OpportunityCategory(StrEnum):
@@ -2488,6 +2498,54 @@ class SignalOutcomeRow(BaseModel):
     score: int | None = None
     readiness_score: float | None = None
     blocking_reasons: list[str] = Field(default_factory=list)
+
+
+class InvestorFrameworkProfile(BaseModel):
+    framework_key: str
+    name: str
+    description: str
+    theory_notes: list[str] = Field(default_factory=list)
+    weight: float = 1.0
+    enabled: bool = True
+    version: str = "investor_framework_profiles_v1"
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class InvestorCommitteeVote(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("icvote"))
+    run_id: str
+    signal_id: str
+    framework_key: str
+    stance: InvestorCommitteeStance = InvestorCommitteeStance.NEUTRAL
+    score_delta: int = Field(default=0, ge=-15, le=15)
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    veto: bool = False
+    cited_evidence_ids: list[str] = Field(default_factory=list)
+    missing_evidence: list[str] = Field(default_factory=list)
+    memo: str = ""
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class InvestorCommitteeRun(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("icrun"))
+    signal_id: str
+    symbol: str
+    base_signal_score: int
+    committee_adjusted_score: float
+    final_stance: str
+    actionability_status: str
+    committee_blocked: bool = False
+    vetoes: list[str] = Field(default_factory=list)
+    missing_evidence: list[str] = Field(default_factory=list)
+    data_pack_json: dict[str, Any] = Field(default_factory=dict)
+    data_pack_hash: str = ""
+    readiness_score: float | None = None
+    outcome_summary_json: dict[str, Any] = Field(default_factory=dict)
+    profile_version: str = "investor_framework_profiles_v1"
+    votes: list[InvestorCommitteeVote] = Field(default_factory=list)
+    run_card_id: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class ProposalDraft(BaseModel):

@@ -19,6 +19,8 @@ mcp_servers:
         - get_advice_readiness
         - evaluate_signal_outcomes
         - get_signal_outcome_summary
+        - run_investor_framework_committee
+        - get_latest_investor_committee
         - get_advisor_profile
         - suggest_advisor_profile_update
         - confirm_advisor_profile_update

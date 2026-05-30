@@ -29,6 +29,7 @@ from .hypotheses import HypothesisRegistryService
 from .idea_inbox import IdeaInboxService
 from .ir_feeds import IrFeedIngestor
 from .investor_policy import InvestorPolicyService
+from .investor_committee import InvestorFrameworkCommitteeService
 from .market_regime import MarketRegimeService
 from .market_news import MarketNewsIngestor
 from .opportunity_radar import OpportunityRadarService
@@ -249,6 +250,16 @@ def signals_evaluate_outcomes_main(limit: int = 200) -> None:
 def advice_readiness_main() -> None:
     result = AdviceReadinessService(get_settings(), get_store()).run()
     print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def investor_committee_run_main(signal_id: str) -> None:
+    result = InvestorFrameworkCommitteeService(get_settings(), get_store()).run_for_signal(signal_id)
+    print(json.dumps(_json(result), indent=2, ensure_ascii=False))
+
+
+def investor_committee_latest_main() -> None:
+    result = InvestorFrameworkCommitteeService(get_settings(), get_store()).latest()
+    print(json.dumps(_json({"run": result}), indent=2, ensure_ascii=False))
 
 
 def promote_signal_main(signal_id: str) -> None:
@@ -780,6 +791,8 @@ def main() -> None:
             "signals-latest",
             "signals-evaluate-outcomes",
             "advice-readiness",
+            "investor-committee-run",
+            "investor-committee-latest",
             "promote-signal",
             "reject-signal",
             "market-regime",
@@ -954,6 +967,12 @@ def main() -> None:
         signals_evaluate_outcomes_main(args.limit)
     if args.command == "advice-readiness":
         advice_readiness_main()
+    if args.command == "investor-committee-run":
+        if not args.signal_id:
+            parser.error("--signal-id is required for investor-committee-run")
+        investor_committee_run_main(args.signal_id)
+    if args.command == "investor-committee-latest":
+        investor_committee_latest_main()
     if args.command == "promote-signal":
         signal_id = args.signal_id or args.question
         if not signal_id:

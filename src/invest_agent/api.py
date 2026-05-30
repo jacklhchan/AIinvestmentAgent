@@ -23,6 +23,7 @@ from .earnings_preview import EarningsPreviewService
 from .earnings_review import EarningsReviewService
 from .event_replay import DEFAULT_REPLAY_PATH, export_event_replay, replay_event_file
 from .futu_adapter import FutuIntegrationError, discover_futu_accounts, get_futu_status, refresh_futu_readonly
+from .investor_committee import InvestorFrameworkCommitteeService
 from .hypotheses import HypothesisRegistryService
 from .idea_inbox import IdeaInboxService
 from .ir_feeds import IrFeedIngestor
@@ -158,6 +159,10 @@ class EventReplayRequest(BaseModel):
 class AutonomyRunRequest(BaseModel):
     create_proposals: bool | None = None
     include_slow_sources: bool = True
+
+
+class InvestorCommitteeRunForSignalRequest(BaseModel):
+    signal_id: str
 
 
 app = FastAPI(
@@ -1100,6 +1105,27 @@ def reject_signal(signal_id: str, request: SignalRejectRequest | None = None):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+@app.post("/api/investor-committee/run-for-signal")
+def run_investor_committee_for_signal(request: InvestorCommitteeRunForSignalRequest):
+    try:
+        return InvestorFrameworkCommitteeService(get_settings(), get_store()).run_for_signal(request.signal_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/investor-committee/latest")
+def latest_investor_committee():
+    return {"run": InvestorFrameworkCommitteeService(get_settings(), get_store()).latest()}
+
+
+@app.get("/api/investor-committee/{run_id}")
+def investor_committee_run(run_id: str):
+    item = get_store().get_investor_committee_run(run_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="investor committee run not found")
+    return item
+
+
 @app.post("/api/events/export")
 def export_events(request: EventReplayRequest | None = None):
     request = request or EventReplayRequest()
@@ -1781,6 +1807,9 @@ DASHBOARD_HTML = """
       </table>
       <h3>校準表現</h3>
       <div class="source-strip" id="signal-calibration"></div>
+      <h3>Investor Framework Committee</h3>
+      <div class="source-strip" id="investor-committee-summary"></div>
+      <div id="investor-committee-runs" class="stack-list"></div>
     </section>
     <section class="panel">
       <h2>研究目標與證據帳本</h2>
@@ -2840,6 +2869,42 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       }).join("");
     }
 
+    function renderInvestorCommittee(payload) {
+      const run = payload?.run || null;
+      const summary = document.querySelector("#investor-committee-summary");
+      const runs = document.querySelector("#investor-committee-runs");
+      if (!run) {
+        summary.innerHTML = `<div class="source-cell"><div class="label">Committee</div><div class="muted">暫時沒有 investor committee run。</div></div>`;
+        runs.innerHTML = "";
+        return;
+      }
+      const votes = (run.votes || []).slice(0, 10);
+      summary.innerHTML = `
+        <div class="source-cell">
+          <div class="label">Committee Summary</div>
+          <div>${pill(run.actionability_status || "research_more", `${run.final_stance || "research_more"} · ${Number(run.committee_adjusted_score || 0).toFixed(1)}`)}</div>
+          <div class="muted">base ${escapeHtml(run.base_signal_score || 0)} · veto ${escapeHtml((run.vetoes || []).length)} · missing ${escapeHtml((run.missing_evidence || []).length)} · readiness ${run.readiness_score === null || run.readiness_score === undefined ? "n/a" : Number(run.readiness_score).toFixed(1)}</div>
+        </div>
+      `;
+      runs.innerHTML = `
+        <div class="advisor-item">
+          <div class="item-title">${escapeHtml(run.symbol)} · ${escapeHtml(run.signal_id)}</div>
+          <div class="muted">profiles ${escapeHtml(run.profile_version || "")} · data ${escapeHtml((run.data_pack_hash || "").slice(0, 10))}</div>
+          <div class="muted">${escapeHtml((run.vetoes || []).join("; ") || "no vetoes")}</div>
+          <div class="advisor-list">
+            ${votes.map(vote => `
+              <div>
+                <div class="item-title">${escapeHtml(vote.framework_key)} ${pill(vote.stance, vote.stance)}</div>
+                <div class="muted">delta ${escapeHtml(vote.score_delta)} · conf ${Math.round((vote.confidence || 0) * 100)}%</div>
+                <div class="muted">${escapeHtml(vote.memo || "")}</div>
+                ${vote.missing_evidence?.length ? `<div class="muted">缺少：${escapeHtml(vote.missing_evidence.join("; "))}</div>` : ""}
+              </div>
+            `).join("")}
+          </div>
+        </div>
+      `;
+    }
+
     function renderSignals(payload, readiness, outcomes) {
       renderSignalReadiness(readiness, outcomes);
       renderSignalCalibration(outcomes);
@@ -2906,7 +2971,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
     }
 
     async function loadAll() {
-      const [advisorBrief, advisorFullBrief, advisorRecommendations, opportunityRadarRuns, committeeReviews, marketContext, marketRegime, health, portfolio, quotes, proposals, news, auditEvents, futuStatus, futuAccounts, fundamentals, autonomy, runtimeDoctor, signalLatest, signalOutcomes, adviceReadiness, researchGoals, theses, catalysts, earningsReviews, runCards, behaviorReports, tradeImports, tradeRoundtrips, shadowStrategies, shadowReports, shadowEvents] = await Promise.all([
+      const [advisorBrief, advisorFullBrief, advisorRecommendations, opportunityRadarRuns, committeeReviews, marketContext, marketRegime, health, portfolio, quotes, proposals, news, auditEvents, futuStatus, futuAccounts, fundamentals, autonomy, runtimeDoctor, signalLatest, signalOutcomes, adviceReadiness, investorCommittee, researchGoals, theses, catalysts, earningsReviews, runCards, behaviorReports, tradeImports, tradeRoundtrips, shadowStrategies, shadowReports, shadowEvents] = await Promise.all([
         api("/api/advisor/brief"),
         api("/api/advisor/briefs/latest"),
         api("/api/advisor/recommendations?limit=12"),
@@ -2928,6 +2993,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
         api("/api/signals/latest?limit=12"),
         api("/api/signals/outcomes?limit=200"),
         api("/api/advice/readiness"),
+        api("/api/investor-committee/latest"),
         api("/api/research-goals?limit=8"),
         api("/api/theses?limit=8"),
         api("/api/catalysts/upcoming?days=14&limit=8"),
@@ -2958,6 +3024,7 @@ proposal 需要靠 manual override 才能成立</textarea></div>
       renderSourceStrip(health, portfolio, quotes, futuStatus, futuAccounts);
       renderAutonomy(autonomy, runtimeDoctor);
       renderSignals(signalLatest, adviceReadiness, signalOutcomes);
+      renderInvestorCommittee(investorCommittee);
       renderResearchGoals(researchGoals);
       renderTheses(theses);
       renderCatalysts(catalysts);

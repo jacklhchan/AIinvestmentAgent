@@ -54,6 +54,9 @@ EXPECTED_SCHEMA: dict[str, set[str]] = {
     "idea_candidates": {"id", "symbol", "status", "created_at", "payload"},
     "idea_screens": {"id", "created_at", "payload"},
     "investor_policy_statements": {"id", "version", "updated_at", "payload"},
+    "investor_framework_profiles": {"framework_key", "enabled", "weight", "updated_at", "payload"},
+    "investor_committee_runs": {"id", "signal_id", "symbol", "final_stance", "created_at", "payload"},
+    "investor_committee_votes": {"id", "run_id", "signal_id", "framework_key", "stance", "created_at", "payload"},
     "market_regime_snapshots": {"id", "created_at", "risk_appetite", "proposal_bias", "payload"},
     "news": {"id", "symbol", "payload", "published_at"},
     "options_snapshots": {"id", "symbol", "expiry", "created_at", "payload"},
@@ -113,7 +116,17 @@ EXPECTED_SCHEMA: dict[str, set[str]] = {
     "trade_roundtrips": {"id", "import_id", "symbol", "opened_at", "closed_at", "payload"},
 }
 
-PRESERVED_TABLES = ("proposals", "executions", "research_goals", "research_run_cards", "signal_runs", "signals", "signal_outcome_rows")
+PRESERVED_TABLES = (
+    "proposals",
+    "executions",
+    "research_goals",
+    "research_run_cards",
+    "signal_runs",
+    "signals",
+    "signal_outcome_rows",
+    "investor_committee_runs",
+    "investor_committee_votes",
+)
 
 
 def run_schema_check(store: Store) -> dict[str, Any]:

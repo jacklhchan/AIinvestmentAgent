@@ -39,6 +39,7 @@ READ_ONLY_TOOLS = frozenset(
         "get_safe_autonomy_status",
         "get_sector_snapshot",
         "get_signal_outcome_summary",
+        "get_latest_investor_committee",
         "get_shadow_report",
         "get_shadow_strategy",
         "get_thesis_snapshot",
@@ -102,6 +103,7 @@ RESEARCH_WRITE_TOOLS = frozenset(
         "run_earnings_preview",
         "run_earnings_review",
         "run_hourly_advisor_pulse",
+        "run_investor_framework_committee",
         "run_paper_signal_engine",
         "run_pre_market_advisor_brief",
         "run_post_close_advisor_brief",
@@ -145,6 +147,7 @@ NEXT_PHASE_MCP_TOOLS = frozenset(
         "get_idea_candidate",
         "get_latest_daily_brief",
         "get_signal_outcome_summary",
+        "get_latest_investor_committee",
         "get_options_snapshot",
         "get_portfolio_risk_snapshot",
         "get_quote_history_summary",
@@ -152,6 +155,7 @@ NEXT_PHASE_MCP_TOOLS = frozenset(
         "get_sector_snapshot",
         "invalidate_hypothesis",
         "link_run_card_to_hypothesis",
+        "get_latest_investor_committee",
         "list_backtest_imports",
         "list_committee_reviews",
         "list_daily_briefs",
@@ -167,9 +171,11 @@ NEXT_PHASE_MCP_TOOLS = frozenset(
         "list_rebalance_reviews",
         "list_run_cards",
         "evaluate_signal_outcomes",
+        "run_investor_framework_committee",
         "run_committee_review",
         "run_dividend_review",
         "run_earnings_preview",
+        "run_investor_framework_committee",
     }
 )
 

@@ -47,6 +47,9 @@ from .models import (
     IdeaCandidateStatus,
     IdeaScreen,
     InvestorPolicyStatement,
+    InvestorCommitteeRun,
+    InvestorCommitteeVote,
+    InvestorFrameworkProfile,
     MarketRegimeSnapshot,
     NewsItem,
     OptionsSnapshot,
@@ -115,8 +118,15 @@ class Store:
 
     def init(self) -> None:
         schema_backup_path = self._backup_before_schema_change_if_needed(
-            missing_any_of={"signal_runs", "signals", "signal_outcome_rows"},
-            label="signal-outcomes-v1",
+            missing_any_of={
+                "signal_runs",
+                "signals",
+                "signal_outcome_rows",
+                "investor_framework_profiles",
+                "investor_committee_runs",
+                "investor_committee_votes",
+            },
+            label="investor-committee-v1",
         )
         with self.connect() as conn:
             conn.executescript(
@@ -672,6 +682,36 @@ class Store:
                     PRIMARY KEY (signal_id, window, window_type),
                     FOREIGN KEY (signal_id) REFERENCES signals(id)
                 );
+
+                CREATE TABLE IF NOT EXISTS investor_framework_profiles (
+                    framework_key TEXT PRIMARY KEY,
+                    enabled INTEGER NOT NULL,
+                    weight REAL NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS investor_committee_runs (
+                    id TEXT PRIMARY KEY,
+                    signal_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    final_stance TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    FOREIGN KEY (signal_id) REFERENCES signals(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS investor_committee_votes (
+                    id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    signal_id TEXT NOT NULL,
+                    framework_key TEXT NOT NULL,
+                    stance TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    FOREIGN KEY (run_id) REFERENCES investor_committee_runs(id),
+                    FOREIGN KEY (signal_id) REFERENCES signals(id)
+                );
                 """
             )
             self._ensure_column(conn, "shadow_rules", "created_at", "TEXT")
@@ -683,7 +723,7 @@ class Store:
                     event_type="sqlite_backup_created",
                     entity_type="database",
                     entity_id=str(self.db_path),
-                    payload={"backup_path": str(schema_backup_path), "label": "signal-outcomes-v1"},
+                    payload={"backup_path": str(schema_backup_path), "label": "investor-committee-v1"},
                 )
                 conn.execute(
                     """
@@ -2115,6 +2155,124 @@ class Store:
             where=" AND ".join(clauses),
             args=tuple(args),
             order_by="evaluated_at DESC",
+            limit=limit,
+        )
+
+    def upsert_investor_framework_profile(self, item: InvestorFrameworkProfile) -> InvestorFrameworkProfile:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO investor_framework_profiles(framework_key, enabled, weight, updated_at, payload)
+                VALUES(?, ?, ?, ?, ?)
+                ON CONFLICT(framework_key) DO UPDATE SET
+                    enabled=excluded.enabled,
+                    weight=excluded.weight,
+                    updated_at=excluded.updated_at,
+                    payload=excluded.payload
+                """,
+                (item.framework_key, 1 if item.enabled else 0, item.weight, item.updated_at.isoformat(), self._dump(item)),
+            )
+        return item
+
+    def list_investor_framework_profiles(self, *, enabled: bool | None = None) -> list[InvestorFrameworkProfile]:
+        where = ""
+        args: tuple[Any, ...] = ()
+        if enabled is not None:
+            where = "enabled = ?"
+            args = (1 if enabled else 0,)
+        return self._list_payloads(
+            "investor_framework_profiles",
+            InvestorFrameworkProfile,
+            where=where,
+            args=args,
+            order_by="framework_key ASC",
+            limit=100,
+        )
+
+    def create_investor_committee_run(self, item: InvestorCommitteeRun) -> InvestorCommitteeRun:
+        run_without_votes = item.model_copy(update={"votes": []})
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO investor_committee_runs(id, signal_id, symbol, final_stance, created_at, payload)
+                VALUES(?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_without_votes.id,
+                    run_without_votes.signal_id,
+                    run_without_votes.symbol,
+                    run_without_votes.final_stance,
+                    run_without_votes.created_at.isoformat(),
+                    self._dump(run_without_votes),
+                ),
+            )
+            for vote in item.votes:
+                conn.execute(
+                    """
+                    INSERT INTO investor_committee_votes(id, run_id, signal_id, framework_key, stance, created_at, payload)
+                    VALUES(?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        vote.id,
+                        vote.run_id,
+                        vote.signal_id,
+                        vote.framework_key,
+                        vote.stance.value,
+                        vote.created_at.isoformat(),
+                        self._dump(vote),
+                    ),
+                )
+        self.audit(
+            "investor_committee_run_created",
+            "investor_committee_run",
+            item.id,
+            {
+                "signal_id": item.signal_id,
+                "symbol": item.symbol,
+                "final_stance": item.final_stance,
+                "committee_adjusted_score": item.committee_adjusted_score,
+                "committee_blocked": item.committee_blocked,
+            },
+        )
+        return self.get_investor_committee_run(item.id) or item
+
+    def get_investor_committee_run(self, run_id: str) -> InvestorCommitteeRun | None:
+        run = self._get_payload("investor_committee_runs", InvestorCommitteeRun, "id", run_id)
+        if not run:
+            return None
+        return run.model_copy(update={"votes": self.list_investor_committee_votes(run_id=run.id)})
+
+    def list_investor_committee_runs(
+        self,
+        *,
+        signal_id: str | None = None,
+        limit: int = 20,
+    ) -> list[InvestorCommitteeRun]:
+        where = "signal_id = ?" if signal_id else ""
+        args: tuple[Any, ...] = (signal_id,) if signal_id else ()
+        runs = self._list_payloads(
+            "investor_committee_runs",
+            InvestorCommitteeRun,
+            where=where,
+            args=args,
+            order_by="created_at DESC",
+            limit=limit,
+        )
+        return [run.model_copy(update={"votes": self.list_investor_committee_votes(run_id=run.id)}) for run in runs]
+
+    def get_latest_investor_committee_run(self) -> InvestorCommitteeRun | None:
+        runs = self.list_investor_committee_runs(limit=1)
+        return runs[0] if runs else None
+
+    def list_investor_committee_votes(self, *, run_id: str | None = None, limit: int = 100) -> list[InvestorCommitteeVote]:
+        where = "run_id = ?" if run_id else ""
+        args: tuple[Any, ...] = (run_id,) if run_id else ()
+        return self._list_payloads(
+            "investor_committee_votes",
+            InvestorCommitteeVote,
+            where=where,
+            args=args,
+            order_by="framework_key ASC",
             limit=limit,
         )
 

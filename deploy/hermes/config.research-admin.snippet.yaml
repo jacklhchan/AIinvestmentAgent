@@ -93,6 +93,8 @@ mcp_servers:
         - get_advice_readiness
         - evaluate_signal_outcomes
         - get_signal_outcome_summary
+        - run_investor_framework_committee
+        - get_latest_investor_committee
         - reject_paper_signal
         - export_event_replay_file
         - replay_event_file
